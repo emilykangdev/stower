@@ -16,15 +16,18 @@ jobs:
       - run: swiftlint lint --strict
       - name: Module boundary check
         run: |
-          if grep -RInE "import StowerPhotos|import StowerMessages" Sources/StowerCore/ 2>/dev/null; then
+          # Match only real Swift import declarations (anchored, optional
+          # @testable) in *.swift files, so docs/comments mentioning an import
+          # cannot trip a false-positive failure.
+          if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+(StowerPhotos|StowerMessages)([[:space:]]|\.|$)' Sources/StowerCore/ 2>/dev/null; then
             echo "ERROR: StowerCore must not import StowerPhotos or StowerMessages"
             exit 1
           fi
-          if grep -RIn "import StowerMessages" Sources/StowerPhotos/ 2>/dev/null; then
+          if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerMessages([[:space:]]|\.|$)' Sources/StowerPhotos/ 2>/dev/null; then
             echo "ERROR: StowerPhotos must not import StowerMessages"
             exit 1
           fi
-          if grep -RIn "import StowerPhotos" Sources/StowerMessages/ 2>/dev/null; then
+          if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerPhotos([[:space:]]|\.|$)' Sources/StowerMessages/ 2>/dev/null; then
             echo "ERROR: StowerMessages must not import StowerPhotos"
             exit 1
           fi

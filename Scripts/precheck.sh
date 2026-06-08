@@ -59,15 +59,18 @@ else
 fi
 
 # Step 5 — module boundary checks.
-if grep -RIn "import StowerPhotos\|import StowerMessages" Sources/StowerCore/ 2>/dev/null; then
+# Match only real Swift import declarations (anchored to line start, optional
+# @testable), and only in *.swift files — so a README, comment, or string that
+# mentions "import StowerMessages" cannot trip a false-positive failure.
+if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+(StowerPhotos|StowerMessages)([[:space:]]|\.|$)' Sources/StowerCore/ 2>/dev/null; then
     echo "ERROR: StowerCore must not import StowerPhotos or StowerMessages" >&2
     exit 1
 fi
-if grep -RIn "import StowerMessages" Sources/StowerPhotos/ 2>/dev/null; then
+if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerMessages([[:space:]]|\.|$)' Sources/StowerPhotos/ 2>/dev/null; then
     echo "ERROR: StowerPhotos must not import StowerMessages" >&2
     exit 1
 fi
-if grep -RIn "import StowerPhotos" Sources/StowerMessages/ 2>/dev/null; then
+if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerPhotos([[:space:]]|\.|$)' Sources/StowerMessages/ 2>/dev/null; then
     echo "ERROR: StowerMessages must not import StowerPhotos" >&2
     exit 1
 fi
