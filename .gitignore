@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserdatad/
+# Package.resolved is intentionally NOT gitignored — Stower is an app, not a
+# library. Apps commit Package.resolved for reproducible builds.
+.DS_Store
+tmp/scratch/
+.gstack/

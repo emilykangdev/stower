@@ -1,0 +1,58 @@
+included:
+  - Sources
+  - Tests
+  # Apps/ omitted — Task 9 (StowerMac Xcode app) is deferred. Add when Task 9 is implemented.
+
+excluded:
+  - .build
+  - DerivedData
+  - tmp
+
+opt_in_rules:
+  - force_unwrapping
+  - missing_docs
+  - explicit_acl
+  - explicit_top_level_acl
+  - first_where
+  - last_where
+  - sorted_first_last
+  - empty_count
+  - convenience_type
+  - redundant_nil_coalescing
+  - toggle_bool
+
+analyzer_rules:
+  # These run only under `swiftlint analyze` (they need a compiler build log),
+  # not plain `swiftlint lint`. Listed here so they're enabled when analyze is
+  # wired up, without emitting a config warning on every lint run.
+  - unused_import
+  - unused_declaration
+
+disabled_rules:
+  - todo  # we use // TODO: liberally during scaffolding; revisit later
+
+function_body_length:
+  warning: 40
+  error: 100
+
+cyclomatic_complexity:
+  warning: 8
+  error: 20
+
+file_length:
+  warning: 400
+  error: 1200
+
+line_length:
+  warning: 100
+  error: 120
+  ignores_comments: true
+  ignores_urls: true
+
+identifier_name:
+  min_length: 2
+
+missing_docs:
+  warning:
+    - open
+    - public
