@@ -16,7 +16,7 @@ jobs:
       - run: swiftlint lint --strict
       - name: Module boundary check
         run: |
-          if grep -RIn "import StowerPhotos|import StowerMessages" Sources/StowerCore/ 2>/dev/null; then
+          if grep -RInE "import StowerPhotos|import StowerMessages" Sources/StowerCore/ 2>/dev/null; then
             echo "ERROR: StowerCore must not import StowerPhotos or StowerMessages"
             exit 1
           fi
