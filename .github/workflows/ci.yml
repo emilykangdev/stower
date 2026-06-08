@@ -1,0 +1,30 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.3.1"
+      - name: Install lint tools
+        run: brew install swift-format swiftlint
+      - run: swift build
+      - run: swift test
+      - run: swift-format lint --strict --recursive Sources Tests
+      - run: swiftlint lint --strict
+      - name: Module boundary check
+        run: |
+          if grep -RIn "import StowerPhotos|import StowerMessages" Sources/StowerCore/ 2>/dev/null; then
+            echo "ERROR: StowerCore must not import StowerPhotos or StowerMessages"
+            exit 1
+          fi
+          if grep -RIn "import StowerMessages" Sources/StowerPhotos/ 2>/dev/null; then
+            echo "ERROR: StowerPhotos must not import StowerMessages"
+            exit 1
+          fi
+          if grep -RIn "import StowerPhotos" Sources/StowerMessages/ 2>/dev/null; then
+            echo "ERROR: StowerMessages must not import StowerPhotos"
+            exit 1
+          fi

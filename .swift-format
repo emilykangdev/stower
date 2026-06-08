@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "lineLength": 100,
+  "indentation": { "spaces": 4 },
+  "tabWidth": 4,
+  "maximumBlankLines": 1,
+  "respectsExistingLineBreaks": true,
+  "lineBreakBeforeControlFlowKeywords": false,
+  "lineBreakBeforeEachArgument": true,
+  "rules": {
+    "NeverForceUnwrap": true,
+    "NeverUseForceTry": true,
+    "AllPublicDeclarationsHaveDocumentation": true,
+    "BeginDocumentationCommentWithOneLineSummary": true,
+    "ValidateDocumentationComments": true,
+    "UseTripleSlashForDocumentationComments": true,
+    "NoBlockComments": true,
+    "OrderedImports": true,
+    "ReplaceForEachWithForLoop": true
+  }
+}
