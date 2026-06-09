@@ -46,7 +46,7 @@ Curate 50–100 queries spanning time periods, people, places, and events.
 Annotate each with exactly one gold item (enables MRR and Recall@5) and one
 expected object set per item (enables CHAIR_i). Re-run before and after every
 model or prompt change. Never use real Photos or Messages data in committed
-fixtures (see `CLAUDE.md`).
+fixtures (see `AGENTS.md`).
 
 ## See also
 

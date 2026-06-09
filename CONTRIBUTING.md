@@ -25,7 +25,7 @@ keep the guardrails green.
 
 If a change was substantially AI-generated, add an `Assisted-by:` trailer to
 the commit message naming the tool. See `AI_POLICY.md` for the full policy and
-`CLAUDE.md` for the agent rule set.
+`AGENTS.md` for the agent rule set.
 
 ## Conventions
 
@@ -33,4 +33,4 @@ the commit message naming the tool. See `AI_POLICY.md` for the full policy and
 - New tests use Swift Testing (`@Test`, `#expect`), not XCTest.
 - No `try!` or force-unwraps. No doc-comment-less `public` declarations.
 
-See `CLAUDE.md` for the complete, prohibitive rule set.
+See `AGENTS.md` for the complete, prohibitive rule set.

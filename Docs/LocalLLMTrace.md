@@ -47,7 +47,7 @@ custom layer over GRDB.
   (`chat`, `text_completion`, `embeddings`, `invoke_agent`, `execute_tool`),
   `gen_ai.provider.name`, `gen_ai.request.model`.
 - `input_messages` / `output_messages` / `system_instructions` are **opt-in**
-  and sensitive — off by default. Given the privacy rule in `CLAUDE.md` ("do
+  and sensitive — off by default. Given the privacy rule in `AGENTS.md` ("do
   not use real Photos or Messages data in debug logs"), gate these behind an
   explicit developer toggle and never enable them on real user data.
 - Deprecation: `gen_ai.prompt` / `gen_ai.completion` are removed; prompts and
