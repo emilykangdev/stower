@@ -5,5 +5,8 @@ DerivedData/
 # Package.resolved is intentionally NOT gitignored — Stower is an app, not a
 # library. Apps commit Package.resolved for reproducible builds.
 .DS_Store
-tmp/scratch/
+# All of tmp/ is local scratch — plans, briefs, reviews, retros, research. Never
+# commit it; archive anything worth keeping to a history repo so old plans and
+# scratch don't pollute the codebase.
+tmp/
 .gstack/

@@ -15,24 +15,10 @@ jobs:
       - run: swift --version
       - name: Install lint tools
         run: brew install swift-format swiftlint
-      - run: swift build
-      - run: swift test
-      - run: swift-format lint --strict --recursive Sources Tests
-      - run: swiftlint lint --strict
-      - name: Module boundary check
-        run: |
-          # Match only real Swift import declarations (anchored, optional
-          # @testable) in *.swift files, so docs/comments mentioning an import
-          # cannot trip a false-positive failure.
-          if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+(StowerPhotos|StowerMessages)([[:space:]]|\.|$)' Sources/StowerCore/ 2>/dev/null; then
-            echo "ERROR: StowerCore must not import StowerPhotos or StowerMessages"
-            exit 1
-          fi
-          if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerMessages([[:space:]]|\.|$)' Sources/StowerPhotos/ 2>/dev/null; then
-            echo "ERROR: StowerPhotos must not import StowerMessages"
-            exit 1
-          fi
-          if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerPhotos([[:space:]]|\.|$)' Sources/StowerMessages/ 2>/dev/null; then
-            echo "ERROR: StowerMessages must not import StowerPhotos"
-            exit 1
-          fi
+      # Run the SAME gate as the local pre-commit hook so CI and local stay in
+      # lockstep — one definition of "green". Any check added to precheck.sh
+      # (swift-format, swiftlint, build, test, module-boundary, and future greps a
+      # harden-guardrail pass may add) is then enforced in CI automatically, with
+      # no second place to keep in sync.
+      - name: Run precheck gate
+        run: ./Scripts/precheck.sh
