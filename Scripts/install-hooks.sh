@@ -1,38 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Use git rev-parse so this works in both regular clones and git worktrees.
-# (In a worktree, .git is a pointer file — the hooks dir is elsewhere.)
-# NOTE: --git-common-dir installs the hook for ALL worktrees in this repo.
-# The symlink points to this worktree's Scripts/precheck.sh. If you later
-# remove this worktree, the hook will break for other worktrees. Re-run
-# install-hooks.sh from any remaining worktree to fix.
+# Wire Stower's git hooks. Uses git rev-parse so this works in both regular clones
+# and git worktrees (in a worktree, .git is a pointer file — the hooks dir is
+# elsewhere).
+# NOTE: --git-common-dir installs the hooks for ALL worktrees in this repo. The
+# symlinks point to THIS worktree's Scripts/. If you later remove this worktree,
+# the hooks break for others — re-run install-hooks.sh from any remaining worktree.
+#
+# Installs:
+#   pre-commit -> Scripts/precheck.sh   (the hard mechanical gate, every commit)
+#   pre-push   -> Scripts/pre-push.sh   (advisory swift-signal-review, before a PR)
 HOOK_DIR="$(git rev-parse --git-common-dir)/hooks"
-PRECHECK="$(git rev-parse --show-toplevel)/Scripts/precheck.sh"
-HOOK="$HOOK_DIR/pre-commit"
+ROOT="$(git rev-parse --show-toplevel)"
 mkdir -p "$HOOK_DIR"
 
-# Idempotent: if our symlink is already installed, do nothing.
-if [ -L "$HOOK" ] && [ "$(readlink "$HOOK")" = "$PRECHECK" ]; then
-    echo "Pre-commit hook already installed (-> Scripts/precheck.sh)."
-    exit 0
-fi
+install_hook() {
+    local name="$1" target="$2" hook="$HOOK_DIR/$1"
 
-# Never clobber a pre-existing hook we did not install — doing so silently
-# drops whatever checks the contributor's hook performed. Refuse with
-# instructions instead (use -e || -L so broken symlinks are caught too).
-if [ -e "$HOOK" ] || [ -L "$HOOK" ]; then
-    {
-        echo "ERROR: a pre-commit hook already exists and was not installed by Stower:"
-        echo "         $HOOK"
-        echo "Refusing to overwrite it. To use Stower's precheck hook, either:"
-        echo "  - back up and remove the existing hook:"
-        echo "        mv \"$HOOK\" \"$HOOK.bak\""
-        echo "  - or chain precheck.sh from your existing hook by adding this line to it:"
-        echo "        \"$PRECHECK\""
-        echo "Then re-run Scripts/install-hooks.sh."
-    } >&2
-    exit 1
-fi
+    # Idempotent: our symlink is already in place.
+    if [ -L "$hook" ] && [ "$(readlink "$hook")" = "$target" ]; then
+        echo "$name hook already installed (-> ${target#"$ROOT"/})."
+        return 0
+    fi
 
-ln -s "$PRECHECK" "$HOOK"
-echo "Pre-commit hook installed."
+    # Never clobber a hook we did not install — that would silently drop whatever
+    # checks it performed. Refuse with instructions instead (use -e || -L so a
+    # broken symlink is caught too).
+    if [ -e "$hook" ] || [ -L "$hook" ]; then
+        {
+            echo "ERROR: a $name hook already exists and was not installed by Stower:"
+            echo "         $hook"
+            echo "Refusing to overwrite it. Either back it up and remove it:"
+            echo "        mv \"$hook\" \"$hook.bak\""
+            echo "  or chain it from your existing hook by adding this line:"
+            echo "        \"$target\""
+            echo "Then re-run Scripts/install-hooks.sh."
+        } >&2
+        return 1
+    fi
+
+    ln -s "$target" "$hook"
+    echo "$name hook installed (-> ${target#"$ROOT"/})."
+}
+
+rc=0
+install_hook pre-commit "$ROOT/Scripts/precheck.sh" || rc=1
+install_hook pre-push "$ROOT/Scripts/pre-push.sh" || rc=1
+exit "$rc"

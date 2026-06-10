@@ -68,8 +68,7 @@ This skill does the repo-wide replacement; `swift-signal-review` finds; this fix
    remain.
 
 6. **Commit as a pure structural change.** One commit, one concern: "refactor: replace
-   <bad> with <good> repo-wide". No feature work in the same commit. Add the
-   `Assisted-by:` trailer per `AI_POLICY.md` if AI did the work. Do not use
+   <bad> with <good> repo-wide". No feature work in the same commit. Do not use
    `--no-verify`.
 
 7. **Close the loop.** If this pattern has no `gate` yet, recommend `harden-guardrail`

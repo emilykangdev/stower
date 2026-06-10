@@ -47,8 +47,8 @@ required framework flags automatically.
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`AGENTS.md`](AGENTS.md) (agent rule
-set, imported by `CLAUDE.md`), and [`AI_POLICY.md`](AI_POLICY.md).
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) (agent rule
+set, imported by `CLAUDE.md`).
 
 ## License
 

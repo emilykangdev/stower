@@ -2,7 +2,7 @@
 
 Canonical rule set for every AI coding agent in this repo (Claude Code, Codex,
 and any other). `CLAUDE.md` imports this file with `@AGENTS.md`; do not duplicate
-rules there. `AI_POLICY.md` is the human-contributor disclosure policy.
+rules there.
 
 You are working in a Swift monorepo for an always-local AI recall app.
 Apply the following constraints to every change you make.

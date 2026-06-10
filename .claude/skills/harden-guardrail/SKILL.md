@@ -87,8 +87,7 @@ the loop; only drop down a rung when the pattern genuinely can't be mechanized.
    confirm `./Scripts/precheck.sh` passes.
 
 5. **Commit.** Keep the guardrail change separate from any feature work. Conventional
-   message, e.g. "chore: add guardrail for <pattern>". Add `Assisted-by:` per
-   `AI_POLICY.md`. No `--no-verify`.
+   message, e.g. "chore: add guardrail for <pattern>". No `--no-verify`.
 
 6. **Recommend stronger enforcement, then ask the user.** End every run here, even when
    this pass already added a gate. Prose in `AGENTS.md` is the weakest guardrail — it

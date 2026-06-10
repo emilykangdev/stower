@@ -11,9 +11,10 @@ is small, reviewable changes that keep the guardrails green.
 
 - Run `./Scripts/precheck.sh`. It runs swift-format, SwiftLint, `swift build`,
   `swift test`, and the module-boundary checks. It must exit 0.
-- Install the pre-commit hook once with `./Scripts/install-hooks.sh` so the
-  check runs automatically on every commit (works in regular clones and git
-  worktrees).
+- Install the git hooks once with `./Scripts/install-hooks.sh` (or run
+  `./Scripts/new-worktree.sh`): pre-commit runs `precheck.sh` on every commit,
+  and pre-push runs the advisory `swift-signal-review` before you open a PR.
+  Works in regular clones and git worktrees.
 - Keep commits scoped: one commit, one concern. Do not refactor unrelated
   code while landing a feature.
 
@@ -27,9 +28,9 @@ is small, reviewable changes that keep the guardrails green.
 
 ## AI-assisted contributions
 
-If a change was substantially AI-generated, add an `Assisted-by:` trailer to
-the commit message naming the tool. See `AI_POLICY.md` for the full policy and
-`AGENTS.md` for the agent rule set.
+Stower is built primarily by AI agents under the maintainer's review. No
+per-commit AI attribution trailer is required. See `AGENTS.md` for the agent
+rule set.
 
 ## Conventions
 
