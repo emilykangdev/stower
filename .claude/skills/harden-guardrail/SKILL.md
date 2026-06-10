@@ -24,8 +24,10 @@ the loop; only drop down a rung when the pattern genuinely can't be mechanized.
    - A grep step in `Scripts/precheck.sh` (mirror the anchored, `*.swift`-scoped style
      of the existing step 5 module-boundary checks so a comment or string can't trip a
      false positive).
-   Why best: it runs on every commit and in CI, returns a binary signal, and can't be
-   rubber-stamped. After adding it, the catalog entry's **Caught by** becomes `gate`.
+   Why best: `precheck.sh` runs on every commit (pre-commit hook) and in CI (the
+   workflow invokes `./Scripts/precheck.sh` directly), so a check added there is
+   enforced in both places at once — it returns a binary signal and can't be skipped
+   or rubber-stamped. After adding it, the catalog entry's **Caught by** becomes `gate`.
 
 2. **Prohibitive AGENTS.md rule — when judgment is required.** The pattern needs human
    reasoning to spot. Add a "Do not X" line to `AGENTS.md`. Phrase it prohibitively,

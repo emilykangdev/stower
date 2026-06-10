@@ -14,7 +14,9 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
   project skills + a shared pattern catalog live in `.claude/skills/`, mirrored to
   `.agents/skills/` for Codex: `swift-signal-review` (notice), `swift-pattern-sweep`
   (eradicate sweep-able patterns), `harden-guardrail` (turn a recurrence into a
-  gate), and `SWIFT_PATTERNS.md` (bad→good catalog). Still no business logic.
+  gate), and `SWIFT_PATTERNS.md` (bad→good catalog). CI now runs
+  `Scripts/precheck.sh` directly so the gate has one definition shared with the
+  pre-commit hook. Still no business logic.
 
 ## Naming
 
