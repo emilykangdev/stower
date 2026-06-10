@@ -1,5 +1,13 @@
 # EvalSuite — 5-metric evaluation suite
 
+> **Status: future work (v2+). Do not implement without a human asking.**
+> This file is a design anchor only. There is no eval code today, and none should
+> be written — no `Evals/` directory, no metric implementations, no new
+> dependencies — until a human explicitly asks for it. It can't be built yet
+> anyway: there is no retrieval or caption pipeline to evaluate. If you are an
+> agent and a task seems to call for the eval suite, stop and confirm with the
+> human first.
+
 Design anchor for the eval harness. **No implementation yet.** When built, it
 runs against an `Evals/goldens.json` file and stores results in SQLite with
 timestamps for regression tracking, failing (or warning) the build when any

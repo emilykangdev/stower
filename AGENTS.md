@@ -71,11 +71,20 @@ follow the relevant `SKILL.md` directly. The bad→good pattern catalog is
 `.claude/skills/SWIFT_PATTERNS.md` (single source of truth; read it before
 reviewing or fixing Swift).
 
-- Before committing or opening a PR, run `swift-signal-review` on the diff.
-- When a pattern recurs (≥2×): if the catalog marks it `Sweep-able: yes`, run
-  `swift-pattern-sweep` to remove every instance, then `harden-guardrail` to add a
-  gate so it can't return. If it is `Sweep-able: no` (judgment/process/architectural),
-  fix the sites by hand and route it straight to `harden-guardrail` — do not sweep.
-- Do not add a new convention rule by hand — route it through `harden-guardrail`
-  so it lands as a gate first, an `AGENTS.md` rule only when it can't be mechanized,
-  and gets recorded in the catalog.
+Run the full pattern pass once per branch, when you are about to open a PR — not on
+every commit. Sweeping and hardening prompt the human, so running them mid-branch is
+noise; batch them at PR time. (The mechanical gate, `precheck.sh`, still runs on every
+commit.) Order matters — noticing comes before fixing:
+
+1. Run `swift-signal-review` on the whole branch diff (`git diff origin/main...`) to
+   notice the bad patterns in the changes you made.
+2. For each noticed pattern the catalog marks `Sweep-able: yes`, run
+   `swift-pattern-sweep` once to remove every instance repo-wide. Patterns marked
+   `Sweep-able: no` (judgment/process/architectural) are fixed by hand, not swept.
+3. For each pattern that also appears elsewhere in the codebase (recurs ≥2×), run
+   `harden-guardrail`; it proposes test/CI enforcement and asks you how to lock the
+   pattern down so it can't come back.
+
+Do not add a new convention rule by hand — route it through `harden-guardrail` so it
+lands as a gate first, an `AGENTS.md` rule only when it can't be mechanized, and gets
+recorded in the catalog.

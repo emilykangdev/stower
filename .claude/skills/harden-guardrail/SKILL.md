@@ -11,6 +11,20 @@ diff; a guardrail fixes the whole class. Recurrence ≥2× is what converts a ni
 into a rule. The goal is to replace a "vibe" ("this looks off") with a signal the
 agent can't argue with.
 
+## First, every run — before anything else
+
+1. **Prompt the user about how this pass will change `AGENTS.md`.** State which rule
+   you intend to add or edit, the exact wording, and where it goes — then wait for
+   their confirmation before touching `AGENTS.md`. The user curates what every agent
+   reads; no rule lands in `AGENTS.md` without a human in the loop. (If the fix is a
+   rung-1 gate or the catalog only, say so — there may be no `AGENTS.md` change at all.)
+2. **Keep `AGENTS.md` under 200 lines.** Check first: `wc -l AGENTS.md`. If a new rule
+   would push it past 200, do not just append — tighten or merge existing rules,
+   replace a stale one, or move the detail into `SWIFT_PATTERNS.md` / a decision skill
+   and leave only a one-line pointer in `AGENTS.md`. A rule file past the model's
+   instruction-following ceiling gets silently ignored, which degrades every change
+   that reads it.
+
 ## The ladder (prefer the highest rung that fits)
 
 Apply guardrails in this order. Higher rungs are more objective and need no human in
@@ -24,6 +38,9 @@ the loop; only drop down a rung when the pattern genuinely can't be mechanized.
    - A grep step in `Scripts/precheck.sh` (mirror the anchored, `*.swift`-scoped style
      of the existing step 5 module-boundary checks so a comment or string can't trip a
      false positive).
+   - A Swift Testing test that fails when the pattern is present — assert the invariant
+     the bad form would break. Tests run under `swift test`, which `precheck.sh` (and
+     therefore CI) already executes, so a test is a real gate, not just documentation.
    Why best: `precheck.sh` runs on every commit (pre-commit hook) and in CI (the
    workflow invokes `./Scripts/precheck.sh` directly), so a check added there is
    enforced in both places at once — it returns a binary signal and can't be skipped
@@ -73,6 +90,21 @@ the loop; only drop down a rung when the pattern genuinely can't be mechanized.
    message, e.g. "chore: add guardrail for <pattern>". Add `Assisted-by:` per
    `AI_POLICY.md`. No `--no-verify`.
 
+6. **Recommend stronger enforcement, then ask the user.** End every run here, even when
+   this pass already added a gate. Prose in `AGENTS.md` is the weakest guardrail — it
+   only holds while the agent reads and honors it; tests and CI cannot be argued with.
+   So always close by proposing at least two concrete ways to enforce this pattern
+   mechanically so it can't reappear, biased toward tests and CI — not more Markdown.
+   For example:
+   - a Swift Testing test that fails when the pattern is present (assert an invariant
+     the bad form would break);
+   - a swiftlint `custom_rules` regex, or enabling a relevant opt-in rule;
+   - a `precheck.sh` grep (run in CI, so it gates local and CI together);
+   - a CI step or build setting that makes the violation impossible to merge.
+   Then ask the user directly: "These are the patterns we just hardened — how do you
+   want to refine the guardrails (tests / CI / lint) so this class can't come back?"
+   Wait for their direction before building anything beyond what this run implemented.
+
 ## Output format
 
 ```
@@ -87,6 +119,13 @@ Implemented:
 Verified: new check fails on bad sample, passes on good. precheck.sh PASS.
 
 Existing instances: <swept via swift-pattern-sweep | none>
+
+Stronger enforcement (proposed — biased to tests/CI, not prose):
+- <suggestion 1, e.g. a Swift Testing test that fails on the pattern>
+- <suggestion 2, e.g. a swiftlint custom_rules regex or a CI step>
+Question for you: how do you want to lock this down so it can't come back
+(tests / CI / lint)?
+
 Next: <commit | sweep first>
 ```
 

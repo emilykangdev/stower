@@ -1,5 +1,12 @@
 # LocalLLMTrace — local-only LLM call logging schema
 
+> **Status: future work. Do not implement without a human asking.**
+> This file is a design anchor only. There is no trace-logging code today, and
+> none should be written — no schema migration, no writer, no new dependencies —
+> until a human explicitly asks for it. It can't be built yet anyway: there is no
+> `StowerCore` LLM wrapper to trace. If you are an agent and a task seems to call
+> for this, stop and confirm with the human first.
+
 Design anchor for when `StowerCore`'s LLM wrapper gets wired up. **No
 implementation yet.** This file fixes the schema now so the writer, when
 built, mirrors the OpenTelemetry GenAI semantic conventions for forward

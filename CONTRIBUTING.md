@@ -1,7 +1,11 @@
 # Contributing to Stower
 
-Thanks for helping build Stower. The bar is small, reviewable changes that
-keep the guardrails green.
+> **We are not accepting external contributions right now.** Stower is in early,
+> solo development. Please do not open pull requests; issues and discussion may
+> not get a response. This may change as the project matures — check back later.
+
+The notes below are for the maintainer and AI agents working in the repo. The bar
+is small, reviewable changes that keep the guardrails green.
 
 ## Before you commit
 

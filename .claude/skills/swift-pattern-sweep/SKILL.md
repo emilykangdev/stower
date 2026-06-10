@@ -31,10 +31,27 @@ This skill does the repo-wide replacement; `swift-signal-review` finds; this fix
    note the bad form, the one good form, and what catches it. The good form is the
    *only* replacement; do not introduce a second variant during the sweep.
 
-2. **Find every instance.** `Grep` the bad shape across `Sources/` and `Tests/`. Be
-   precise — match real Swift, not strings or comments that mention it (mirror how
-   `precheck.sh` step 5 anchors its import checks). List every hit as `file:line`
-   before changing anything, and show the list.
+2. **Find every instance — search the whole repo, not just two folders.** Do not
+   assume Swift only lives in `Sources/` and `Tests/`. The pattern can hide anywhere:
+   `Package.swift`, `Scripts/`, future app targets (e.g. `Apps/`), CI and config
+   (`.github/`, `.swiftlint.yml`), and code samples inside docs. Sweep the entire
+   codebase. Token budget is not a constraint here — be exhaustive; thoroughness is the
+   whole point of a sweep.
+   - **Read every single file; grep is not sufficient.** Enumerate every file in the
+     repo (skip only `.git/`, `.build/`, `DerivedData/`, and binary assets) and
+     actually open and read each one. On every file, do a fuzzy, meaning-level match:
+     ask "could anything here be an instance of this bad form?" — including variants
+     grep can never express, such as different spacing or line breaks, renamed locals,
+     or an equivalent construct that achieves the same bad thing a different way. Grep
+     is at most a supplementary first pass to prioritize what to look at; a clean grep
+     is never proof there are no instances. The token cost of reading the whole tree is
+     expected and acceptable — reading every file is the job.
+   - **List every candidate as `file:line` before changing anything**, and show the
+     list.
+   - **When unsure, ask the human.** If you can't tell whether a candidate is a real
+     instance (vs a comment or string that merely mentions the pattern, or a
+     deliberate, justified exception), do not guess — ask. A wrong "fix" injects a new
+     bad pattern, which is exactly what this skill exists to prevent.
 
 3. **Confirm scope.** If the sweep touches more than a handful of files, summarize the
    blast radius and confirm before editing. A sweep is a structural change.
@@ -46,8 +63,9 @@ This skill does the repo-wide replacement; `swift-signal-review` finds; this fix
 
 5. **Verify with the gate.** `./Scripts/precheck.sh` must pass. If the pattern has a
    `gate` (a swiftlint/swift-format rule), the sweep is only done when the gate is
-   green with zero remaining instances. If it is a `judgment` pattern, grep again to
-   prove zero remain.
+   green with zero remaining instances. If it is a `judgment` pattern, search the whole
+   repo again (the same wide net as step 2, not just `Sources/`/`Tests/`) to prove zero
+   remain.
 
 6. **Commit as a pure structural change.** One commit, one concern: "refactor: replace
    <bad> with <good> repo-wide". No feature work in the same commit. Add the
