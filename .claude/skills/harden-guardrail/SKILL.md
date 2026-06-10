@@ -48,7 +48,9 @@ the loop; only drop down a rung when the pattern genuinely can't be mechanized.
 
 2. **Record it in the catalog.** Add or update the entry in
    `.claude/skills/SWIFT_PATTERNS.md` (shape: **Bad / Why it spreads / Good / Caught
-   by**). The catalog is the source of truth; it gets the entry before any gate.
+   by / Sweep-able**). Both review routing and `swift-pattern-sweep` depend on the
+   `Sweep-able` field, so never omit it. The catalog is the source of truth; it gets
+   the entry before any gate.
 
 3. **Pick the highest rung that fits** and implement it:
    - Rung 1: edit `.swiftlint.yml` / `.swift-format` / `Scripts/precheck.sh`. Verify
@@ -59,9 +61,11 @@ the loop; only drop down a rung when the pattern genuinely can't be mechanized.
    - Rung 3: scaffold the decision skill under `.claude/skills/<name>/SKILL.md`,
      reference it from `AGENTS.md` and the catalog.
 
-4. **Eradicate existing instances.** A new gate will fail the current tree if old
-   instances remain. Hand off to `swift-pattern-sweep` (or do the sweep inline) so the
-   tree is clean, then confirm `./Scripts/precheck.sh` passes.
+4. **Eradicate existing instances.** A new gate or rule will fail (or want) the tree
+   clean if old instances remain. If the catalog entry is `Sweep-able: yes`, hand off
+   to `swift-pattern-sweep` (or sweep inline). If it is `Sweep-able: no`, fix the sites
+   by hand — do not invoke the sweep, which refuses non-sweepable entries. Either way,
+   confirm `./Scripts/precheck.sh` passes.
 
 5. **Commit.** Keep the guardrail change separate from any feature work. Conventional
    message, e.g. "chore: add guardrail for <pattern>". Add `Assisted-by:` per

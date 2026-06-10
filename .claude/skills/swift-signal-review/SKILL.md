@@ -77,7 +77,7 @@ Scope: <N files, M hunks> vs origin/main
 ### Must fix
 - Sources/StowerMessages/Reader.swift:42 — [#13 catch-and-ignore] empty catch swallows
   a decode failure. Propagate with `throws`. Recurs: 3× (also Reader.swift:88, Store.swift:17)
-  → run swift-pattern-sweep on #13, then harden-guardrail.
+  → #13 is Sweep-able: no, so fix the three sites by hand, then harden-guardrail.
 
 ### Consider
 - ...
