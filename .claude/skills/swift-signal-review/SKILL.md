@@ -32,6 +32,7 @@ it is the single source of truth. Do not invent findings outside it without sayi
    hunk, check it against every `judgment` entry (the `gate` entries are already
    covered by step 2, but call out if a gate finding suggests a deeper pattern).
    Pay special attention to the entries with no automated check:
+   - #5 loose access control (the gate only checks an ACL exists, not that it's narrow)
    - #7 XCTest in new tests
    - #9 bypassing `IndexedItem`
    - #10 public name without `Stower` prefix

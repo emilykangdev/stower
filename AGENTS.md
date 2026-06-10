@@ -72,8 +72,10 @@ follow the relevant `SKILL.md` directly. The bad→good pattern catalog is
 reviewing or fixing Swift).
 
 - Before committing or opening a PR, run `swift-signal-review` on the diff.
-- When a pattern recurs (≥2×), run `swift-pattern-sweep` to remove every
-  instance, then `harden-guardrail` to add an automated gate so it can't return.
+- When a pattern recurs (≥2×): if the catalog marks it `Sweep-able: yes`, run
+  `swift-pattern-sweep` to remove every instance, then `harden-guardrail` to add a
+  gate so it can't return. If it is `Sweep-able: no` (judgment/process/architectural),
+  fix the sites by hand and route it straight to `harden-guardrail` — do not sweep.
 - Do not add a new convention rule by hand — route it through `harden-guardrail`
   so it lands as a gate first, an `AGENTS.md` rule only when it can't be mechanized,
   and gets recorded in the catalog.

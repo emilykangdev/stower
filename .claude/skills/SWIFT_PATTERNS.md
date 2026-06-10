@@ -34,7 +34,9 @@ Legend for **Sweep-able**:
   `guard let foo = value as? Foo else { ... }`.
 - **Caught by:** `gate` — swift-format `NeverForceUnwrap` / `NeverUseForceTry`,
   swiftlint `force_unwrapping` / `force_cast` / `force_try`.
-- **Sweep-able:** yes.
+- **Sweep-able:** no — there is no single good form; each site needs a decision
+  (guard-return, throw, `as?` fallback), so a mechanical replace could change behavior.
+  The `gate` already blocks new instances.
 
 ## 2. Deep nesting / high cyclomatic complexity
 
@@ -72,8 +74,11 @@ Legend for **Sweep-able**:
   depended on and can't be narrowed later.
 - **Good:** strictest ACL that works. `internal` by default, `public` only when a
   cross-module consumer truly needs it. Prefer `private` to `fileprivate`.
-- **Caught by:** `gate` — swiftlint `explicit_acl` / `explicit_top_level_acl`.
-- **Sweep-able:** yes — tighten the explicit ACL keyword at each flagged site.
+- **Caught by:** `judgment`. swiftlint `explicit_acl` / `explicit_top_level_acl` gate
+  that an ACL keyword is *present*, but they do not flag an over-broad one — an
+  unnecessarily `public` declaration still passes the gate and needs review.
+- **Sweep-able:** no — deciding which `public` should be `internal` depends on the
+  cross-module consumers; that is judgment, not a mechanical replace.
 
 ## 6. Block comments
 
