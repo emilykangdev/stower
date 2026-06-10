@@ -16,6 +16,13 @@ Legend for **Caught by**:
 - `judgment` — no automated check; relies on `swift-signal-review`. Candidate for
   `harden-guardrail` to mechanize.
 
+Legend for **Sweep-able**:
+- `yes` — one mechanical, repo-wide find-and-replace to the single good form is
+  meaningful, so `swift-pattern-sweep` can eradicate every instance.
+- `no` — the fix needs judgment, authored content, an architectural move, or is a
+  process rule. There is no single mechanical replacement, so `swift-pattern-sweep`
+  does not apply; route recurrences to `harden-guardrail` and fix sites by hand.
+
 ---
 
 ## 1. Force unwrap and force try
@@ -27,6 +34,7 @@ Legend for **Caught by**:
   `guard let foo = value as? Foo else { ... }`.
 - **Caught by:** `gate` — swift-format `NeverForceUnwrap` / `NeverUseForceTry`,
   swiftlint `force_unwrapping` / `force_cast` / `force_try`.
+- **Sweep-able:** yes.
 
 ## 2. Deep nesting / high cyclomatic complexity
 
@@ -37,6 +45,7 @@ Legend for **Caught by**:
   `map`/`compactMap`/`first(where:)`.
 - **Caught by:** `gate` — swiftlint `cyclomatic_complexity` warning 8. If a function
   legitimately needs more, add `// swiftlint:disable:next` with a one-line reason.
+- **Sweep-able:** no — each site needs a judgment-driven refactor, not one replacement.
 
 ## 3. Over-long functions
 
@@ -44,6 +53,7 @@ Legend for **Caught by**:
 - **Why it spreads:** becomes the size template for the next function.
 - **Good:** keep bodies under 40 lines; extract phases into named functions.
 - **Caught by:** `gate` — swiftlint `function_body_length` warning 40.
+- **Sweep-able:** no — extraction points differ per function.
 
 ## 4. Undocumented public API
 
@@ -53,6 +63,7 @@ Legend for **Caught by**:
 - **Good:** `///` one-line summary first, then params/returns. Triple-slash only.
 - **Caught by:** `gate` — swift-format `AllPublicDeclarationsHaveDocumentation` +
   `BeginDocumentationCommentWithOneLineSummary`, swiftlint `missing_docs`.
+- **Sweep-able:** no — the doc text must be authored per declaration.
 
 ## 5. Loose access control (public-by-default)
 
@@ -62,12 +73,14 @@ Legend for **Caught by**:
 - **Good:** strictest ACL that works. `internal` by default, `public` only when a
   cross-module consumer truly needs it. Prefer `private` to `fileprivate`.
 - **Caught by:** `gate` — swiftlint `explicit_acl` / `explicit_top_level_acl`.
+- **Sweep-able:** yes — tighten the explicit ACL keyword at each flagged site.
 
 ## 6. Block comments
 
 - **Bad:** `/** ... */` doc blocks.
 - **Good:** `///` triple-slash.
 - **Caught by:** `gate` — swift-format `NoBlockComments` / `UseTripleSlashForDocumentationComments`.
+- **Sweep-able:** yes — convert `/** */` to `///` mechanically.
 
 ## 7. XCTest in new tests
 
@@ -78,6 +91,7 @@ Legend for **Caught by**:
   diffs use `expectNoDifference` (swift-custom-dump).
 - **Caught by:** `judgment` (no gate yet). Detect: `import XCTest` under `Tests/`.
   Strong candidate for `harden-guardrail` to add a precheck grep.
+- **Sweep-able:** no — each test's assertions and structure must be rewritten.
 
 ## 8. Module-boundary violation
 
@@ -88,6 +102,7 @@ Legend for **Caught by**:
 - **Good:** dependency arrows point INTO `StowerCore`. Adapters never know about each
   other. Cross the boundary via the `IndexedItem` protocol.
 - **Caught by:** `gate` — `Scripts/precheck.sh` step 5.
+- **Sweep-able:** no — fixing it means moving code across modules, not replacing text.
 
 ## 9. Bypassing IndexedItem
 
@@ -98,6 +113,7 @@ Legend for **Caught by**:
 - **Good:** adapters produce values conforming to `StowerCore.IndexedItem`; the index
   only ever sees `IndexedItem`.
 - **Caught by:** `judgment`.
+- **Sweep-able:** no — an architectural change per ingestion path.
 
 ## 10. Public name without `Stower` prefix
 
@@ -107,6 +123,7 @@ Legend for **Caught by**:
 - **Good:** `public struct StowerSearchResult`, or nest the type inside a `Stower*`
   type. Underscore-prefixed public names read as internal.
 - **Caught by:** `judgment`.
+- **Sweep-able:** yes — rename the declaration and its references repo-wide.
 
 ## 11. Mixed structural + behavioral change in one commit
 
@@ -117,6 +134,8 @@ Legend for **Caught by**:
 - **Good:** one commit, one concern. Refactors ship separately from features.
 - **Caught by:** `judgment`. Three things get a diff rejected on sight: an unexpected
   loop, functionality nobody asked for, a test weakened or deleted to make it pass.
+- **Sweep-able:** no — this is a process rule about how changes are committed, not a
+  code shape. Route recurrences to `harden-guardrail` / `AGENTS.md`.
 
 ## 12. Real Photos/Messages data in fixtures, logs, prompts
 
@@ -126,6 +145,8 @@ Legend for **Caught by**:
 - **Good:** synthetic fixtures only, generated in-test. Never real user data anywhere
   committed or logged.
 - **Caught by:** `judgment`.
+- **Sweep-able:** no — deciding what is real user data and replacing it with safe
+  synthetic equivalents needs judgment, not a mechanical replace.
 
 ## 13. Catch-and-ignore
 
@@ -135,6 +156,7 @@ Legend for **Caught by**:
 - **Good:** handle it, or propagate with `throws`. `try?` only when nil genuinely is
   the right, intended outcome (and say so).
 - **Caught by:** `judgment`.
+- **Sweep-able:** no — the right handling differs per call site.
 
 ## 14. New `Utilities`/`Common` module or a fourth source adapter
 
@@ -144,6 +166,7 @@ Legend for **Caught by**:
 - **Good:** shared code goes in `StowerCore`. New data sources go through
   discussion + brief + plan before any module exists.
 - **Caught by:** `judgment`.
+- **Sweep-able:** no — an architecture/process decision, not a code shape.
 
 ## 15. Naming by type instead of role
 
@@ -153,14 +176,17 @@ Legend for **Caught by**:
   (`isEmpty`, `intersects`). Mutating/non-mutating pairs follow `-ed`/`-ing`.
   Anchor to Apple's API Design Guidelines.
 - **Caught by:** `judgment`.
+- **Sweep-able:** no — the right name depends on the role at each site.
 
 ---
 
 ## How to add an entry
 
 Append a numbered section in the same shape: **Bad / Why it spreads / Good / Caught
-by**. New entries usually arrive via `harden-guardrail` after a finding recurs ≥2×.
-If the new rule is mechanizable, the same pass that adds the entry should add the
-`gate` (swiftlint/swift-format rule or `precheck.sh` grep) so **Caught by** can say
-`gate`, not `judgment`. A pattern only counts as eliminated when an automated check
-rejects it, or the catalog plus a sweep has removed every existing instance.
+by / Sweep-able**. New entries usually arrive via `harden-guardrail` after a finding
+recurs ≥2×. If the new rule is mechanizable, the same pass that adds the entry should
+add the `gate` (swiftlint/swift-format rule or `precheck.sh` grep) so **Caught by**
+can say `gate`, not `judgment`. Set **Sweep-able** honestly: `yes` only when one
+repo-wide find-and-replace to the single good form is meaningful. A pattern only
+counts as eliminated when an automated check rejects it, or (for sweep-able entries)
+a sweep has removed every existing instance.

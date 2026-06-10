@@ -64,7 +64,10 @@ Apply the following constraints to every change you make.
 
 ## Signal-coding skills
 
-These keep bad patterns from spreading. The bad→good pattern catalog is
+These keep bad patterns from spreading. The skills live in `.claude/skills/`
+(Claude Code's discovery path) and are mirrored to `.agents/skills/` via symlink so
+Codex discovers them too. Any agent that does not auto-load skills should read and
+follow the relevant `SKILL.md` directly. The bad→good pattern catalog is
 `.claude/skills/SWIFT_PATTERNS.md` (single source of truth; read it before
 reviewing or fixing Swift).
 

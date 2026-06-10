@@ -16,15 +16,20 @@ This skill does the repo-wide replacement; `swift-signal-review` finds; this fix
 
 ## Inputs
 
-- **Which pattern.** A catalog entry number/name (e.g. "#13 catch-and-ignore"), or a
+- **Which pattern.** A catalog entry number/name (e.g. "#6 block comments"), or a
   description. If it is not in the catalog, stop and recommend adding it via
   `harden-guardrail` first — a sweep without a written rule is just a one-off edit.
+- **Sweep-able check.** Only entries flagged `Sweep-able: yes` can be swept. If the
+  entry is `Sweep-able: no` (judgment, authored content, an architectural move, or a
+  process rule — e.g. #11 mixed commit, #12 real data, #14 new module), stop: a
+  mechanical repo-wide replace would be wrong. Route it to `harden-guardrail` and fix
+  the sites by hand instead.
 
 ## Steps
 
-1. **Pin the target.** Read the catalog entry: the bad form, the one good form, and
-   what catches it. The good form is the *only* replacement; do not introduce a second
-   variant during the sweep.
+1. **Pin the target.** Read the catalog entry: confirm it is `Sweep-able: yes`, then
+   note the bad form, the one good form, and what catches it. The good form is the
+   *only* replacement; do not introduce a second variant during the sweep.
 
 2. **Find every instance.** `Grep` the bad shape across `Sources/` and `Tests/`. Be
    precise — match real Swift, not strings or comments that mention it (mirror how

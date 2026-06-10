@@ -9,6 +9,12 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 - 2026-05-13: Scaffolding complete. Three library targets (StowerCore,
   StowerPhotos, StowerMessages) + guardrail governance + lint configs + CI.
   No business logic yet. Mac app shell (StowerMac) deferred to its own plan.
+- 2026-06-09: Added signal-coding guardrails (PR #2). `AGENTS.md` is now the
+  canonical cross-agent rule set; `CLAUDE.md` imports it via `@AGENTS.md`. Three
+  project skills + a shared pattern catalog live in `.claude/skills/`, mirrored to
+  `.agents/skills/` for Codex: `swift-signal-review` (notice), `swift-pattern-sweep`
+  (eradicate sweep-able patterns), `harden-guardrail` (turn a recurrence into a
+  gate), and `SWIFT_PATTERNS.md` (bad→good catalog). Still no business logic.
 
 ## Naming
 

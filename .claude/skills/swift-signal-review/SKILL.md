@@ -52,9 +52,14 @@ it is the single source of truth. Do not invent findings outside it without sayi
    exists elsewhere in the tree (`Grep` the offending shape). Recurrence is the
    signal that converts a nitpick into a rule:
    - **1 occurrence** → fix it inline, note it.
-   - **≥2 occurrences** → this is a pattern, not a one-off. Recommend two follow-ups:
-     `swift-pattern-sweep` to eradicate every instance, and `harden-guardrail` to add
-     an automated gate so it can't return.
+   - **≥2 occurrences** → this is a pattern, not a one-off. Route by the catalog
+     entry's **Sweep-able** flag:
+     - `Sweep-able: yes` → recommend `swift-pattern-sweep` to eradicate every
+       instance, then `harden-guardrail` to add a gate so it can't return.
+     - `Sweep-able: no` (judgment / process / architectural — e.g. #11, #12, #14) →
+       do not recommend a sweep; there is no single mechanical replacement. Fix the
+       instances in place and route to `harden-guardrail` (a gate where mechanizable,
+       otherwise an `AGENTS.md` rule).
 
 6. **Report.** Group findings by severity. For each: `file:line`, the catalog entry
    number (or "outside catalog"), the one-line fix, and whether it recurs. End with a
