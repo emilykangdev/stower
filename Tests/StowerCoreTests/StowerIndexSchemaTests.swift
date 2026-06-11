@@ -57,8 +57,8 @@ internal struct StowerIndexSchemaTests {
         let fixture = try IndexFixture()
         defer { fixture.remove() }
         let index = try StowerIndex(path: fixture.databaseURL.path)
-        try await index.ingest([SchemaTestItem(id: "one", text: "first")])
-        try await index.ingest([SchemaTestItem(id: "one", text: "second")])
+        try await index.replaceAll(with: [SchemaTestItem(id: "one", text: "first")])
+        try await index.replaceAll(with: [SchemaTestItem(id: "one", text: "second")])
         let databaseQueue = try DatabaseQueue(path: fixture.databaseURL.path)
 
         try await databaseQueue.write { database in

@@ -26,7 +26,7 @@ public actor StowerChatDatabaseReader {
         now: Date = Date()
     ) throws -> [StowerMessageItem] {
         guard days >= 0 else {
-            throw StowerMessagesError.invalidRow("Window days must not be negative.")
+            throw StowerMessagesError.invalidArgument("Window days must not be negative.")
         }
         let startDate = now.addingTimeInterval(-Double(days) * 86_400)
         let source = try snapshot.ingestRows(since: startDate)

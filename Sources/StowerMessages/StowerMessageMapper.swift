@@ -1,6 +1,10 @@
 import Foundation
 
 internal enum StowerMessageMapper {
+    /// The balloon bundle used by iMessage link previews; their body text is
+    /// the shared URL, so they stay indexable unlike other balloon payloads.
+    internal static let urlPreviewBalloonBundleID = "com.apple.messages.URLBalloonProvider"
+
     internal static func map(
         row: StowerSourceMessageRow,
         body: String?,
@@ -8,6 +12,7 @@ internal enum StowerMessageMapper {
         contacts: StowerContactsResolver
     ) -> StowerMessageItem? {
         guard row.associatedMessageType == 0, row.itemType == 0,
+            row.balloonBundleID == nil || row.balloonBundleID == urlPreviewBalloonBundleID,
             let date = StowerMessageDate.date(from: row.rawDate),
             let body = cleanBody(body)
         else {

@@ -10,6 +10,7 @@ internal enum StowerMessageQuery {
             database,
             sql: baseSelect + """
                 WHERE m.date != 0
+                  AND \(indexableMessagePredicate)
                   AND \(referenceSecondsExpression) >= ?
                 ORDER BY m.date ASC, m.ROWID ASC, c.ROWID ASC
                 """,
@@ -26,9 +27,7 @@ internal enum StowerMessageQuery {
             database,
             sql: baseSelect + """
                 WHERE m.date != 0
-                  AND m.associated_message_type = 0
-                  AND m.item_type = 0
-                  AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL)
+                  AND \(indexableMessagePredicate)
                   AND (c.guid = ? OR c.chat_identifier = ?)
                 ORDER BY m.date DESC, m.ROWID DESC
                 LIMIT ?
@@ -44,6 +43,8 @@ internal enum StowerMessageQuery {
         guard !chatRowIDs.isEmpty else {
             return [:]
         }
+        // One placeholder per chat; SQLite allows 32,766 parameters, far above
+        // any realistic Messages chat count.
         let placeholders = Array(repeating: "?", count: chatRowIDs.count).joined(separator: ",")
         let sortedIDs = chatRowIDs.sorted()
         let rows = try Row.fetchAll(
@@ -61,6 +62,18 @@ internal enum StowerMessageQuery {
             values.map { $0["handle"] }
         }
     }
+
+    /// Matches plain messages plus URL link previews.
+    ///
+    /// Link previews keep the shared URL as body text; other balloon payloads
+    /// (apps, payments) carry no recall-worthy text and are excluded.
+    private static let indexableMessagePredicate = """
+        m.associated_message_type = 0
+          AND m.item_type = 0
+          AND (m.balloon_bundle_id IS NULL
+               OR m.balloon_bundle_id = '\(StowerMessageMapper.urlPreviewBalloonBundleID)')
+          AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL)
+        """
 
     private static let referenceSecondsExpression = """
         CASE

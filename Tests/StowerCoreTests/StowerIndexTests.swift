@@ -7,7 +7,7 @@ import Testing
 internal struct StowerIndexTests {
     @Test("round trips fields and finds body, stemmed, unicode, and title terms")
     internal func roundTripSearch() async throws {
-        let index = try StowerIndex()
+        let index = try StowerIndex.inMemory()
         var items: [TestItem] = []
         items.append(
             TestItem(
@@ -19,7 +19,7 @@ internal struct StowerIndexTests {
         )
         items.append(TestItem(id: "two", text: "A different topic", title: "Taylor"))
 
-        try await index.ingest(items)
+        try await index.replaceAll(with: items)
 
         let stemmed = try await index.search("meeting")
         let folded = try await index.search("cafe")
@@ -34,10 +34,10 @@ internal struct StowerIndexTests {
 
     @Test("denser matches rank first")
     internal func ranksDenseMatchesFirst() async throws {
-        let index = try StowerIndex()
+        let index = try StowerIndex.inMemory()
         let dense = TestItem(id: "dense", text: "pizza pizza pizza tonight", title: "Mom")
         let sparse = TestItem(id: "sparse", text: "pizza tonight", title: "Mom")
-        try await index.ingest([dense, sparse])
+        try await index.replaceAll(with: [dense, sparse])
 
         let results = try await index.search("pizza")
 
@@ -46,12 +46,12 @@ internal struct StowerIndexTests {
 
     @Test("body and lower-weighted title terms rank the intended thread first")
     internal func ranksBodyAndTitleTogether() async throws {
-        let index = try StowerIndex()
+        let index = try StowerIndex.inMemory()
         var items: [TestItem] = []
         items.append(TestItem(id: "mom-pizza", text: "pizza after work", title: "Mom"))
         items.append(TestItem(id: "random-pizza", text: "pizza with friends", title: "Alex"))
         items.append(TestItem(id: "random-mom", text: "Mom sent a photo", title: "Alex"))
-        try await index.ingest(items)
+        try await index.replaceAll(with: items)
 
         let results = try await index.search("Mom pizza")
 
@@ -60,8 +60,10 @@ internal struct StowerIndexTests {
 
     @Test("special and empty queries do not throw")
     internal func safeQueries() async throws {
-        let index = try StowerIndex()
-        try await index.ingest([TestItem(id: "one", text: "ordinary text", title: "Alex")])
+        let index = try StowerIndex.inMemory()
+        try await index.replaceAll(
+            with: [TestItem(id: "one", text: "ordinary text", title: "Alex")]
+        )
 
         for query in ["", "\"unterminated", "a AND ( NEAR:", "*"] {
             _ = try await index.search(query)
@@ -70,9 +72,9 @@ internal struct StowerIndexTests {
 
     @Test("a rebuild removes stale terms and preserves FTS integrity")
     internal func rebuildSupersedesContent() async throws {
-        let index = try StowerIndex()
-        try await index.ingest([TestItem(id: "one", text: "obsolete", title: "Alex")])
-        try await index.ingest([TestItem(id: "one", text: "current", title: "Alex")])
+        let index = try StowerIndex.inMemory()
+        try await index.replaceAll(with: [TestItem(id: "one", text: "obsolete", title: "Alex")])
+        try await index.replaceAll(with: [TestItem(id: "one", text: "current", title: "Alex")])
 
         #expect(try await index.search("obsolete").isEmpty)
         #expect(try await index.search("current").map(\.item.id) == ["messages:one"])
@@ -101,7 +103,7 @@ internal struct StowerIndexTests {
         .timeLimit(.minutes(1))
     )
     internal func thousandItemBatch() async throws {
-        let index = try StowerIndex()
+        let index = try StowerIndex.inMemory()
         let items = (0..<1_000).map { offset in
             TestItem(
                 id: String(offset),
@@ -110,7 +112,7 @@ internal struct StowerIndexTests {
             )
         }
 
-        try await index.ingest(items)
+        try await index.replaceAll(with: items)
         let results = try await index.search("searchable", limit: 10)
 
         #expect(results.count == 10)

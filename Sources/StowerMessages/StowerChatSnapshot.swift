@@ -16,7 +16,8 @@ internal final class StowerChatSnapshot {
     ) throws {
         self.fileManager = fileManager
         let temporaryDirectory = temporaryDirectory ?? fileManager.temporaryDirectory
-        try Self.sweepStaleSnapshots(in: temporaryDirectory, fileManager: fileManager)
+        // Best-effort housekeeping; a sweep failure must never block reading.
+        try? Self.sweepStaleSnapshots(in: temporaryDirectory, fileManager: fileManager)
         let snapshot = try Self.makeValidatedSnapshot(
             sourceURL: sourceURL,
             temporaryDirectory: temporaryDirectory,
@@ -29,6 +30,8 @@ internal final class StowerChatSnapshot {
     }
 
     deinit {
+        // Intentional best-effort cleanup: deinit cannot throw, and
+        // sweepStaleSnapshots reclaims anything left behind on the next run.
         try? fileManager.removeItem(at: rootURL)
     }
 
@@ -73,6 +76,9 @@ internal final class StowerChatSnapshot {
         guard fileManager.fileExists(atPath: sourceURL.path) else {
             throw StowerMessagesError.sourceNotFound(sourceURL.path)
         }
+        // Messages.app may checkpoint the live DB mid-copy, producing a torn
+        // snapshot; one retry recovers that transient state.
+        var lastValidationError: Error = StowerMessagesError.invalidSnapshot
         for _ in 0..<2 {
             do {
                 let copiedURL = try copySource(
@@ -83,13 +89,17 @@ internal final class StowerChatSnapshot {
                 do {
                     return try openValidated(rootURL: copiedURL, fileManager: fileManager)
                 } catch {
+                    lastValidationError = error
                     try? fileManager.removeItem(at: copiedURL)
                 }
             } catch {
                 throw classify(error, sourceURL: sourceURL)
             }
         }
-        throw StowerMessagesError.invalidSnapshot
+        if let messagesError = lastValidationError as? StowerMessagesError {
+            throw messagesError
+        }
+        throw StowerMessagesError.unreadableSource(lastValidationError.localizedDescription)
     }
 
     private static func copySource(
@@ -142,6 +152,7 @@ internal final class StowerChatSnapshot {
         fileManager: FileManager
     ) throws -> SnapshotComponents {
         let databaseURL = rootURL.appendingPathComponent("chat.db")
+        try recoverWriteAheadLog(at: databaseURL)
         var configuration = Configuration()
         configuration.readonly = true
         let databaseQueue = try DatabaseQueue(
@@ -160,6 +171,22 @@ internal final class StowerChatSnapshot {
             databaseURL: databaseURL,
             databaseQueue: databaseQueue
         )
+    }
+
+    /// Folds copied WAL frames into the private snapshot before read-only use.
+    ///
+    /// A raw file copy of a WAL-mode database needs recovery and shared-memory
+    /// setup, which SQLite refuses on read-only connections. Switching the
+    /// private copy back to a rollback journal checkpoints every WAL frame,
+    /// deletes the sidecar files, and rewrites the header, so the read-only
+    /// open sees a self-contained database. The original Source DB is never
+    /// touched.
+    private static func recoverWriteAheadLog(at databaseURL: URL) throws {
+        let recoveryQueue = try DatabaseQueue(path: databaseURL.path)
+        try recoveryQueue.writeWithoutTransaction { database in
+            try database.execute(sql: "PRAGMA journal_mode=DELETE")
+        }
+        try recoveryQueue.close()
     }
 
     private static func sweepStaleSnapshots(

@@ -30,9 +30,10 @@ public struct StowerStoredItem: Codable, FetchableRecord, PersistableRecord, Sen
     /// Sorted-key JSON containing source-specific metadata.
     public let metadata: String
 
-    internal init<Item: StowerIndexedItem>(from item: Item) throws {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
+    internal init<Item: StowerIndexedItem>(
+        from item: Item,
+        encoder: JSONEncoder = StowerStoredItem.makeMetadataEncoder()
+    ) throws {
         let metadataData = try encoder.encode(item.metadata)
         guard let metadata = String(data: metadataData, encoding: .utf8) else {
             throw StowerStoredItemError.invalidMetadataEncoding
@@ -46,6 +47,13 @@ public struct StowerStoredItem: Codable, FetchableRecord, PersistableRecord, Sen
         self.groupID = item.groupID
         self.groupTitle = item.groupTitle
         self.metadata = metadata
+    }
+
+    /// Makes the sorted-keys encoder shared across a whole ingest batch.
+    internal static func makeMetadataEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
     }
 
     private enum CodingKeys: String, CodingKey {

@@ -22,6 +22,7 @@ internal struct StowerChatDatabaseReaderTests {
         #expect(!ids.contains("attachment"))
         #expect(!ids.contains("balloon"))
         #expect(!ids.contains("zero"))
+        #expect(items.first(where: { $0.id == "link" })?.text == "https://example.com/article")
         #expect(ids.filter { $0 == "duplicate" }.count == 1)
         #expect(items.first(where: { $0.id == "incoming" })?.text == "incoming NS Attribute")
         #expect(items.first(where: { $0.id == "outgoing" })?.groupTitle == "Alex")

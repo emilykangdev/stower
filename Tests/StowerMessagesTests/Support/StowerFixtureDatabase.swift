@@ -7,7 +7,11 @@ internal struct StowerFixtureDatabase {
     internal let rootURL: URL
     internal let databaseURL: URL
 
-    internal init() throws {
+    /// Kept open for WAL fixtures so frames stay in the sidecar file,
+    /// matching a live Messages.app database.
+    private let retainedQueue: DatabaseQueue?
+
+    internal init(useWriteAheadLog: Bool = false) throws {
         let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(
             "stower-fixture-\(UUID().uuidString)",
             isDirectory: true
@@ -15,20 +19,30 @@ internal struct StowerFixtureDatabase {
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         self.rootURL = rootURL
         databaseURL = rootURL.appendingPathComponent("chat.db")
-        try Self.populate(databaseURL)
+        retainedQueue = try Self.populate(databaseURL, useWriteAheadLog: useWriteAheadLog)
     }
 
     internal func remove() {
+        try? retainedQueue?.close()
         try? FileManager.default.removeItem(at: rootURL)
     }
 
-    private static func populate(_ databaseURL: URL) throws {
+    private static func populate(
+        _ databaseURL: URL,
+        useWriteAheadLog: Bool
+    ) throws -> DatabaseQueue? {
         let databaseQueue = try DatabaseQueue(path: databaseURL.path)
+        if useWriteAheadLog {
+            try databaseQueue.writeWithoutTransaction { database in
+                try database.execute(sql: "PRAGMA journal_mode=WAL")
+            }
+        }
         try databaseQueue.write { database in
             try createSchema(database)
             try insertHandlesAndChats(database)
             try insertMessages(database)
         }
+        return useWriteAheadLog ? databaseQueue : nil
     }
 
     private static func createSchema(_ database: Database) throws {
@@ -130,6 +144,14 @@ internal struct StowerFixtureDatabase {
                 chatID: 2
             )
         )
+        values.append(
+            FixtureMessage(
+                id: "link",
+                text: "https://example.com/article",
+                date: rawDate(daysAgo: 5),
+                balloonID: "com.apple.messages.URLBalloonProvider"
+            )
+        )
         return values
     }
 
@@ -155,7 +177,12 @@ internal struct StowerFixtureDatabase {
             FixtureMessage(id: "attachment", date: rawDate(daysAgo: 8), hasAttachments: true)
         )
         values.append(
-            FixtureMessage(id: "balloon", date: rawDate(daysAgo: 8), balloonID: "fixture.app")
+            FixtureMessage(
+                id: "balloon",
+                text: "app payload text",
+                date: rawDate(daysAgo: 8),
+                balloonID: "fixture.app"
+            )
         )
         values.append(FixtureMessage(id: "zero", text: "invalid date", date: 0))
         return values

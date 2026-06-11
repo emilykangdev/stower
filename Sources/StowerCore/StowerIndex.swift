@@ -6,30 +6,35 @@ public actor StowerIndex {
 
     /// Opens or creates a file-backed Index DB.
     public init(path: String) throws {
-        let databaseQueue = try DatabaseQueue(path: path)
+        try self.init(databaseQueue: DatabaseQueue(path: path))
+    }
+
+    /// Creates an ephemeral in-memory Index DB for tests and previews.
+    public static func inMemory() throws -> StowerIndex {
+        try StowerIndex(databaseQueue: DatabaseQueue())
+    }
+
+    private init(databaseQueue: DatabaseQueue) throws {
         try StowerIndexSchema.prepare(databaseQueue)
         self.databaseQueue = databaseQueue
     }
 
-    /// Creates an in-memory Index DB.
-    public init(inMemory: Void = ()) throws {
-        let databaseQueue = try DatabaseQueue()
-        try StowerIndexSchema.prepare(databaseQueue)
-        self.databaseQueue = databaseQueue
-    }
-
-    /// Replaces all indexed content with the supplied adapter items.
-    public func ingest<Item: StowerIndexedItem>(_ items: [Item]) throws {
-        let storedItems = try items.map(StowerStoredItem.init(from:))
+    /// Destructively replaces all indexed content with the supplied adapter items.
+    public func replaceAll<Item: StowerIndexedItem>(with items: [Item]) throws {
+        let encoder = StowerStoredItem.makeMetadataEncoder()
+        let storedItems = try items.map { try StowerStoredItem(from: $0, encoder: encoder) }
         try rebuild(with: storedItems)
     }
 
     /// Removes all indexed content.
-    public func rebuild() throws {
+    public func removeAll() throws {
         try rebuild(with: [])
     }
 
     /// Searches body and group-title text using safe tokenized FTS5 matching.
+    ///
+    /// Returns an empty array when `limit` is not positive or the query
+    /// contains no searchable tokens.
     public func search(_ query: String, limit: Int = 50) throws -> [StowerSearchResult] {
         guard limit > 0, let pattern = FTS5Pattern(matchingAllTokensIn: query) else {
             return []

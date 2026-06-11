@@ -17,6 +17,9 @@ public enum StowerMessagesError: Error, LocalizedError, Sendable {
     /// A Source DB row contained an invalid value.
     case invalidRow(String)
 
+    /// A caller-supplied argument was out of range.
+    case invalidArgument(String)
+
     /// A user-facing description of the failure.
     public var errorDescription: String? {
         switch self {
@@ -30,6 +33,8 @@ public enum StowerMessagesError: Error, LocalizedError, Sendable {
             return "The copied Messages database failed validation."
         case .invalidRow(let reason):
             return "Messages contains an invalid row: \(reason)"
+        case .invalidArgument(let reason):
+            return "Invalid argument: \(reason)"
         }
     }
 }

@@ -6,6 +6,14 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-11 (later): Pre-landing review pass fixed all findings. Highlights:
+  WAL recovery for the copied snapshot (a raw copy of the live WAL-mode
+  `chat.db` could not be opened read-only — `PRAGMA journal_mode=DELETE` on
+  the private copy now folds frames in; regression test uses a WAL fixture),
+  a real balloon-message filter with a URL-preview exception (the old test
+  passed only because the fixture row had no text), ingest-window filters
+  pushed into SQL, `ingest` renamed to the explicit `replaceAll(with:)`,
+  snapshot retry errors surfaced, and an `invalidArgument` error case.
 - 2026-06-11: Implemented the Core index and Messages ingestion foundation.
   `StowerCore` now has a source-namespaced `StowerIndexedItem` contract,
   transactional GRDB 7 FTS5 external-content index, safe Porter/Unicode61

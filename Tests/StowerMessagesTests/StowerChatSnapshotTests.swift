@@ -29,6 +29,22 @@ internal struct StowerChatSnapshotTests {
         #expect(!FileManager.default.fileExists(atPath: copiedURL.deletingLastPathComponent().path))
     }
 
+    @Test("recovers WAL frames copied from a live database")
+    internal func walRecovery() throws {
+        let fixture = try StowerFixtureDatabase(useWriteAheadLog: true)
+        defer { fixture.remove() }
+        let walURL = URL(fileURLWithPath: fixture.databaseURL.path + "-wal")
+        let originalWALData = try Data(contentsOf: walURL)
+        #expect(!originalWALData.isEmpty)
+
+        let snapshot = try StowerChatSnapshot(sourceURL: fixture.databaseURL)
+        let source = try snapshot.ingestRows(since: .distantPast)
+
+        #expect(snapshot.openedReadonly)
+        #expect(source.rows.contains(where: { $0.guid == "newest" }))
+        #expect(try Data(contentsOf: walURL) == originalWALData)
+    }
+
     @Test("rejects an invalid SQLite copy after retrying")
     internal func invalidCopy() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
