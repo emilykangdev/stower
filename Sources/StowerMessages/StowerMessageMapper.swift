@@ -25,7 +25,7 @@ internal enum StowerMessageMapper {
             id: row.guid,
             text: body,
             timestamp: date,
-            deepLink: deepLink(row: row),
+            deepLink: deepLink(row: row, participantHandles: participantHandles),
             groupID: groupID(for: row.chat),
             groupTitle: groupTitle,
             isFromMe: row.isFromMe,
@@ -70,19 +70,25 @@ internal enum StowerMessageMapper {
         return contacts.displayName(for: handle)
     }
 
-    private static func deepLink(row: StowerSourceMessageRow) -> URL? {
-        // chat_identifier is the chat's canonical counterpart address. The
-        // participant list can hold several handles for one person (old
-        // email + current phone), so picking any of those can open the
-        // wrong conversation in Messages.
-        guard row.chat.style == 45 else {
+    private static func deepLink(
+        row: StowerSourceMessageRow,
+        participantHandles: [String]
+    ) -> URL? {
+        if row.chat.style == 45 {
+            // chat_identifier is the chat's canonical counterpart address.
+            // The participant list can hold several handles for one person
+            // (old email + current phone), so picking any of those can open
+            // the wrong conversation in Messages.
+            let address = row.chat.identifier.trimmingCharacters(in: .whitespaces)
+            return address.isEmpty ? nil : URL(string: "sms:\(address)")
+        }
+        // Group chats have no public per-chat URL. Best effort: a compose
+        // link with the full recipient set — Messages matches it to the
+        // existing conversation when the participants align exactly.
+        guard row.chat.style == 43, !participantHandles.isEmpty else {
             return nil
         }
-        let address = row.chat.identifier.trimmingCharacters(in: .whitespaces)
-        guard !address.isEmpty else {
-            return nil
-        }
-        return URL(string: "sms:\(address)")
+        return URL(string: "sms:\(participantHandles.joined(separator: ","))")
     }
 
     private static func groupID(for chat: StowerSourceChatRow) -> String {
