@@ -29,11 +29,9 @@ internal struct StowerChatDatabaseReaderTests {
             items.first(where: { $0.id == "bea-incoming" })?.deepLink?.absoluteString
                 == "sms:+14155550300"
         )
-        // Group deep links carry the full recipient set (best-effort match).
-        #expect(
-            items.first(where: { $0.id == "group-incoming" })?.deepLink?.absoluteString
-                == "sms:+14155550100,sam@example.com"
-        )
+        // Groups get NO deep link: an sms: recipient-set compose creates a
+        // NEW group instead of matching the existing one (real-data check).
+        #expect(items.first(where: { $0.id == "group-incoming" })?.deepLink == nil)
         #expect(ids.filter { $0 == "duplicate" }.count == 1)
         #expect(items.first(where: { $0.id == "incoming" })?.text == "incoming NS Attribute")
         #expect(items.first(where: { $0.id == "outgoing" })?.groupTitle == "Alex")
