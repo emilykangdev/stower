@@ -6,6 +6,18 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-11: Implemented the Core index and Messages ingestion foundation.
+  `StowerCore` now has a source-namespaced `StowerIndexedItem` contract,
+  transactional GRDB 7 FTS5 external-content index, safe Porter/Unicode61
+  search, weighted group-title ranking, snippets, schema-version rebuilds, and
+  rank-preserving grouping. `StowerMessages` now pins Madrid 0.4.0, decodes
+  attributed bodies without its lossy convenience property, resolves Contacts
+  with deterministic raw-handle fallback, copies and validates a read-only
+  ephemeral Source DB snapshot, filters non-message rows, and supports both the
+  180-day ingest path and unbounded newest-N thread reads. Synthetic tests cover
+  the architecture and edge cases. The manual FDA run, real-window timings, and
+  10-query comparison against Messages.app remain a human evaluation step
+  because they require the user's private data and query judgments.
 - 2026-05-13: Scaffolding complete. Three library targets (StowerCore,
   StowerPhotos, StowerMessages) + guardrail governance + lint configs + CI.
   No business logic yet. Mac app shell (StowerMac) deferred to its own plan.

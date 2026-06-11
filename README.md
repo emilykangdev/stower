@@ -52,4 +52,7 @@ set, imported by `CLAUDE.md`).
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+[FSL-1.1-MIT](LICENSE) (Functional Source License) — the source is public and
+free to read, run, and modify for any purpose **except** building a competing
+product. Each release automatically converts to the [MIT License](LICENSE) two
+years after it ships.
