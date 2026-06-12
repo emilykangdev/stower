@@ -86,17 +86,20 @@ internal struct StowerFixtureDatabase {
                   (1, '+14155550100'),
                   (2, 'sam@example.com'),
                   (3, '+14155550299'),
-                  (4, '+14155550300');
+                  (4, '+14155550300'),
+                  (5, 'od#d@example.com');
                 INSERT INTO chat (ROWID, guid, chat_identifier, display_name, style) VALUES
                   (1, 'chat-alex', '+14155550100', NULL, 45),
                   (2, 'chat-group', 'group-identifier', 'Project Group', 43),
-                  (3, 'chat-bea', '+14155550300', NULL, 45);
+                  (3, 'chat-bea', '+14155550300', NULL, 45),
+                  (4, 'chat-reserved', 'od#d@example.com', NULL, 45);
                 INSERT INTO chat_handle_join (chat_id, handle_id) VALUES
                   (1, 1),
                   (2, 1),
                   (2, 2),
                   (3, 3),
-                  (3, 4);
+                  (3, 4),
+                  (4, 5);
                 """
         )
     }
@@ -271,6 +274,9 @@ extension StowerFixtureDatabase {
 
     /// A 1:1 chat whose join row holds TWO handles (old + current number);
     /// the deep link must follow chat_identifier, not the first handle.
+    ///
+    /// Also covers an email identifier carrying a reserved URL character,
+    /// which must be percent-encoded in the deep link.
     fileprivate static func deepLinkMessages() -> [FixtureMessage] {
         var values: [FixtureMessage] = []
         values.append(
@@ -280,6 +286,15 @@ extension StowerFixtureDatabase {
                 date: rawDate(daysAgo: 4),
                 handleID: 4,
                 chatID: 3
+            )
+        )
+        values.append(
+            FixtureMessage(
+                id: "reserved-incoming",
+                text: "hello from a reserved-char email",
+                date: rawDate(daysAgo: 3),
+                handleID: 5,
+                chatID: 4
             )
         )
         return values

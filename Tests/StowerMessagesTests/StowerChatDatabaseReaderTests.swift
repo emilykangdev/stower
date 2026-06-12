@@ -32,6 +32,12 @@ internal struct StowerChatDatabaseReaderTests {
         // Groups get NO deep link: an sms: recipient-set compose creates a
         // NEW group instead of matching the existing one (real-data check).
         #expect(items.first(where: { $0.id == "group-incoming" })?.deepLink == nil)
+        // Reserved URL characters in an email identifier must be percent-encoded
+        // so the link opens the right conversation instead of a truncated one.
+        #expect(
+            items.first(where: { $0.id == "reserved-incoming" })?.deepLink?.absoluteString
+                == "sms:od%23d@example.com"
+        )
         #expect(ids.filter { $0 == "duplicate" }.count == 1)
         #expect(items.first(where: { $0.id == "incoming" })?.text == "incoming NS Attribute")
         #expect(items.first(where: { $0.id == "outgoing" })?.groupTitle == "Alex")

@@ -83,7 +83,15 @@ internal enum StowerMessageMapper {
         // email + current phone), so picking any of those can open the
         // wrong conversation in Messages.
         let address = row.chat.identifier.trimmingCharacters(in: .whitespaces)
-        return address.isEmpty ? nil : URL(string: "sms:\(address)")
+        // Email identifiers can carry reserved URL characters (#, ?, %) in the
+        // local part; interpolating them raw would split the address into a
+        // fragment/query and open the wrong conversation, so percent-encode first.
+        guard !address.isEmpty,
+            let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+        else {
+            return nil
+        }
+        return URL(string: "sms:\(encoded)")
     }
 
     private static func groupID(for chat: StowerSourceChatRow) -> String {

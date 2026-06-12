@@ -1,0 +1,3732 @@
+diff --git a/.ship-with-codex/20260611-172732-task16-real-data-fixes/iter-1.diff b/.ship-with-codex/20260611-172732-task16-real-data-fixes/iter-1.diff
+new file mode 100644
+index 0000000..b1132bd
+--- /dev/null
++++ b/.ship-with-codex/20260611-172732-task16-real-data-fixes/iter-1.diff
+@@ -0,0 +1,407 @@
++diff --git a/Sources/StowerMessages/StowerChatSnapshot.swift b/Sources/StowerMessages/StowerChatSnapshot.swift
++index d2ae506..5e9fb82 100644
++--- a/Sources/StowerMessages/StowerChatSnapshot.swift
+++++ b/Sources/StowerMessages/StowerChatSnapshot.swift
++@@ -209,20 +209,76 @@ internal final class StowerChatSnapshot {
++     }
++ 
++     internal static func classify(_ error: Error, sourceURL: URL) -> StowerMessagesError {
++-        let nsError = error as NSError
++-        let isPOSIXPermissionError =
++-            nsError.domain == NSPOSIXErrorDomain
++-            && (nsError.code == Int(EACCES) || nsError.code == Int(EPERM))
++-        if isPOSIXPermissionError {
+++        if permissionDenialImplicatesSource(error, sourceURL: sourceURL) {
++             return .fullDiskAccessMissing(sourceURL.path)
++         }
++-        let isCocoaPermissionError =
++-            nsError.domain == NSCocoaErrorDomain
++-            && nsError.code == NSFileReadNoPermissionError
++-        if isCocoaPermissionError {
++-            return .fullDiskAccessMissing(sourceURL.path)
+++        return .unreadableSource((error as NSError).localizedDescription)
+++    }
+++
+++    /// Reports whether a permission denial in the error chain is attributable to
+++    /// the source database rather than the staging destination.
+++    ///
+++    /// `classify` sees failures from the whole copy pipeline — staging
+++    /// `createDirectory`, the source `copyItem`, and the `moveItem` into place —
+++    /// so an unwritable `temporaryDirectory` also surfaces EACCES/EPERM. Full
+++    /// Disk Access is only the right diagnosis when the denied path is the source
+++    /// DB (or a source sidecar), or when the denial carries no path to attribute
+++    /// at all. A denial that names only a destination path is a staging-write
+++    /// failure, not a TCC denial on `chat.db`.
+++    private static func permissionDenialImplicatesSource(
+++        _ error: Error,
+++        sourceURL: URL
+++    ) -> Bool {
+++        let sourcePaths = sourcePathSet(for: sourceURL)
+++        var sawDenial = false
+++        var sawDestinationDenial = false
+++        var current: NSError? = error as NSError
+++        while let nsError = current {
+++            if isPOSIXDenial(nsError) || isCocoaDenial(nsError) {
+++                sawDenial = true
+++                if let path = deniedPath(in: nsError) {
+++                    if sourcePaths.contains(path) {
+++                        return true
+++                    }
+++                    sawDestinationDenial = true
+++                }
+++            }
+++            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+++        }
+++        return sawDenial && !sawDestinationDenial
+++    }
+++
+++    /// The source DB path plus its WAL/SHM sidecars, normalized for comparison
+++    /// against the path Cocoa records on a file error.
+++    private static func sourcePathSet(for sourceURL: URL) -> Set<String> {
+++        let base = sourceURL.path
+++        return Set([base, base + "-wal", base + "-shm"].map(normalizedPath))
+++    }
+++
+++    /// The file path a Cocoa/POSIX error blames, if any, normalized for comparison.
+++    private static func deniedPath(in error: NSError) -> String? {
+++        if let path = error.userInfo[NSFilePathErrorKey] as? String {
+++            return normalizedPath(path)
+++        }
+++        if let url = error.userInfo[NSURLErrorKey] as? URL {
+++            return normalizedPath(url.path)
++         }
++-        return .unreadableSource(nsError.localizedDescription)
+++        return nil
+++    }
+++
+++    private static func normalizedPath(_ path: String) -> String {
+++        URL(fileURLWithPath: path).standardizedFileURL.path
+++    }
+++
+++    private static func isPOSIXDenial(_ error: NSError) -> Bool {
+++        error.domain == NSPOSIXErrorDomain
+++            && (error.code == Int(EACCES) || error.code == Int(EPERM))
+++    }
+++
+++    private static func isCocoaDenial(_ error: NSError) -> Bool {
+++        error.domain == NSCocoaErrorDomain
+++            && (error.code == NSFileReadNoPermissionError
+++                || error.code == NSFileWriteNoPermissionError)
++     }
++ }
++ 
++diff --git a/Sources/StowerMessages/StowerMessageMapper.swift b/Sources/StowerMessages/StowerMessageMapper.swift
++index d9ce629..9eae846 100644
++--- a/Sources/StowerMessages/StowerMessageMapper.swift
+++++ b/Sources/StowerMessages/StowerMessageMapper.swift
++@@ -25,7 +25,7 @@ internal enum StowerMessageMapper {
++             id: row.guid,
++             text: body,
++             timestamp: date,
++-            deepLink: deepLink(row: row, participantHandles: participantHandles),
+++            deepLink: deepLink(row: row),
++             groupID: groupID(for: row.chat),
++             groupTitle: groupTitle,
++             isFromMe: row.isFromMe,
++@@ -70,14 +70,20 @@ internal enum StowerMessageMapper {
++         return contacts.displayName(for: handle)
++     }
++ 
++-    private static func deepLink(
++-        row: StowerSourceMessageRow,
++-        participantHandles: [String]
++-    ) -> URL? {
++-        guard row.chat.style == 45, let handle = participantHandles.first else {
+++    private static func deepLink(row: StowerSourceMessageRow) -> URL? {
+++        // Group chats stay nil: there is no public per-chat URL, and an
+++        // sms: compose link with the full recipient set CREATES A NEW group
+++        // instead of matching the existing one (verified on real data,
+++        // 2026-06-11). Callers must offer their own navigation fallback.
+++        guard row.chat.style == 45 else {
++             return nil
++         }
++-        return URL(string: "sms:\(handle)")
+++        // chat_identifier is the chat's canonical counterpart address. The
+++        // participant list can hold several handles for one person (old
+++        // email + current phone), so picking any of those can open the
+++        // wrong conversation in Messages.
+++        let address = row.chat.identifier.trimmingCharacters(in: .whitespaces)
+++        return address.isEmpty ? nil : URL(string: "sms:\(address)")
++     }
++ 
++     private static func groupID(for chat: StowerSourceChatRow) -> String {
++diff --git a/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift b/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
++index 7d19fd7..7200d88 100644
++--- a/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
+++++ b/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
++@@ -23,6 +23,15 @@ internal struct StowerChatDatabaseReaderTests {
++         #expect(!ids.contains("balloon"))
++         #expect(!ids.contains("zero"))
++         #expect(items.first(where: { $0.id == "link" })?.text == "https://example.com/article")
+++        // Deep link must use chat_identifier, not the alphabetically-first
+++        // participant handle (a stale old number/email opens the wrong chat).
+++        #expect(
+++            items.first(where: { $0.id == "bea-incoming" })?.deepLink?.absoluteString
+++                == "sms:+14155550300"
+++        )
+++        // Groups get NO deep link: an sms: recipient-set compose creates a
+++        // NEW group instead of matching the existing one (real-data check).
+++        #expect(items.first(where: { $0.id == "group-incoming" })?.deepLink == nil)
++         #expect(ids.filter { $0 == "duplicate" }.count == 1)
++         #expect(items.first(where: { $0.id == "incoming" })?.text == "incoming NS Attribute")
++         #expect(items.first(where: { $0.id == "outgoing" })?.groupTitle == "Alex")
++diff --git a/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift b/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
++index aa91746..38d0531 100644
++--- a/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
+++++ b/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
++@@ -75,6 +75,64 @@ internal struct StowerChatSnapshotTests {
++         }
++     }
++ 
+++    @Test("classifies a copy denial with a nested POSIX error as missing Full Disk Access")
+++    internal func wrappedCopyPermissionClassification() {
+++        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))
+++        let copyDenied = NSError(
+++            domain: NSCocoaErrorDomain,
+++            code: NSFileWriteNoPermissionError,
+++            userInfo: [NSUnderlyingErrorKey: posix]
+++        )
+++        let classified = StowerChatSnapshot.classify(
+++            copyDenied,
+++            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
+++        )
+++
+++        guard case .fullDiskAccessMissing = classified else {
+++            Issue.record("Expected a Full Disk Access error for the wrapped copy denial.")
+++            return
+++        }
+++    }
+++
+++    @Test("classifies a copy denial that names the source path as missing Full Disk Access")
+++    internal func sourcePathDenialIsFullDiskAccess() {
+++        let denied = NSError(
+++            domain: NSCocoaErrorDomain,
+++            code: NSFileReadNoPermissionError,
+++            userInfo: [NSFilePathErrorKey: "/fixture/chat.db"]
+++        )
+++        let classified = StowerChatSnapshot.classify(
+++            denied,
+++            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
+++        )
+++
+++        guard case .fullDiskAccessMissing = classified else {
+++            Issue.record("Expected Full Disk Access when the denial names the source path.")
+++            return
+++        }
+++    }
+++
+++    @Test("does not blame Full Disk Access when only the staging destination is unwritable")
+++    internal func destinationDenialIsNotFullDiskAccess() {
+++        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+++        let stagingPath = "/var/folders/tmp/stower-msg-stage-ABC/chat.db"
+++        let info: [String: Any] = [NSFilePathErrorKey: stagingPath, NSUnderlyingErrorKey: posix]
+++        let writeDenied = NSError(
+++            domain: NSCocoaErrorDomain,
+++            code: NSFileWriteNoPermissionError,
+++            userInfo: info
+++        )
+++        let classified = StowerChatSnapshot.classify(
+++            writeDenied,
+++            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
+++        )
+++
+++        guard case .unreadableSource = classified else {
+++            Issue.record("Expected unreadableSource when only the staging destination is denied.")
+++            return
+++        }
+++    }
+++
++     private func modificationDate(_ url: URL) throws -> Date {
++         let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
++         return try #require(values.contentModificationDate)
++diff --git a/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift b/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
++index b6a8ae4..29ade9d 100644
++--- a/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
+++++ b/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
++@@ -84,14 +84,19 @@ internal struct StowerFixtureDatabase {
++             sql: """
++                 INSERT INTO handle (ROWID, id) VALUES
++                   (1, '+14155550100'),
++-                  (2, 'sam@example.com');
+++                  (2, 'sam@example.com'),
+++                  (3, '+14155550299'),
+++                  (4, '+14155550300');
++                 INSERT INTO chat (ROWID, guid, chat_identifier, display_name, style) VALUES
++                   (1, 'chat-alex', '+14155550100', NULL, 45),
++-                  (2, 'chat-group', 'group-identifier', 'Project Group', 43);
+++                  (2, 'chat-group', 'group-identifier', 'Project Group', 43),
+++                  (3, 'chat-bea', '+14155550300', NULL, 45);
++                 INSERT INTO chat_handle_join (chat_id, handle_id) VALUES
++                   (1, 1),
++                   (2, 1),
++-                  (2, 2);
+++                  (2, 2),
+++                  (3, 3),
+++                  (3, 4);
++                 """
++         )
++     }
++@@ -101,6 +106,7 @@ internal struct StowerFixtureDatabase {
++         var values = primaryMessages(recentBody: recentBody)
++         values.append(contentsOf: filteredMessages())
++         values.append(contentsOf: newestMessages())
+++        values.append(contentsOf: deepLinkMessages())
++         for (offset, value) in values.enumerated() {
++             let rowID = Int64(offset + 1)
++             try insertMessage(database, rowID: rowID, value: value)
++@@ -117,7 +123,62 @@ internal struct StowerFixtureDatabase {
++         }
++     }
++ 
++-    private static func primaryMessages(recentBody: Data) -> [FixtureMessage] {
+++    private static func insertMessage(
+++        _ database: Database,
+++        rowID: Int64,
+++        value: FixtureMessage
+++    ) throws {
+++        try database.execute(
+++            sql: """
+++                INSERT INTO message (
+++                  ROWID, guid, text, attributedBody, date, is_from_me, handle_id,
+++                  associated_message_type, item_type, cache_has_attachments, balloon_bundle_id
+++                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+++                """,
+++            arguments: messageArguments(rowID: rowID, value: value)
+++        )
+++    }
+++
+++    private static func messageArguments(
+++        rowID: Int64,
+++        value: FixtureMessage
+++    ) -> StatementArguments {
+++        var values: [DatabaseValueConvertible?] = []
+++        values.append(rowID)
+++        values.append(value.id)
+++        values.append(value.text)
+++        values.append(value.body)
+++        values.append(value.date)
+++        values.append(value.isFromMe)
+++        values.append(value.handleID)
+++        values.append(value.associatedType)
+++        values.append(value.itemType)
+++        values.append(value.hasAttachments)
+++        values.append(value.balloonID)
+++        return StatementArguments(values)
+++    }
+++
+++    private static func rawDate(daysAgo: Int) -> Int64 {
+++        let date = now.addingTimeInterval(-Double(daysAgo) * 86_400)
+++        return Int64(date.timeIntervalSinceReferenceDate * 1_000_000_000)
+++    }
+++
+++    private static func archive(_ value: Any) throws -> Data {
+++        let selector = NSSelectorFromString("archivedDataWithRootObject:")
+++        guard let archiver = NSClassFromString("NSArchiver") as? NSObject.Type,
+++            let result = archiver.perform(selector, with: value),
+++            let data = result.takeUnretainedValue() as? Data
+++        else {
+++            throw FixtureError.archiveFailed
+++        }
+++        return data
+++    }
+++}
+++
+++// MARK: - Message fixtures
+++
+++extension StowerFixtureDatabase {
+++    fileprivate static func primaryMessages(recentBody: Data) -> [FixtureMessage] {
++         var values: [FixtureMessage] = []
++         values.append(
++             FixtureMessage(id: "old", text: "older than window", date: rawDate(daysAgo: 200))
++@@ -155,7 +216,7 @@ internal struct StowerFixtureDatabase {
++         return values
++     }
++ 
++-    private static func filteredMessages() -> [FixtureMessage] {
+++    fileprivate static func filteredMessages() -> [FixtureMessage] {
++         var values: [FixtureMessage] = []
++         values.append(
++             FixtureMessage(
++@@ -188,7 +249,7 @@ internal struct StowerFixtureDatabase {
++         return values
++     }
++ 
++-    private static func newestMessages() -> [FixtureMessage] {
+++    fileprivate static func newestMessages() -> [FixtureMessage] {
++         var values: [FixtureMessage] = []
++         values.append(
++             FixtureMessage(id: "tie-a", text: "same timestamp a", date: rawDate(daysAgo: 2))
++@@ -208,55 +269,20 @@ internal struct StowerFixtureDatabase {
++         return values
++     }
++ 
++-    private static func insertMessage(
++-        _ database: Database,
++-        rowID: Int64,
++-        value: FixtureMessage
++-    ) throws {
++-        try database.execute(
++-            sql: """
++-                INSERT INTO message (
++-                  ROWID, guid, text, attributedBody, date, is_from_me, handle_id,
++-                  associated_message_type, item_type, cache_has_attachments, balloon_bundle_id
++-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++-                """,
++-            arguments: messageArguments(rowID: rowID, value: value)
+++    /// A 1:1 chat whose join row holds TWO handles (old + current number);
+++    /// the deep link must follow chat_identifier, not the first handle.
+++    fileprivate static func deepLinkMessages() -> [FixtureMessage] {
+++        var values: [FixtureMessage] = []
+++        values.append(
+++            FixtureMessage(
+++                id: "bea-incoming",
+++                text: "hello from the current number",
+++                date: rawDate(daysAgo: 4),
+++                handleID: 4,
+++                chatID: 3
+++            )
++         )
++-    }
++-
++-    private static func messageArguments(
++-        rowID: Int64,
++-        value: FixtureMessage
++-    ) -> StatementArguments {
++-        var values: [DatabaseValueConvertible?] = []
++-        values.append(rowID)
++-        values.append(value.id)
++-        values.append(value.text)
++-        values.append(value.body)
++-        values.append(value.date)
++-        values.append(value.isFromMe)
++-        values.append(value.handleID)
++-        values.append(value.associatedType)
++-        values.append(value.itemType)
++-        values.append(value.hasAttachments)
++-        values.append(value.balloonID)
++-        return StatementArguments(values)
++-    }
++-
++-    private static func rawDate(daysAgo: Int) -> Int64 {
++-        let date = now.addingTimeInterval(-Double(daysAgo) * 86_400)
++-        return Int64(date.timeIntervalSinceReferenceDate * 1_000_000_000)
++-    }
++-
++-    private static func archive(_ value: Any) throws -> Data {
++-        let selector = NSSelectorFromString("archivedDataWithRootObject:")
++-        guard let archiver = NSClassFromString("NSArchiver") as? NSObject.Type,
++-            let result = archiver.perform(selector, with: value),
++-            let data = result.takeUnretainedValue() as? Data
++-        else {
++-            throw FixtureError.archiveFailed
++-        }
++-        return data
+++        return values
++     }
++ }
++ 
+diff --git a/.ship-with-codex/20260611-172732-task16-real-data-fixes/iter-1.findings.jsonl b/.ship-with-codex/20260611-172732-task16-real-data-fixes/iter-1.findings.jsonl
+new file mode 100644
+index 0000000..950b9ff
+--- /dev/null
++++ b/.ship-with-codex/20260611-172732-task16-real-data-fixes/iter-1.findings.jsonl
+@@ -0,0 +1 @@
++{"severity":"P2","path":"Sources/StowerMessages/StowerChatSnapshot.swift","line":243,"category":"error-handling","summary":"FDA-denied source copies are misclassified because Cocoa reports the staging destination path","fix":"Classify by operation: treat permission errors from source copyItem calls as FDA, while createDirectory and move failures remain staging errors.","fingerprint":"Sources/StowerMessages/StowerChatSnapshot.swift:243:error-handling","confidence":9}
+diff --git a/.ship-with-codex/20260611-172732-task16-real-data-fixes/iter-1.stderr b/.ship-with-codex/20260611-172732-task16-real-data-fixes/iter-1.stderr
+new file mode 100644
+index 0000000..465e188
+--- /dev/null
++++ b/.ship-with-codex/20260611-172732-task16-real-data-fixes/iter-1.stderr
+@@ -0,0 +1,2898 @@
++Reading additional input from stdin...
++OpenAI Codex v0.137.0
++--------
++workdir: /Users/emilykang/conductor/workspaces/stower/amsterdam
++model: gpt-5.5
++provider: openai
++approval: never
++sandbox: read-only
++reasoning effort: high
++reasoning summaries: none
++session id: 019eb93e-374e-74b0-a4fe-734ab1b3d246
++--------
++user
++You are doing adversarial code review on the diff for the current branch against its base.
++
++IMPORTANT: Do NOT read or execute files under ~/.claude/, ~/.agents/, .claude/skills/, or agents/. Those are skill prompts for a different AI system. Ignore them. Focus only on the repository code.
++
++Run: git diff origin/main...HEAD
++Then read enough surrounding code to judge each finding.
++
++Think like an attacker AND a chaos engineer. Find issues by severity using these EXACT definitions:
++
++- P1 (blocks ship): Security holes (injection, auth bypass, secrets leak), data loss/corruption, crashes on common inputs, broken golden path, regulatory/legal exposure. Reachable from realistic production inputs.
++- P2 (should fix before merge): Performance regressions users will feel, edge cases on user-visible paths, missing error handling on happy-path-adjacent failures, race conditions with realistic triggers, accessibility blockers on user-facing UI.
++- P3 (nice to have): Refactor, minor optimization, clarity, missing comment where why is non-obvious.
++- P4 (speculative): Theoretical, requires conditions we can't realistically trigger, future hardening.
++
++A finding is P1 ONLY if an attacker or unlucky user could hit it with realistic inputs in production. "Could in theory" -> P4. "Will in practice" -> P1 or P2.
++
++For EACH finding, emit ONE JSON line on its own (no surrounding prose, no markdown fences) in this exact shape:
++
++{"severity":"P1|P2|P3|P4","path":"file","line":N,"category":"security|correctness|performance|edge-case|race|error-handling|data-integrity|a11y|other","summary":"<= 140 chars","fix":"concrete fix in <= 200 chars","fingerprint":"path:line:category","confidence":N}
++
++confidence is 1-10. Be honest. <5 means speculative — usually that's a P3 or P4.
++
++If you find NOTHING that meets P1 or P2 bar, emit a single JSON line:
++{"severity":"CLEAN","summary":"No P1 or P2 findings."}
++
++Do NOT include compliments, summaries, or commentary. JSON lines only, one per line.
++2026-06-12T00:32:03.950205Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer resource_metadata=\"https://api.arcjet.com/.well-known/oauth-protected-resource/mcp\"" })
++2026-06-12T00:32:04.071513Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer realm=\"OAuth\", resource_metadata=\"https://mcp.linear.app/.well-known/oauth-protected-resource/mcp\", error=\"invalid_token\"" })
++2026-06-12T00:32:04.086593Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer resource_metadata=https://mcp.stripe.com/.well-known/oauth-protected-resource" })
++2026-06-12T00:32:11.353188Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when AuthRequired(AuthRequiredError { www_authenticate_header: "Bearer error=\"invalid_request\", error_description=\"Invalid oauth access token\", resource_metadata=\"https://mcp.supabase.com/.well-known/oauth-protected-resource/mcp\"" })
++hook: SessionStart
++hook: SessionStart Completed
++hook: UserPromptSubmit
++hook: UserPromptSubmit Completed
++codex
++I’ll inspect the branch diff, then trace each changed path into surrounding production code and tests.
++exec
++/bin/zsh -lc 'git diff --stat origin/main...HEAD && git diff --name-status origin/main...HEAD' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++ Sources/StowerMessages/StowerChatSnapshot.swift    |  78 ++++++++++--
++ Sources/StowerMessages/StowerMessageMapper.swift   |  20 +--
++ .../StowerChatDatabaseReaderTests.swift            |   9 ++
++ .../StowerChatSnapshotTests.swift                  |  58 +++++++++
++ .../Support/StowerFixtureDatabase.swift            | 134 ++++++++++++---------
++ 5 files changed, 227 insertions(+), 72 deletions(-)
++M	Sources/StowerMessages/StowerChatSnapshot.swift
++M	Sources/StowerMessages/StowerMessageMapper.swift
++M	Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
++M	Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
++M	Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
++
++exec
++/bin/zsh -lc 'git status --short --branch' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++## task16-real-data-fixes...origin/task16-real-data-fixes [ahead 1]
++?? .ship-with-codex/
++
++exec
++/bin/zsh -lc 'git diff --check origin/main...HEAD' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++codex
++The change is concentrated in Messages snapshot decoding and fixture coverage. I’m reading the full patch plus the database reader call sites to check realistic malformed-data and schema-variation paths.
++exec
++/bin/zsh -lc 'git diff --unified=80 origin/main...HEAD -- Sources/StowerMessages/StowerChatSnapshot.swift Sources/StowerMessages/StowerMessageMapper.swift' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++diff --git a/Sources/StowerMessages/StowerChatSnapshot.swift b/Sources/StowerMessages/StowerChatSnapshot.swift
++index d2ae506..5e9fb82 100644
++--- a/Sources/StowerMessages/StowerChatSnapshot.swift
+++++ b/Sources/StowerMessages/StowerChatSnapshot.swift
++@@ -132,102 +132,158 @@ internal final class StowerChatSnapshot {
++ 
++     private static func copyDatabaseFiles(
++         sourceURL: URL,
++         destinationDirectory: URL,
++         fileManager: FileManager
++     ) throws {
++         let destination = destinationDirectory.appendingPathComponent("chat.db")
++         try fileManager.copyItem(at: sourceURL, to: destination)
++         for suffix in ["-wal", "-shm"] {
++             let sourceSidecar = URL(fileURLWithPath: sourceURL.path + suffix)
++             guard fileManager.fileExists(atPath: sourceSidecar.path) else {
++                 continue
++             }
++             let destinationSidecar = URL(fileURLWithPath: destination.path + suffix)
++             try fileManager.copyItem(at: sourceSidecar, to: destinationSidecar)
++         }
++     }
++ 
++     private static func openValidated(
++         rootURL: URL,
++         fileManager: FileManager
++     ) throws -> SnapshotComponents {
++         let databaseURL = rootURL.appendingPathComponent("chat.db")
++         try recoverWriteAheadLog(at: databaseURL)
++         var configuration = Configuration()
++         configuration.readonly = true
++         let databaseQueue = try DatabaseQueue(
++             path: databaseURL.path,
++             configuration: configuration
++         )
++         let check = try databaseQueue.read { database in
++             try String.fetchAll(database, sql: "PRAGMA quick_check")
++         }
++         guard check == ["ok"] else {
++             try? fileManager.removeItem(at: rootURL)
++             throw StowerMessagesError.invalidSnapshot
++         }
++         return SnapshotComponents(
++             rootURL: rootURL,
++             databaseURL: databaseURL,
++             databaseQueue: databaseQueue
++         )
++     }
++ 
++     /// Folds copied WAL frames into the private snapshot before read-only use.
++     ///
++     /// A raw file copy of a WAL-mode database needs recovery and shared-memory
++     /// setup, which SQLite refuses on read-only connections. Switching the
++     /// private copy back to a rollback journal checkpoints every WAL frame,
++     /// deletes the sidecar files, and rewrites the header, so the read-only
++     /// open sees a self-contained database. The original Source DB is never
++     /// touched.
++     private static func recoverWriteAheadLog(at databaseURL: URL) throws {
++         let recoveryQueue = try DatabaseQueue(path: databaseURL.path)
++         try recoveryQueue.writeWithoutTransaction { database in
++             try database.execute(sql: "PRAGMA journal_mode=DELETE")
++         }
++         try recoveryQueue.close()
++     }
++ 
++     private static func sweepStaleSnapshots(
++         in temporaryDirectory: URL,
++         fileManager: FileManager
++     ) throws {
++         let cutoff = Date().addingTimeInterval(-86_400)
++         let contents = try fileManager.contentsOfDirectory(
++             at: temporaryDirectory,
++             includingPropertiesForKeys: [.contentModificationDateKey],
++             options: [.skipsHiddenFiles]
++         )
++         for url in contents where url.lastPathComponent.hasPrefix("stower-msg-") {
++             let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
++             guard let modified = values.contentModificationDate, modified < cutoff else {
++                 continue
++             }
++             try? fileManager.removeItem(at: url)
++         }
++     }
++ 
++     internal static func classify(_ error: Error, sourceURL: URL) -> StowerMessagesError {
++-        let nsError = error as NSError
++-        let isPOSIXPermissionError =
++-            nsError.domain == NSPOSIXErrorDomain
++-            && (nsError.code == Int(EACCES) || nsError.code == Int(EPERM))
++-        if isPOSIXPermissionError {
+++        if permissionDenialImplicatesSource(error, sourceURL: sourceURL) {
++             return .fullDiskAccessMissing(sourceURL.path)
++         }
++-        let isCocoaPermissionError =
++-            nsError.domain == NSCocoaErrorDomain
++-            && nsError.code == NSFileReadNoPermissionError
++-        if isCocoaPermissionError {
++-            return .fullDiskAccessMissing(sourceURL.path)
+++        return .unreadableSource((error as NSError).localizedDescription)
+++    }
+++
+++    /// Reports whether a permission denial in the error chain is attributable to
+++    /// the source database rather than the staging destination.
+++    ///
+++    /// `classify` sees failures from the whole copy pipeline — staging
+++    /// `createDirectory`, the source `copyItem`, and the `moveItem` into place —
+++    /// so an unwritable `temporaryDirectory` also surfaces EACCES/EPERM. Full
+++    /// Disk Access is only the right diagnosis when the denied path is the source
+++    /// DB (or a source sidecar), or when the denial carries no path to attribute
+++    /// at all. A denial that names only a destination path is a staging-write
+++    /// failure, not a TCC denial on `chat.db`.
+++    private static func permissionDenialImplicatesSource(
+++        _ error: Error,
+++        sourceURL: URL
+++    ) -> Bool {
+++        let sourcePaths = sourcePathSet(for: sourceURL)
+++        var sawDenial = false
+++        var sawDestinationDenial = false
+++        var current: NSError? = error as NSError
+++        while let nsError = current {
+++            if isPOSIXDenial(nsError) || isCocoaDenial(nsError) {
+++                sawDenial = true
+++                if let path = deniedPath(in: nsError) {
+++                    if sourcePaths.contains(path) {
+++                        return true
+++                    }
+++                    sawDestinationDenial = true
+++                }
+++            }
+++            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+++        }
+++        return sawDenial && !sawDestinationDenial
+++    }
+++
+++    /// The source DB path plus its WAL/SHM sidecars, normalized for comparison
+++    /// against the path Cocoa records on a file error.
+++    private static func sourcePathSet(for sourceURL: URL) -> Set<String> {
+++        let base = sourceURL.path
+++        return Set([base, base + "-wal", base + "-shm"].map(normalizedPath))
+++    }
+++
+++    /// The file path a Cocoa/POSIX error blames, if any, normalized for comparison.
+++    private static func deniedPath(in error: NSError) -> String? {
+++        if let path = error.userInfo[NSFilePathErrorKey] as? String {
+++            return normalizedPath(path)
+++        }
+++        if let url = error.userInfo[NSURLErrorKey] as? URL {
+++            return normalizedPath(url.path)
++         }
++-        return .unreadableSource(nsError.localizedDescription)
+++        return nil
+++    }
+++
+++    private static func normalizedPath(_ path: String) -> String {
+++        URL(fileURLWithPath: path).standardizedFileURL.path
+++    }
+++
+++    private static func isPOSIXDenial(_ error: NSError) -> Bool {
+++        error.domain == NSPOSIXErrorDomain
+++            && (error.code == Int(EACCES) || error.code == Int(EPERM))
+++    }
+++
+++    private static func isCocoaDenial(_ error: NSError) -> Bool {
+++        error.domain == NSCocoaErrorDomain
+++            && (error.code == NSFileReadNoPermissionError
+++                || error.code == NSFileWriteNoPermissionError)
++     }
++ }
++ 
++ private struct SnapshotComponents {
++     fileprivate let rootURL: URL
++     fileprivate let databaseURL: URL
++     fileprivate let databaseQueue: DatabaseQueue
++ }
++diff --git a/Sources/StowerMessages/StowerMessageMapper.swift b/Sources/StowerMessages/StowerMessageMapper.swift
++index d9ce629..9eae846 100644
++--- a/Sources/StowerMessages/StowerMessageMapper.swift
+++++ b/Sources/StowerMessages/StowerMessageMapper.swift
++@@ -1,92 +1,98 @@
++ import Foundation
++ 
++ internal enum StowerMessageMapper {
++     /// The balloon bundle used by iMessage link previews; their body text is
++     /// the shared URL, so they stay indexable unlike other balloon payloads.
++     internal static let urlPreviewBalloonBundleID = "com.apple.messages.URLBalloonProvider"
++ 
++     internal static func map(
++         row: StowerSourceMessageRow,
++         body: String?,
++         participantHandles: [String],
++         contacts: StowerContactsResolver
++     ) -> StowerMessageItem? {
++         guard row.associatedMessageType == 0, row.itemType == 0,
++             row.balloonBundleID == nil || row.balloonBundleID == urlPreviewBalloonBundleID,
++             let date = StowerMessageDate.date(from: row.rawDate),
++             let body = cleanBody(body)
++         else {
++             return nil
++         }
++         let participants = participantHandles.map(contacts.displayName(for:))
++         let groupTitle = title(row: row, participants: participants)
++         let sender = sender(row: row, contacts: contacts)
++         return StowerMessageItem(
++             id: row.guid,
++             text: body,
++             timestamp: date,
++-            deepLink: deepLink(row: row, participantHandles: participantHandles),
+++            deepLink: deepLink(row: row),
++             groupID: groupID(for: row.chat),
++             groupTitle: groupTitle,
++             isFromMe: row.isFromMe,
++             sender: sender
++         )
++     }
++ 
++     private static func cleanBody(_ body: String?) -> String? {
++         guard let body else {
++             return nil
++         }
++         let cleaned = body.trimmingCharacters(in: .whitespacesAndNewlines)
++         return cleaned.isEmpty ? nil : cleaned
++     }
++ 
++     private static func title(
++         row: StowerSourceMessageRow,
++         participants: [String]
++     ) -> String {
++         let displayName = row.chat.displayName?
++             .trimmingCharacters(in: .whitespacesAndNewlines)
++         if let displayName, !displayName.isEmpty {
++             return displayName
++         }
++         let uniqueParticipants = Array(Set(participants)).sorted()
++         if !uniqueParticipants.isEmpty {
++             return uniqueParticipants.joined(separator: ", ")
++         }
++         return row.chat.identifier
++     }
++ 
++     private static func sender(
++         row: StowerSourceMessageRow,
++         contacts: StowerContactsResolver
++     ) -> String {
++         guard !row.isFromMe else {
++             return "Me"
++         }
++         guard let handle = row.senderHandle, !handle.isEmpty else {
++             return "Unknown"
++         }
++         return contacts.displayName(for: handle)
++     }
++ 
++-    private static func deepLink(
++-        row: StowerSourceMessageRow,
++-        participantHandles: [String]
++-    ) -> URL? {
++-        guard row.chat.style == 45, let handle = participantHandles.first else {
+++    private static func deepLink(row: StowerSourceMessageRow) -> URL? {
+++        // Group chats stay nil: there is no public per-chat URL, and an
+++        // sms: compose link with the full recipient set CREATES A NEW group
+++        // instead of matching the existing one (verified on real data,
+++        // 2026-06-11). Callers must offer their own navigation fallback.
+++        guard row.chat.style == 45 else {
++             return nil
++         }
++-        return URL(string: "sms:\(handle)")
+++        // chat_identifier is the chat's canonical counterpart address. The
+++        // participant list can hold several handles for one person (old
+++        // email + current phone), so picking any of those can open the
+++        // wrong conversation in Messages.
+++        let address = row.chat.identifier.trimmingCharacters(in: .whitespaces)
+++        return address.isEmpty ? nil : URL(string: "sms:\(address)")
++     }
++ 
++     private static func groupID(for chat: StowerSourceChatRow) -> String {
++         if let guid = chat.guid, !guid.isEmpty {
++             return guid
++         }
++         if !chat.identifier.isEmpty {
++             return chat.identifier
++         }
++         return "chat:\(chat.rowID)"
++     }
++ }
++
++exec
++/bin/zsh -lc 'git diff --unified=60 origin/main...HEAD -- Tests/StowerMessagesTests/StowerChatSnapshotTests.swift Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++diff --git a/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift b/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
++index 7d19fd7..7200d88 100644
++--- a/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
+++++ b/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
++@@ -1,57 +1,66 @@
++ import Testing
++ 
++ @testable import StowerMessages
++ 
++ @Suite("StowerChatDatabaseReader")
++ internal struct StowerChatDatabaseReaderTests {
++     @Test("windowed ingest decodes, filters, resolves names, and deduplicates")
++     internal func ingestWindow() async throws {
++         let fixture = try StowerFixtureDatabase()
++         defer { fixture.remove() }
++         let reader = try StowerChatDatabaseReader(
++             sourceURL: fixture.databaseURL,
++             contactsResolver: contacts
++         )
++ 
++         let items = try await reader.ingestWindow(days: 180, now: StowerFixtureDatabase.now)
++         let ids = items.map(\.id)
++ 
++         #expect(!ids.contains("old"))
++         #expect(!ids.contains("tapback"))
++         #expect(!ids.contains("system"))
++         #expect(!ids.contains("attachment"))
++         #expect(!ids.contains("balloon"))
++         #expect(!ids.contains("zero"))
++         #expect(items.first(where: { $0.id == "link" })?.text == "https://example.com/article")
+++        // Deep link must use chat_identifier, not the alphabetically-first
+++        // participant handle (a stale old number/email opens the wrong chat).
+++        #expect(
+++            items.first(where: { $0.id == "bea-incoming" })?.deepLink?.absoluteString
+++                == "sms:+14155550300"
+++        )
+++        // Groups get NO deep link: an sms: recipient-set compose creates a
+++        // NEW group instead of matching the existing one (real-data check).
+++        #expect(items.first(where: { $0.id == "group-incoming" })?.deepLink == nil)
++         #expect(ids.filter { $0 == "duplicate" }.count == 1)
++         #expect(items.first(where: { $0.id == "incoming" })?.text == "incoming NS Attribute")
++         #expect(items.first(where: { $0.id == "outgoing" })?.groupTitle == "Alex")
++         #expect(items.first(where: { $0.id == "outgoing" })?.sender == "Me")
++         #expect(items.first(where: { $0.id == "group-incoming" })?.groupTitle == "Project Group")
++         #expect(items.first(where: { $0.id == "group-incoming" })?.sender == "Sam")
++     }
++ 
++     @Test("recent messages are unbounded, newest-N, stable, and chronological")
++     internal func recentMessages() async throws {
++         let fixture = try StowerFixtureDatabase()
++         defer { fixture.remove() }
++         let reader = try StowerChatDatabaseReader(
++             sourceURL: fixture.databaseURL,
++             contactsResolver: contacts
++         )
++ 
++         let newest = try await reader.recentMessages(chatID: "chat-alex", limit: 3)
++         let full = try await reader.recentMessages(chatID: "chat-alex", limit: 100)
++ 
++         #expect(newest.map(\.id) == ["tie-a", "tie-b", "newest"])
++         #expect(full.contains(where: { $0.id == "old" }))
++         #expect(full.map(\.timestamp) == full.map(\.timestamp).sorted())
++         #expect(full.first(where: { $0.id == "incoming" })?.sender == "Alex")
++         #expect(full.first(where: { $0.id == "outgoing" })?.sender == "Me")
++     }
++ 
++     private var contacts: StowerContactsResolver {
++         let mapping = ["+14155550100": "Alex", "sam@example.com": "Sam"]
++         return StowerContactsResolver(mapping: mapping)
++     }
++ }
++diff --git a/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift b/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
++index aa91746..38d0531 100644
++--- a/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
+++++ b/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
++@@ -18,65 +18,123 @@ internal struct StowerChatSnapshotTests {
++             sourceURL: fixture.databaseURL,
++             temporaryDirectory: temp
++         )
++         let copiedURL = try #require(snapshot?.databaseURL)
++ 
++         #expect(snapshot?.openedReadonly == true)
++         #expect(copiedURL != fixture.databaseURL)
++         #expect(try Data(contentsOf: fixture.databaseURL) == originalData)
++         #expect(try modificationDate(fixture.databaseURL) == originalDate)
++ 
++         snapshot = nil
++         #expect(!FileManager.default.fileExists(atPath: copiedURL.deletingLastPathComponent().path))
++     }
++ 
++     @Test("recovers WAL frames copied from a live database")
++     internal func walRecovery() throws {
++         let fixture = try StowerFixtureDatabase(useWriteAheadLog: true)
++         defer { fixture.remove() }
++         let walURL = URL(fileURLWithPath: fixture.databaseURL.path + "-wal")
++         let originalWALData = try Data(contentsOf: walURL)
++         #expect(!originalWALData.isEmpty)
++ 
++         let snapshot = try StowerChatSnapshot(sourceURL: fixture.databaseURL)
++         let source = try snapshot.ingestRows(since: .distantPast)
++ 
++         #expect(snapshot.openedReadonly)
++         #expect(source.rows.contains(where: { $0.guid == "newest" }))
++         #expect(try Data(contentsOf: walURL) == originalWALData)
++     }
++ 
++     @Test("rejects an invalid SQLite copy after retrying")
++     internal func invalidCopy() throws {
++         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
++             "stower-invalid-\(UUID().uuidString)",
++             isDirectory: true
++         )
++         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
++         defer { try? FileManager.default.removeItem(at: root) }
++         let source = root.appendingPathComponent("chat.db")
++         try Data("not sqlite".utf8).write(to: source)
++ 
++         #expect(throws: StowerMessagesError.self) {
++             _ = try StowerChatSnapshot(sourceURL: source, temporaryDirectory: root)
++         }
++     }
++ 
++     @Test("classifies permission failures as missing Full Disk Access")
++     internal func permissionClassification() {
++         let error = NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
++         let classified = StowerChatSnapshot.classify(
++             error,
++             sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
++         )
++ 
++         guard case .fullDiskAccessMissing = classified else {
++             Issue.record("Expected a Full Disk Access error.")
++             return
++         }
++     }
++ 
+++    @Test("classifies a copy denial with a nested POSIX error as missing Full Disk Access")
+++    internal func wrappedCopyPermissionClassification() {
+++        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))
+++        let copyDenied = NSError(
+++            domain: NSCocoaErrorDomain,
+++            code: NSFileWriteNoPermissionError,
+++            userInfo: [NSUnderlyingErrorKey: posix]
+++        )
+++        let classified = StowerChatSnapshot.classify(
+++            copyDenied,
+++            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
+++        )
+++
+++        guard case .fullDiskAccessMissing = classified else {
+++            Issue.record("Expected a Full Disk Access error for the wrapped copy denial.")
+++            return
+++        }
+++    }
+++
+++    @Test("classifies a copy denial that names the source path as missing Full Disk Access")
+++    internal func sourcePathDenialIsFullDiskAccess() {
+++        let denied = NSError(
+++            domain: NSCocoaErrorDomain,
+++            code: NSFileReadNoPermissionError,
+++            userInfo: [NSFilePathErrorKey: "/fixture/chat.db"]
+++        )
+++        let classified = StowerChatSnapshot.classify(
+++            denied,
+++            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
+++        )
+++
+++        guard case .fullDiskAccessMissing = classified else {
+++            Issue.record("Expected Full Disk Access when the denial names the source path.")
+++            return
+++        }
+++    }
+++
+++    @Test("does not blame Full Disk Access when only the staging destination is unwritable")
+++    internal func destinationDenialIsNotFullDiskAccess() {
+++        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+++        let stagingPath = "/var/folders/tmp/stower-msg-stage-ABC/chat.db"
+++        let info: [String: Any] = [NSFilePathErrorKey: stagingPath, NSUnderlyingErrorKey: posix]
+++        let writeDenied = NSError(
+++            domain: NSCocoaErrorDomain,
+++            code: NSFileWriteNoPermissionError,
+++            userInfo: info
+++        )
+++        let classified = StowerChatSnapshot.classify(
+++            writeDenied,
+++            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
+++        )
+++
+++        guard case .unreadableSource = classified else {
+++            Issue.record("Expected unreadableSource when only the staging destination is denied.")
+++            return
+++        }
+++    }
+++
++     private func modificationDate(_ url: URL) throws -> Date {
++         let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
++         return try #require(values.contentModificationDate)
++     }
++ }
++
++exec
++/bin/zsh -lc 'git diff --unified=40 origin/main...HEAD -- Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++diff --git a/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift b/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
++index b6a8ae4..29ade9d 100644
++--- a/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
+++++ b/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
++@@ -47,233 +47,259 @@ internal struct StowerFixtureDatabase {
++ 
++     private static func createSchema(_ database: Database) throws {
++         try database.execute(
++             sql: """
++                 CREATE TABLE message (
++                   guid TEXT NOT NULL,
++                   text TEXT,
++                   attributedBody BLOB,
++                   date INTEGER NOT NULL,
++                   is_from_me INTEGER NOT NULL,
++                   handle_id INTEGER NOT NULL,
++                   associated_message_type INTEGER NOT NULL,
++                   item_type INTEGER NOT NULL,
++                   cache_has_attachments INTEGER NOT NULL,
++                   balloon_bundle_id TEXT
++                 );
++                 CREATE TABLE handle (id TEXT NOT NULL);
++                 CREATE TABLE chat (
++                   guid TEXT,
++                   chat_identifier TEXT NOT NULL,
++                   display_name TEXT,
++                   style INTEGER NOT NULL
++                 );
++                 CREATE TABLE chat_message_join (
++                   chat_id INTEGER NOT NULL,
++                   message_id INTEGER NOT NULL
++                 );
++                 CREATE TABLE chat_handle_join (
++                   chat_id INTEGER NOT NULL,
++                   handle_id INTEGER NOT NULL
++                 );
++                 """
++         )
++     }
++ 
++     private static func insertHandlesAndChats(_ database: Database) throws {
++         try database.execute(
++             sql: """
++                 INSERT INTO handle (ROWID, id) VALUES
++                   (1, '+14155550100'),
++-                  (2, 'sam@example.com');
+++                  (2, 'sam@example.com'),
+++                  (3, '+14155550299'),
+++                  (4, '+14155550300');
++                 INSERT INTO chat (ROWID, guid, chat_identifier, display_name, style) VALUES
++                   (1, 'chat-alex', '+14155550100', NULL, 45),
++-                  (2, 'chat-group', 'group-identifier', 'Project Group', 43);
+++                  (2, 'chat-group', 'group-identifier', 'Project Group', 43),
+++                  (3, 'chat-bea', '+14155550300', NULL, 45);
++                 INSERT INTO chat_handle_join (chat_id, handle_id) VALUES
++                   (1, 1),
++                   (2, 1),
++-                  (2, 2);
+++                  (2, 2),
+++                  (3, 3),
+++                  (3, 4);
++                 """
++         )
++     }
++ 
++     private static func insertMessages(_ database: Database) throws {
++         let recentBody = try archive(NSAttributedString(string: "incoming NS Attribute"))
++         var values = primaryMessages(recentBody: recentBody)
++         values.append(contentsOf: filteredMessages())
++         values.append(contentsOf: newestMessages())
+++        values.append(contentsOf: deepLinkMessages())
++         for (offset, value) in values.enumerated() {
++             let rowID = Int64(offset + 1)
++             try insertMessage(database, rowID: rowID, value: value)
++             try database.execute(
++                 sql: "INSERT INTO chat_message_join (chat_id, message_id) VALUES (?, ?)",
++                 arguments: [value.chatID, rowID]
++             )
++             if value.id == "duplicate" {
++                 try database.execute(
++                     sql: "INSERT INTO chat_message_join (chat_id, message_id) VALUES (?, ?)",
++                     arguments: [2, rowID]
++                 )
++             }
++         }
++     }
++ 
++-    private static func primaryMessages(recentBody: Data) -> [FixtureMessage] {
+++    private static func insertMessage(
+++        _ database: Database,
+++        rowID: Int64,
+++        value: FixtureMessage
+++    ) throws {
+++        try database.execute(
+++            sql: """
+++                INSERT INTO message (
+++                  ROWID, guid, text, attributedBody, date, is_from_me, handle_id,
+++                  associated_message_type, item_type, cache_has_attachments, balloon_bundle_id
+++                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+++                """,
+++            arguments: messageArguments(rowID: rowID, value: value)
+++        )
+++    }
+++
+++    private static func messageArguments(
+++        rowID: Int64,
+++        value: FixtureMessage
+++    ) -> StatementArguments {
+++        var values: [DatabaseValueConvertible?] = []
+++        values.append(rowID)
+++        values.append(value.id)
+++        values.append(value.text)
+++        values.append(value.body)
+++        values.append(value.date)
+++        values.append(value.isFromMe)
+++        values.append(value.handleID)
+++        values.append(value.associatedType)
+++        values.append(value.itemType)
+++        values.append(value.hasAttachments)
+++        values.append(value.balloonID)
+++        return StatementArguments(values)
+++    }
+++
+++    private static func rawDate(daysAgo: Int) -> Int64 {
+++        let date = now.addingTimeInterval(-Double(daysAgo) * 86_400)
+++        return Int64(date.timeIntervalSinceReferenceDate * 1_000_000_000)
+++    }
+++
+++    private static func archive(_ value: Any) throws -> Data {
+++        let selector = NSSelectorFromString("archivedDataWithRootObject:")
+++        guard let archiver = NSClassFromString("NSArchiver") as? NSObject.Type,
+++            let result = archiver.perform(selector, with: value),
+++            let data = result.takeUnretainedValue() as? Data
+++        else {
+++            throw FixtureError.archiveFailed
+++        }
+++        return data
+++    }
+++}
+++
+++// MARK: - Message fixtures
+++
+++extension StowerFixtureDatabase {
+++    fileprivate static func primaryMessages(recentBody: Data) -> [FixtureMessage] {
++         var values: [FixtureMessage] = []
++         values.append(
++             FixtureMessage(id: "old", text: "older than window", date: rawDate(daysAgo: 200))
++         )
++         values.append(FixtureMessage(id: "incoming", body: recentBody, date: rawDate(daysAgo: 10)))
++         values.append(
++             FixtureMessage(
++                 id: "outgoing",
++                 text: "outgoing text",
++                 date: rawDate(daysAgo: 9),
++                 isFromMe: true,
++                 handleID: 0
++             )
++         )
++         values.append(
++             FixtureMessage(id: "duplicate", text: "one indexed copy", date: rawDate(daysAgo: 7))
++         )
++         values.append(
++             FixtureMessage(
++                 id: "group-incoming",
++                 text: "group response",
++                 date: rawDate(daysAgo: 6),
++                 handleID: 2,
++                 chatID: 2
++             )
++         )
++         values.append(
++             FixtureMessage(
++                 id: "link",
++                 text: "https://example.com/article",
++                 date: rawDate(daysAgo: 5),
++                 balloonID: "com.apple.messages.URLBalloonProvider"
++             )
++         )
++         return values
++     }
++ 
++-    private static func filteredMessages() -> [FixtureMessage] {
+++    fileprivate static func filteredMessages() -> [FixtureMessage] {
++         var values: [FixtureMessage] = []
++         values.append(
++             FixtureMessage(
++                 id: "tapback",
++                 text: "Liked a message",
++                 date: rawDate(daysAgo: 8),
++                 associatedType: 2000
++             )
++         )
++         values.append(
++             FixtureMessage(
++                 id: "system",
++                 text: "Renamed chat",
++                 date: rawDate(daysAgo: 8),
++                 itemType: 1
++             )
++         )
++         values.append(
++             FixtureMessage(id: "attachment", date: rawDate(daysAgo: 8), hasAttachments: true)
++         )
++         values.append(
++             FixtureMessage(
++                 id: "balloon",
++                 text: "app payload text",
++                 date: rawDate(daysAgo: 8),
++                 balloonID: "fixture.app"
++             )
++         )
++         values.append(FixtureMessage(id: "zero", text: "invalid date", date: 0))
++         return values
++     }
++ 
++-    private static func newestMessages() -> [FixtureMessage] {
+++    fileprivate static func newestMessages() -> [FixtureMessage] {
++         var values: [FixtureMessage] = []
++         values.append(
++             FixtureMessage(id: "tie-a", text: "same timestamp a", date: rawDate(daysAgo: 2))
++         )
++         values.append(
++             FixtureMessage(
++                 id: "tie-b",
++                 text: "same timestamp b",
++                 date: rawDate(daysAgo: 2),
++                 isFromMe: true,
++                 handleID: 0
++             )
++         )
++         values.append(
++             FixtureMessage(id: "newest", text: "newest message", date: rawDate(daysAgo: 1))
++         )
++         return values
++     }
++ 
++-    private static func insertMessage(
++-        _ database: Database,
++-        rowID: Int64,
++-        value: FixtureMessage
++-    ) throws {
++-        try database.execute(
++-            sql: """
++-                INSERT INTO message (
++-                  ROWID, guid, text, attributedBody, date, is_from_me, handle_id,
++-                  associated_message_type, item_type, cache_has_attachments, balloon_bundle_id
++-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++-                """,
++-            arguments: messageArguments(rowID: rowID, value: value)
+++    /// A 1:1 chat whose join row holds TWO handles (old + current number);
+++    /// the deep link must follow chat_identifier, not the first handle.
+++    fileprivate static func deepLinkMessages() -> [FixtureMessage] {
+++        var values: [FixtureMessage] = []
+++        values.append(
+++            FixtureMessage(
+++                id: "bea-incoming",
+++                text: "hello from the current number",
+++                date: rawDate(daysAgo: 4),
+++                handleID: 4,
+++                chatID: 3
+++            )
++         )
++-    }
++-
++-    private static func messageArguments(
++-        rowID: Int64,
++-        value: FixtureMessage
++-    ) -> StatementArguments {
++-        var values: [DatabaseValueConvertible?] = []
++-        values.append(rowID)
++-        values.append(value.id)
++-        values.append(value.text)
++-        values.append(value.body)
++-        values.append(value.date)
++-        values.append(value.isFromMe)
++-        values.append(value.handleID)
++-        values.append(value.associatedType)
++-        values.append(value.itemType)
++-        values.append(value.hasAttachments)
++-        values.append(value.balloonID)
++-        return StatementArguments(values)
++-    }
++-
++-    private static func rawDate(daysAgo: Int) -> Int64 {
++-        let date = now.addingTimeInterval(-Double(daysAgo) * 86_400)
++-        return Int64(date.timeIntervalSinceReferenceDate * 1_000_000_000)
++-    }
++-
++-    private static func archive(_ value: Any) throws -> Data {
++-        let selector = NSSelectorFromString("archivedDataWithRootObject:")
++-        guard let archiver = NSClassFromString("NSArchiver") as? NSObject.Type,
++-            let result = archiver.perform(selector, with: value),
++-            let data = result.takeUnretainedValue() as? Data
++-        else {
++-            throw FixtureError.archiveFailed
++-        }
++-        return data
+++        return values
++     }
++ }
++ 
++ private enum FixtureError: Error {
++     case archiveFailed
++ }
++ 
++ private struct FixtureMessage {
++     fileprivate let id: String
++     fileprivate var text: String?
++     fileprivate var body: Data?
++     fileprivate let date: Int64
++     fileprivate var isFromMe = false
++     fileprivate var handleID: Int64 = 1
++     fileprivate var associatedType: Int64 = 0
++     fileprivate var itemType: Int64 = 0
++     fileprivate var hasAttachments = false
++     fileprivate var balloonID: String?
++     fileprivate var chatID: Int64 = 1
++ }
++
++exec
++/bin/zsh -lc "rg -n \"StowerChatSnapshot|StowerMessageMapper|attributedBody|message_summary_info|payload_data\" Sources Tests --glob '"'!Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift'"'" in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++Sources/StowerMessages/StowerMessageMapper.swift:3:internal enum StowerMessageMapper {
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:6:@Suite("StowerChatSnapshot")
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:7:internal struct StowerChatSnapshotTests {
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:17:        var snapshot: StowerChatSnapshot? = try StowerChatSnapshot(
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:40:        let snapshot = try StowerChatSnapshot(sourceURL: fixture.databaseURL)
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:60:            _ = try StowerChatSnapshot(sourceURL: source, temporaryDirectory: root)
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:67:        let classified = StowerChatSnapshot.classify(
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:86:        let classified = StowerChatSnapshot.classify(
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:104:        let classified = StowerChatSnapshot.classify(
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:125:        let classified = StowerChatSnapshot.classify(
++Sources/StowerMessages/StowerChatSnapshot.swift:4:internal final class StowerChatSnapshot {
++Sources/StowerMessages/StowerMessageQuery.swift:74:               OR m.balloon_bundle_id = '\(StowerMessageMapper.urlPreviewBalloonBundleID)')
++Sources/StowerMessages/StowerMessageQuery.swift:75:          AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL)
++Sources/StowerMessages/StowerMessageQuery.swift:91:          m.attributedBody AS attributed_body,
++Sources/StowerMessages/StowerSourceRow.swift:8:    internal let attributedBody: Data?
++Sources/StowerMessages/StowerSourceRow.swift:23:        case attributedBody = "attributed_body"
++Sources/StowerMessages/StowerSourceRow.swift:39:        attributedBody = row["attributed_body"]
++Sources/StowerMessages/README.md:3:Messages data-source adapter: read-only `chat.db` reader, Madrid `attributedBody`
++Sources/StowerMessages/StowerChatDatabaseReader.swift:5:    private let snapshot: StowerChatSnapshot
++Sources/StowerMessages/StowerChatDatabaseReader.swift:19:        snapshot = try StowerChatSnapshot(sourceURL: sourceURL)
++Sources/StowerMessages/StowerChatDatabaseReader.swift:67:            return StowerMessageMapper.map(
++Sources/StowerMessages/StowerChatDatabaseReader.swift:78:        guard let attributedBody = row.attributedBody else {
++Sources/StowerMessages/StowerChatDatabaseReader.swift:82:            return try StowerAttributedBodyDecoder.decode(attributedBody) ?? row.text
++
++exec
++/bin/zsh -lc "nl -ba Sources/StowerMessages/StowerChatSnapshot.swift | sed -n '1,330p'" in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++     1	import Foundation
++     2	import GRDB
++     3	
++     4	internal final class StowerChatSnapshot {
++     5	    internal let databaseURL: URL
++     6	    internal let openedReadonly: Bool
++     7	
++     8	    private let rootURL: URL
++     9	    private let databaseQueue: DatabaseQueue
++    10	    private let fileManager: FileManager
++    11	
++    12	    internal init(
++    13	        sourceURL: URL,
++    14	        fileManager: FileManager = .default,
++    15	        temporaryDirectory: URL? = nil
++    16	    ) throws {
++    17	        self.fileManager = fileManager
++    18	        let temporaryDirectory = temporaryDirectory ?? fileManager.temporaryDirectory
++    19	        // Best-effort housekeeping; a sweep failure must never block reading.
++    20	        try? Self.sweepStaleSnapshots(in: temporaryDirectory, fileManager: fileManager)
++    21	        let snapshot = try Self.makeValidatedSnapshot(
++    22	            sourceURL: sourceURL,
++    23	            temporaryDirectory: temporaryDirectory,
++    24	            fileManager: fileManager
++    25	        )
++    26	        rootURL = snapshot.rootURL
++    27	        databaseURL = snapshot.databaseURL
++    28	        databaseQueue = snapshot.databaseQueue
++    29	        openedReadonly = true
++    30	    }
++    31	
++    32	    deinit {
++    33	        // Intentional best-effort cleanup: deinit cannot throw, and
++    34	        // sweepStaleSnapshots reclaims anything left behind on the next run.
++    35	        try? fileManager.removeItem(at: rootURL)
++    36	    }
++    37	
++    38	    internal func ingestRows(
++    39	        since date: Date
++    40	    ) throws -> (rows: [StowerSourceMessageRow], participants: [Int64: [String]]) {
++    41	        try databaseQueue.read { database in
++    42	            let rows = try StowerMessageQuery.ingestRows(database: database, since: date)
++    43	            let chatIDs = Set(rows.map(\.chat.rowID))
++    44	            let participants = try StowerMessageQuery.participants(
++    45	                database: database,
++    46	                chatRowIDs: chatIDs
++    47	            )
++    48	            return (rows, participants)
++    49	        }
++    50	    }
++    51	
++    52	    internal func recentRows(
++    53	        chatID: String,
++    54	        limit: Int
++    55	    ) throws -> (rows: [StowerSourceMessageRow], participants: [Int64: [String]]) {
++    56	        try databaseQueue.read { database in
++    57	            let rows = try StowerMessageQuery.recentRows(
++    58	                database: database,
++    59	                chatID: chatID,
++    60	                limit: limit
++    61	            )
++    62	            let chatIDs = Set(rows.map(\.chat.rowID))
++    63	            let participants = try StowerMessageQuery.participants(
++    64	                database: database,
++    65	                chatRowIDs: chatIDs
++    66	            )
++    67	            return (rows, participants)
++    68	        }
++    69	    }
++    70	
++    71	    private static func makeValidatedSnapshot(
++    72	        sourceURL: URL,
++    73	        temporaryDirectory: URL,
++    74	        fileManager: FileManager
++    75	    ) throws -> SnapshotComponents {
++    76	        guard fileManager.fileExists(atPath: sourceURL.path) else {
++    77	            throw StowerMessagesError.sourceNotFound(sourceURL.path)
++    78	        }
++    79	        // Messages.app may checkpoint the live DB mid-copy, producing a torn
++    80	        // snapshot; one retry recovers that transient state.
++    81	        var lastValidationError: Error = StowerMessagesError.invalidSnapshot
++    82	        for _ in 0..<2 {
++    83	            do {
++    84	                let copiedURL = try copySource(
++    85	                    sourceURL: sourceURL,
++    86	                    temporaryDirectory: temporaryDirectory,
++    87	                    fileManager: fileManager
++    88	                )
++    89	                do {
++    90	                    return try openValidated(rootURL: copiedURL, fileManager: fileManager)
++    91	                } catch {
++    92	                    lastValidationError = error
++    93	                    try? fileManager.removeItem(at: copiedURL)
++    94	                }
++    95	            } catch {
++    96	                throw classify(error, sourceURL: sourceURL)
++    97	            }
++    98	        }
++    99	        if let messagesError = lastValidationError as? StowerMessagesError {
++   100	            throw messagesError
++   101	        }
++   102	        throw StowerMessagesError.unreadableSource(lastValidationError.localizedDescription)
++   103	    }
++   104	
++   105	    private static func copySource(
++   106	        sourceURL: URL,
++   107	        temporaryDirectory: URL,
++   108	        fileManager: FileManager
++   109	    ) throws -> URL {
++   110	        let stagingURL = temporaryDirectory.appendingPathComponent(
++   111	            "stower-msg-stage-\(UUID().uuidString)",
++   112	            isDirectory: true
++   113	        )
++   114	        let finalURL = temporaryDirectory.appendingPathComponent(
++   115	            "stower-msg-\(UUID().uuidString)",
++   116	            isDirectory: true
++   117	        )
++   118	        try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
++   119	        do {
++   120	            try copyDatabaseFiles(
++   121	                sourceURL: sourceURL,
++   122	                destinationDirectory: stagingURL,
++   123	                fileManager: fileManager
++   124	            )
++   125	            try fileManager.moveItem(at: stagingURL, to: finalURL)
++   126	            return finalURL
++   127	        } catch {
++   128	            try? fileManager.removeItem(at: stagingURL)
++   129	            throw error
++   130	        }
++   131	    }
++   132	
++   133	    private static func copyDatabaseFiles(
++   134	        sourceURL: URL,
++   135	        destinationDirectory: URL,
++   136	        fileManager: FileManager
++   137	    ) throws {
++   138	        let destination = destinationDirectory.appendingPathComponent("chat.db")
++   139	        try fileManager.copyItem(at: sourceURL, to: destination)
++   140	        for suffix in ["-wal", "-shm"] {
++   141	            let sourceSidecar = URL(fileURLWithPath: sourceURL.path + suffix)
++   142	            guard fileManager.fileExists(atPath: sourceSidecar.path) else {
++   143	                continue
++   144	            }
++   145	            let destinationSidecar = URL(fileURLWithPath: destination.path + suffix)
++   146	            try fileManager.copyItem(at: sourceSidecar, to: destinationSidecar)
++   147	        }
++   148	    }
++   149	
++   150	    private static func openValidated(
++   151	        rootURL: URL,
++   152	        fileManager: FileManager
++   153	    ) throws -> SnapshotComponents {
++   154	        let databaseURL = rootURL.appendingPathComponent("chat.db")
++   155	        try recoverWriteAheadLog(at: databaseURL)
++   156	        var configuration = Configuration()
++   157	        configuration.readonly = true
++   158	        let databaseQueue = try DatabaseQueue(
++   159	            path: databaseURL.path,
++   160	            configuration: configuration
++   161	        )
++   162	        let check = try databaseQueue.read { database in
++   163	            try String.fetchAll(database, sql: "PRAGMA quick_check")
++   164	        }
++   165	        guard check == ["ok"] else {
++   166	            try? fileManager.removeItem(at: rootURL)
++   167	            throw StowerMessagesError.invalidSnapshot
++   168	        }
++   169	        return SnapshotComponents(
++   170	            rootURL: rootURL,
++   171	            databaseURL: databaseURL,
++   172	            databaseQueue: databaseQueue
++   173	        )
++   174	    }
++   175	
++   176	    /// Folds copied WAL frames into the private snapshot before read-only use.
++   177	    ///
++   178	    /// A raw file copy of a WAL-mode database needs recovery and shared-memory
++   179	    /// setup, which SQLite refuses on read-only connections. Switching the
++   180	    /// private copy back to a rollback journal checkpoints every WAL frame,
++   181	    /// deletes the sidecar files, and rewrites the header, so the read-only
++   182	    /// open sees a self-contained database. The original Source DB is never
++   183	    /// touched.
++   184	    private static func recoverWriteAheadLog(at databaseURL: URL) throws {
++   185	        let recoveryQueue = try DatabaseQueue(path: databaseURL.path)
++   186	        try recoveryQueue.writeWithoutTransaction { database in
++   187	            try database.execute(sql: "PRAGMA journal_mode=DELETE")
++   188	        }
++   189	        try recoveryQueue.close()
++   190	    }
++   191	
++   192	    private static func sweepStaleSnapshots(
++   193	        in temporaryDirectory: URL,
++   194	        fileManager: FileManager
++   195	    ) throws {
++   196	        let cutoff = Date().addingTimeInterval(-86_400)
++   197	        let contents = try fileManager.contentsOfDirectory(
++   198	            at: temporaryDirectory,
++   199	            includingPropertiesForKeys: [.contentModificationDateKey],
++   200	            options: [.skipsHiddenFiles]
++   201	        )
++   202	        for url in contents where url.lastPathComponent.hasPrefix("stower-msg-") {
++   203	            let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
++   204	            guard let modified = values.contentModificationDate, modified < cutoff else {
++   205	                continue
++   206	            }
++   207	            try? fileManager.removeItem(at: url)
++   208	        }
++   209	    }
++   210	
++   211	    internal static func classify(_ error: Error, sourceURL: URL) -> StowerMessagesError {
++   212	        if permissionDenialImplicatesSource(error, sourceURL: sourceURL) {
++   213	            return .fullDiskAccessMissing(sourceURL.path)
++   214	        }
++   215	        return .unreadableSource((error as NSError).localizedDescription)
++   216	    }
++   217	
++   218	    /// Reports whether a permission denial in the error chain is attributable to
++   219	    /// the source database rather than the staging destination.
++   220	    ///
++   221	    /// `classify` sees failures from the whole copy pipeline — staging
++   222	    /// `createDirectory`, the source `copyItem`, and the `moveItem` into place —
++   223	    /// so an unwritable `temporaryDirectory` also surfaces EACCES/EPERM. Full
++   224	    /// Disk Access is only the right diagnosis when the denied path is the source
++   225	    /// DB (or a source sidecar), or when the denial carries no path to attribute
++   226	    /// at all. A denial that names only a destination path is a staging-write
++   227	    /// failure, not a TCC denial on `chat.db`.
++   228	    private static func permissionDenialImplicatesSource(
++   229	        _ error: Error,
++   230	        sourceURL: URL
++   231	    ) -> Bool {
++   232	        let sourcePaths = sourcePathSet(for: sourceURL)
++   233	        var sawDenial = false
++   234	        var sawDestinationDenial = false
++   235	        var current: NSError? = error as NSError
++   236	        while let nsError = current {
++   237	            if isPOSIXDenial(nsError) || isCocoaDenial(nsError) {
++   238	                sawDenial = true
++   239	                if let path = deniedPath(in: nsError) {
++   240	                    if sourcePaths.contains(path) {
++   241	                        return true
++   242	                    }
++   243	                    sawDestinationDenial = true
++   244	                }
++   245	            }
++   246	            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
++   247	        }
++   248	        return sawDenial && !sawDestinationDenial
++   249	    }
++   250	
++   251	    /// The source DB path plus its WAL/SHM sidecars, normalized for comparison
++   252	    /// against the path Cocoa records on a file error.
++   253	    private static func sourcePathSet(for sourceURL: URL) -> Set<String> {
++   254	        let base = sourceURL.path
++   255	        return Set([base, base + "-wal", base + "-shm"].map(normalizedPath))
++   256	    }
++   257	
++   258	    /// The file path a Cocoa/POSIX error blames, if any, normalized for comparison.
++   259	    private static func deniedPath(in error: NSError) -> String? {
++   260	        if let path = error.userInfo[NSFilePathErrorKey] as? String {
++   261	            return normalizedPath(path)
++   262	        }
++   263	        if let url = error.userInfo[NSURLErrorKey] as? URL {
++   264	            return normalizedPath(url.path)
++   265	        }
++   266	        return nil
++   267	    }
++   268	
++   269	    private static func normalizedPath(_ path: String) -> String {
++   270	        URL(fileURLWithPath: path).standardizedFileURL.path
++   271	    }
++   272	
++   273	    private static func isPOSIXDenial(_ error: NSError) -> Bool {
++   274	        error.domain == NSPOSIXErrorDomain
++   275	            && (error.code == Int(EACCES) || error.code == Int(EPERM))
++   276	    }
++   277	
++   278	    private static func isCocoaDenial(_ error: NSError) -> Bool {
++   279	        error.domain == NSCocoaErrorDomain
++   280	            && (error.code == NSFileReadNoPermissionError
++   281	                || error.code == NSFileWriteNoPermissionError)
++   282	    }
++   283	}
++   284	
++   285	private struct SnapshotComponents {
++   286	    fileprivate let rootURL: URL
++   287	    fileprivate let databaseURL: URL
++   288	    fileprivate let databaseQueue: DatabaseQueue
++   289	}
++
++exec
++/bin/zsh -lc 'nl -ba Sources/StowerMessages/StowerMessageMapper.swift && nl -ba Sources/StowerMessages/StowerChatDatabaseReader.swift && nl -ba Sources/StowerMessages/StowerMessageQuery.swift && nl -ba Sources/StowerMessages/StowerSourceRow.swift' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++     1	import Foundation
++     2	
++     3	internal enum StowerMessageMapper {
++     4	    /// The balloon bundle used by iMessage link previews; their body text is
++     5	    /// the shared URL, so they stay indexable unlike other balloon payloads.
++     6	    internal static let urlPreviewBalloonBundleID = "com.apple.messages.URLBalloonProvider"
++     7	
++     8	    internal static func map(
++     9	        row: StowerSourceMessageRow,
++    10	        body: String?,
++    11	        participantHandles: [String],
++    12	        contacts: StowerContactsResolver
++    13	    ) -> StowerMessageItem? {
++    14	        guard row.associatedMessageType == 0, row.itemType == 0,
++    15	            row.balloonBundleID == nil || row.balloonBundleID == urlPreviewBalloonBundleID,
++    16	            let date = StowerMessageDate.date(from: row.rawDate),
++    17	            let body = cleanBody(body)
++    18	        else {
++    19	            return nil
++    20	        }
++    21	        let participants = participantHandles.map(contacts.displayName(for:))
++    22	        let groupTitle = title(row: row, participants: participants)
++    23	        let sender = sender(row: row, contacts: contacts)
++    24	        return StowerMessageItem(
++    25	            id: row.guid,
++    26	            text: body,
++    27	            timestamp: date,
++    28	            deepLink: deepLink(row: row),
++    29	            groupID: groupID(for: row.chat),
++    30	            groupTitle: groupTitle,
++    31	            isFromMe: row.isFromMe,
++    32	            sender: sender
++    33	        )
++    34	    }
++    35	
++    36	    private static func cleanBody(_ body: String?) -> String? {
++    37	        guard let body else {
++    38	            return nil
++    39	        }
++    40	        let cleaned = body.trimmingCharacters(in: .whitespacesAndNewlines)
++    41	        return cleaned.isEmpty ? nil : cleaned
++    42	    }
++    43	
++    44	    private static func title(
++    45	        row: StowerSourceMessageRow,
++    46	        participants: [String]
++    47	    ) -> String {
++    48	        let displayName = row.chat.displayName?
++    49	            .trimmingCharacters(in: .whitespacesAndNewlines)
++    50	        if let displayName, !displayName.isEmpty {
++    51	            return displayName
++    52	        }
++    53	        let uniqueParticipants = Array(Set(participants)).sorted()
++    54	        if !uniqueParticipants.isEmpty {
++    55	            return uniqueParticipants.joined(separator: ", ")
++    56	        }
++    57	        return row.chat.identifier
++    58	    }
++    59	
++    60	    private static func sender(
++    61	        row: StowerSourceMessageRow,
++    62	        contacts: StowerContactsResolver
++    63	    ) -> String {
++    64	        guard !row.isFromMe else {
++    65	            return "Me"
++    66	        }
++    67	        guard let handle = row.senderHandle, !handle.isEmpty else {
++    68	            return "Unknown"
++    69	        }
++    70	        return contacts.displayName(for: handle)
++    71	    }
++    72	
++    73	    private static func deepLink(row: StowerSourceMessageRow) -> URL? {
++    74	        // Group chats stay nil: there is no public per-chat URL, and an
++    75	        // sms: compose link with the full recipient set CREATES A NEW group
++    76	        // instead of matching the existing one (verified on real data,
++    77	        // 2026-06-11). Callers must offer their own navigation fallback.
++    78	        guard row.chat.style == 45 else {
++    79	            return nil
++    80	        }
++    81	        // chat_identifier is the chat's canonical counterpart address. The
++    82	        // participant list can hold several handles for one person (old
++    83	        // email + current phone), so picking any of those can open the
++    84	        // wrong conversation in Messages.
++    85	        let address = row.chat.identifier.trimmingCharacters(in: .whitespaces)
++    86	        return address.isEmpty ? nil : URL(string: "sms:\(address)")
++    87	    }
++    88	
++    89	    private static func groupID(for chat: StowerSourceChatRow) -> String {
++    90	        if let guid = chat.guid, !guid.isEmpty {
++    91	            return guid
++    92	        }
++    93	        if !chat.identifier.isEmpty {
++    94	            return chat.identifier
++    95	        }
++    96	        return "chat:\(chat.rowID)"
++    97	    }
++    98	}
++     1	import Foundation
++     2	
++     3	/// Reads a validated, read-only snapshot of the local Messages Source DB.
++     4	public actor StowerChatDatabaseReader {
++     5	    private let snapshot: StowerChatSnapshot
++     6	    private let contacts: StowerContactsResolver
++     7	
++     8	    /// The default local Messages database location.
++     9	    public static var defaultSourceURL: URL {
++    10	        FileManager.default.homeDirectoryForCurrentUser
++    11	            .appendingPathComponent("Library/Messages/chat.db")
++    12	    }
++    13	
++    14	    /// Creates a reader and one reusable ephemeral Source DB snapshot.
++    15	    public init(
++    16	        sourceURL: URL = StowerChatDatabaseReader.defaultSourceURL,
++    17	        contactsResolver: StowerContactsResolver = .live()
++    18	    ) throws {
++    19	        snapshot = try StowerChatSnapshot(sourceURL: sourceURL)
++    20	        contacts = contactsResolver
++    21	    }
++    22	
++    23	    /// Returns decoded, indexable messages from the most recent window.
++    24	    public func ingestWindow(
++    25	        days: Int = 180,
++    26	        now: Date = Date()
++    27	    ) throws -> [StowerMessageItem] {
++    28	        guard days >= 0 else {
++    29	            throw StowerMessagesError.invalidArgument("Window days must not be negative.")
++    30	        }
++    31	        let startDate = now.addingTimeInterval(-Double(days) * 86_400)
++    32	        let source = try snapshot.ingestRows(since: startDate)
++    33	        return mapRows(
++    34	            source.rows,
++    35	            participants: source.participants,
++    36	            reverseForDisplay: false
++    37	        )
++    38	    }
++    39	
++    40	    /// Returns the newest messages from one chat in chronological display order.
++    41	    public func recentMessages(
++    42	        chatID: String,
++    43	        limit: Int = 100
++    44	    ) throws -> [StowerMessageItem] {
++    45	        guard limit > 0 else {
++    46	            return []
++    47	        }
++    48	        let source = try snapshot.recentRows(chatID: chatID, limit: limit)
++    49	        return mapRows(
++    50	            source.rows,
++    51	            participants: source.participants,
++    52	            reverseForDisplay: true
++    53	        )
++    54	    }
++    55	
++    56	    private func mapRows(
++    57	        _ rows: [StowerSourceMessageRow],
++    58	        participants: [Int64: [String]],
++    59	        reverseForDisplay: Bool
++    60	    ) -> [StowerMessageItem] {
++    61	        var seenGUIDs: Set<String> = []
++    62	        let items = rows.compactMap { row -> StowerMessageItem? in
++    63	            guard seenGUIDs.insert(row.guid).inserted else {
++    64	                return nil
++    65	            }
++    66	            let body = decodedBody(for: row)
++    67	            return StowerMessageMapper.map(
++    68	                row: row,
++    69	                body: body,
++    70	                participantHandles: participants[row.chat.rowID] ?? [],
++    71	                contacts: contacts
++    72	            )
++    73	        }
++    74	        return reverseForDisplay ? items.reversed() : items
++    75	    }
++    76	
++    77	    private func decodedBody(for row: StowerSourceMessageRow) -> String? {
++    78	        guard let attributedBody = row.attributedBody else {
++    79	            return row.text
++    80	        }
++    81	        do {
++    82	            return try StowerAttributedBodyDecoder.decode(attributedBody) ?? row.text
++    83	        } catch {
++    84	            return row.text
++    85	        }
++    86	    }
++    87	}
++     1	import Foundation
++     2	import GRDB
++     3	
++     4	internal enum StowerMessageQuery {
++     5	    internal static func ingestRows(
++     6	        database: Database,
++     7	        since date: Date
++     8	    ) throws -> [StowerSourceMessageRow] {
++     9	        try StowerSourceMessageRow.fetchAll(
++    10	            database,
++    11	            sql: baseSelect + """
++    12	                WHERE m.date != 0
++    13	                  AND \(indexableMessagePredicate)
++    14	                  AND \(referenceSecondsExpression) >= ?
++    15	                ORDER BY m.date ASC, m.ROWID ASC, c.ROWID ASC
++    16	                """,
++    17	            arguments: [StowerMessageDate.rawReferenceSeconds(from: date)]
++    18	        )
++    19	    }
++    20	
++    21	    internal static func recentRows(
++    22	        database: Database,
++    23	        chatID: String,
++    24	        limit: Int
++    25	    ) throws -> [StowerSourceMessageRow] {
++    26	        try StowerSourceMessageRow.fetchAll(
++    27	            database,
++    28	            sql: baseSelect + """
++    29	                WHERE m.date != 0
++    30	                  AND \(indexableMessagePredicate)
++    31	                  AND (c.guid = ? OR c.chat_identifier = ?)
++    32	                ORDER BY m.date DESC, m.ROWID DESC
++    33	                LIMIT ?
++    34	                """,
++    35	            arguments: [chatID, chatID, limit]
++    36	        )
++    37	    }
++    38	
++    39	    internal static func participants(
++    40	        database: Database,
++    41	        chatRowIDs: Set<Int64>
++    42	    ) throws -> [Int64: [String]] {
++    43	        guard !chatRowIDs.isEmpty else {
++    44	            return [:]
++    45	        }
++    46	        // One placeholder per chat; SQLite allows 32,766 parameters, far above
++    47	        // any realistic Messages chat count.
++    48	        let placeholders = Array(repeating: "?", count: chatRowIDs.count).joined(separator: ",")
++    49	        let sortedIDs = chatRowIDs.sorted()
++    50	        let rows = try Row.fetchAll(
++    51	            database,
++    52	            sql: """
++    53	                SELECT chj.chat_id AS chat_row_id, h.id AS handle
++    54	                FROM chat_handle_join chj
++    55	                JOIN handle h ON h.ROWID = chj.handle_id
++    56	                WHERE chj.chat_id IN (\(placeholders))
++    57	                ORDER BY chj.chat_id ASC, h.id ASC
++    58	                """,
++    59	            arguments: StatementArguments(sortedIDs)
++    60	        )
++    61	        return Dictionary(grouping: rows, by: { $0["chat_row_id"] }).mapValues { values in
++    62	            values.map { $0["handle"] }
++    63	        }
++    64	    }
++    65	
++    66	    /// Matches plain messages plus URL link previews.
++    67	    ///
++    68	    /// Link previews keep the shared URL as body text; other balloon payloads
++    69	    /// (apps, payments) carry no recall-worthy text and are excluded.
++    70	    private static let indexableMessagePredicate = """
++    71	        m.associated_message_type = 0
++    72	          AND m.item_type = 0
++    73	          AND (m.balloon_bundle_id IS NULL
++    74	               OR m.balloon_bundle_id = '\(StowerMessageMapper.urlPreviewBalloonBundleID)')
++    75	          AND (m.text IS NOT NULL OR m.attributedBody IS NOT NULL)
++    76	        """
++    77	
++    78	    private static let referenceSecondsExpression = """
++    79	        CASE
++    80	          WHEN ABS(m.date) >= \(StowerMessageDate.nanosecondsThreshold)
++    81	            THEN CAST(m.date AS REAL) / 1000000000.0
++    82	          ELSE CAST(m.date AS REAL)
++    83	        END
++    84	        """
++    85	
++    86	    private static let baseSelect = """
++    87	        SELECT
++    88	          m.ROWID AS message_row_id,
++    89	          m.guid AS message_guid,
++    90	          m.text AS text,
++    91	          m.attributedBody AS attributed_body,
++    92	          m.date AS raw_date,
++    93	          m.is_from_me AS is_from_me,
++    94	          m.handle_id AS handle_id,
++    95	          h.id AS sender_handle,
++    96	          m.associated_message_type AS associated_message_type,
++    97	          m.item_type AS item_type,
++    98	          m.cache_has_attachments AS has_attachments,
++    99	          m.balloon_bundle_id AS balloon_bundle_id,
++   100	          c.ROWID AS chat_row_id,
++   101	          c.guid AS chat_guid,
++   102	          c.chat_identifier AS chat_identifier,
++   103	          c.display_name AS chat_display_name,
++   104	          c.style AS chat_style
++   105	        FROM message m
++   106	        JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
++   107	        JOIN chat c ON c.ROWID = cmj.chat_id
++   108	        LEFT JOIN handle h ON h.ROWID = m.handle_id
++   109	
++   110	        """
++   111	}
++     1	import Foundation
++     2	import GRDB
++     3	
++     4	internal struct StowerSourceMessageRow: Decodable, FetchableRecord, Sendable {
++     5	    internal let messageRowID: Int64
++     6	    internal let guid: String
++     7	    internal let text: String?
++     8	    internal let attributedBody: Data?
++     9	    internal let rawDate: Int64
++    10	    internal let isFromMe: Bool
++    11	    internal let handleID: Int64
++    12	    internal let senderHandle: String?
++    13	    internal let associatedMessageType: Int64
++    14	    internal let itemType: Int64
++    15	    internal let hasAttachments: Bool
++    16	    internal let balloonBundleID: String?
++    17	    internal let chat: StowerSourceChatRow
++    18	
++    19	    private enum CodingKeys: String, CodingKey {
++    20	        case messageRowID = "message_row_id"
++    21	        case guid = "message_guid"
++    22	        case text
++    23	        case attributedBody = "attributed_body"
++    24	        case rawDate = "raw_date"
++    25	        case isFromMe = "is_from_me"
++    26	        case handleID = "handle_id"
++    27	        case senderHandle = "sender_handle"
++    28	        case associatedMessageType = "associated_message_type"
++    29	        case itemType = "item_type"
++    30	        case hasAttachments = "has_attachments"
++    31	        case balloonBundleID = "balloon_bundle_id"
++    32	        case chat
++    33	    }
++    34	
++    35	    internal init(row: Row) throws {
++    36	        messageRowID = row["message_row_id"]
++    37	        guid = row["message_guid"]
++    38	        text = row["text"]
++    39	        attributedBody = row["attributed_body"]
++    40	        rawDate = row["raw_date"]
++    41	        isFromMe = row["is_from_me"]
++    42	        handleID = row["handle_id"]
++    43	        senderHandle = row["sender_handle"]
++    44	        associatedMessageType = row["associated_message_type"]
++    45	        itemType = row["item_type"]
++    46	        hasAttachments = row["has_attachments"]
++    47	        balloonBundleID = row["balloon_bundle_id"]
++    48	        chat = try StowerSourceChatRow(row: row)
++    49	    }
++    50	}
++    51	
++    52	internal struct StowerSourceChatRow: Decodable, FetchableRecord, Sendable {
++    53	    internal let rowID: Int64
++    54	    internal let guid: String?
++    55	    internal let identifier: String
++    56	    internal let displayName: String?
++    57	    internal let style: Int64
++    58	
++    59	    private enum CodingKeys: String, CodingKey {
++    60	        case rowID = "chat_row_id"
++    61	        case guid = "chat_guid"
++    62	        case identifier = "chat_identifier"
++    63	        case displayName = "chat_display_name"
++    64	        case style = "chat_style"
++    65	    }
++    66	
++    67	    internal init(row: Row) throws {
++    68	        rowID = row["chat_row_id"]
++    69	        guid = row["chat_guid"]
++    70	        identifier = row["chat_identifier"]
++    71	        displayName = row["chat_display_name"]
++    72	        style = row["chat_style"]
++    73	    }
++    74	}
++
++exec
++/bin/zsh -lc "rg -n \"deepLink|sms:\" Sources Tests Docs README.md Package.swift --glob '"'!**/.claude/**'"' --glob '"'!**/.agents/**'"' --glob '"'!agents/**'"'" in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++Sources/StowerCore/StowerIndexedItem.swift:21:    var deepLink: URL? { get }
++Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift:29:            items.first(where: { $0.id == "bea-incoming" })?.deepLink?.absoluteString
++Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift:30:                == "sms:+14155550300"
++Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift:32:        // Groups get NO deep link: an sms: recipient-set compose creates a
++Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift:34:        #expect(items.first(where: { $0.id == "group-incoming" })?.deepLink == nil)
++Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift:109:        values.append(contentsOf: deepLinkMessages())
++Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift:274:    fileprivate static func deepLinkMessages() -> [FixtureMessage] {
++Tests/StowerCoreTests/StowerIndexSchemaTests.swift:98:    fileprivate let deepLink: URL? = nil
++Sources/StowerCore/StowerStoredItem.swift:22:    public let deepLink: String?
++Sources/StowerCore/StowerStoredItem.swift:46:        self.deepLink = item.deepLink?.absoluteString
++Sources/StowerCore/StowerStoredItem.swift:64:        case deepLink = "deep_link"
++Tests/StowerCoreTests/StowerSearchResultTests.swift:38:    fileprivate let deepLink: URL? = nil
++Sources/StowerMessages/StowerMessageItem.swift:16:    public let deepLink: URL?
++Sources/StowerMessages/StowerMessageItem.swift:42:        deepLink: URL?,
++Sources/StowerMessages/StowerMessageItem.swift:51:        self.deepLink = deepLink
++Sources/StowerMessages/StowerMessageMapper.swift:28:            deepLink: deepLink(row: row),
++Sources/StowerMessages/StowerMessageMapper.swift:73:    private static func deepLink(row: StowerSourceMessageRow) -> URL? {
++Sources/StowerMessages/StowerMessageMapper.swift:75:        // sms: compose link with the full recipient set CREATES A NEW group
++Sources/StowerMessages/StowerMessageMapper.swift:86:        return address.isEmpty ? nil : URL(string: "sms:\(address)")
++Tests/StowerCoreTests/StowerIndexTests.swift:128:    fileprivate let deepLink: URL?
++Tests/StowerCoreTests/StowerIndexTests.swift:144:        deepLink = nil
++
++exec
++/bin/zsh -lc "rg -n \"fullDiskAccessMissing|unreadableSource|invalidSnapshot|StowerMessagesError\" Sources Tests --glob '"'!**/.claude/**'"' --glob '"'!**/.agents/**'"' --glob '"'!agents/**'"'" in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:59:        #expect(throws: StowerMessagesError.self) {
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:72:        guard case .fullDiskAccessMissing = classified else {
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:91:        guard case .fullDiskAccessMissing = classified else {
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:109:        guard case .fullDiskAccessMissing = classified else {
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:130:        guard case .unreadableSource = classified else {
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:131:            Issue.record("Expected unreadableSource when only the staging destination is denied.")
++Sources/StowerMessages/StowerChatSnapshot.swift:77:            throw StowerMessagesError.sourceNotFound(sourceURL.path)
++Sources/StowerMessages/StowerChatSnapshot.swift:81:        var lastValidationError: Error = StowerMessagesError.invalidSnapshot
++Sources/StowerMessages/StowerChatSnapshot.swift:99:        if let messagesError = lastValidationError as? StowerMessagesError {
++Sources/StowerMessages/StowerChatSnapshot.swift:102:        throw StowerMessagesError.unreadableSource(lastValidationError.localizedDescription)
++Sources/StowerMessages/StowerChatSnapshot.swift:167:            throw StowerMessagesError.invalidSnapshot
++Sources/StowerMessages/StowerChatSnapshot.swift:211:    internal static func classify(_ error: Error, sourceURL: URL) -> StowerMessagesError {
++Sources/StowerMessages/StowerChatSnapshot.swift:213:            return .fullDiskAccessMissing(sourceURL.path)
++Sources/StowerMessages/StowerChatSnapshot.swift:215:        return .unreadableSource((error as NSError).localizedDescription)
++Sources/StowerMessages/StowerMessagesError.swift:4:public enum StowerMessagesError: Error, LocalizedError, Sendable {
++Sources/StowerMessages/StowerMessagesError.swift:9:    case fullDiskAccessMissing(String)
++Sources/StowerMessages/StowerMessagesError.swift:12:    case unreadableSource(String)
++Sources/StowerMessages/StowerMessagesError.swift:15:    case invalidSnapshot
++Sources/StowerMessages/StowerMessagesError.swift:28:        case .fullDiskAccessMissing:
++Sources/StowerMessages/StowerMessagesError.swift:30:        case .unreadableSource(let reason):
++Sources/StowerMessages/StowerMessagesError.swift:32:        case .invalidSnapshot:
++Sources/StowerMessages/StowerChatDatabaseReader.swift:29:            throw StowerMessagesError.invalidArgument("Window days must not be negative.")
++
++codex
++Two risk areas remain: whether the new error-chain attribution matches real `FileManager.copyItem` errors, and whether every direct-chat `chat_identifier` is a valid `sms:` recipient. I’m checking branch intent/history and executable test coverage before deciding if either reaches P2.
++exec
++/bin/zsh -lc "rg -n \"chat_identifier|style == 45|style.*45|group chat|Full Disk Access|permission\" README.md Docs Sources Tests --glob '"'!**/.claude/**'"' --glob '"'!**/.agents/**'"' --glob '"'!agents/**'"'" in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift:26:        // Deep link must use chat_identifier, not the alphabetically-first
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:64:    @Test("classifies permission failures as missing Full Disk Access")
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:65:    internal func permissionClassification() {
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:73:            Issue.record("Expected a Full Disk Access error.")
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:78:    @Test("classifies a copy denial with a nested POSIX error as missing Full Disk Access")
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:92:            Issue.record("Expected a Full Disk Access error for the wrapped copy denial.")
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:97:    @Test("classifies a copy denial that names the source path as missing Full Disk Access")
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:110:            Issue.record("Expected Full Disk Access when the denial names the source path.")
++Tests/StowerMessagesTests/StowerChatSnapshotTests.swift:115:    @Test("does not blame Full Disk Access when only the staging destination is unwritable")
++Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift:66:                  chat_identifier TEXT NOT NULL,
++Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift:90:                INSERT INTO chat (ROWID, guid, chat_identifier, display_name, style) VALUES
++Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift:273:    /// the deep link must follow chat_identifier, not the first handle.
++Sources/StowerMessages/StowerChatSnapshot.swift:212:        if permissionDenialImplicatesSource(error, sourceURL: sourceURL) {
++Sources/StowerMessages/StowerChatSnapshot.swift:218:    /// Reports whether a permission denial in the error chain is attributable to
++Sources/StowerMessages/StowerChatSnapshot.swift:228:    private static func permissionDenialImplicatesSource(
++Sources/StowerMessages/StowerMessageMapper.swift:78:        guard row.chat.style == 45 else {
++Sources/StowerMessages/StowerMessageMapper.swift:81:        // chat_identifier is the chat's canonical counterpart address. The
++Docs/StowerMessages.md:55:- **Full Disk Access required.** `chat.db` access needs FDA, which is a
++Docs/StowerMessages.md:56:  user-granted TCC permission for a specific binary path — *not* an
++Docs/StowerMessages.md:64:  re-discovering it: sending to group chats via AppleScript regressed on
++Sources/StowerMessages/StowerMessageQuery.swift:31:                  AND (c.guid = ? OR c.chat_identifier = ?)
++Sources/StowerMessages/StowerMessageQuery.swift:102:          c.chat_identifier AS chat_identifier,
++Sources/StowerMessages/StowerSourceRow.swift:62:        case identifier = "chat_identifier"
++Sources/StowerMessages/StowerSourceRow.swift:70:        identifier = row["chat_identifier"]
++Sources/StowerMessages/StowerMessagesError.swift:29:            return "Full Disk Access is required to read Messages."
++
++exec
++/bin/zsh -lc "git show origin/main:Sources/StowerMessages/StowerMessageMapper.swift | nl -ba | sed -n '55,100p'; git show origin/main:Sources/StowerMessages/StowerChatSnapshot.swift | nl -ba | sed -n '195,240p'" in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++    55	            return uniqueParticipants.joined(separator: ", ")
++    56	        }
++    57	        return row.chat.identifier
++    58	    }
++    59	
++    60	    private static func sender(
++    61	        row: StowerSourceMessageRow,
++    62	        contacts: StowerContactsResolver
++    63	    ) -> String {
++    64	        guard !row.isFromMe else {
++    65	            return "Me"
++    66	        }
++    67	        guard let handle = row.senderHandle, !handle.isEmpty else {
++    68	            return "Unknown"
++    69	        }
++    70	        return contacts.displayName(for: handle)
++    71	    }
++    72	
++    73	    private static func deepLink(
++    74	        row: StowerSourceMessageRow,
++    75	        participantHandles: [String]
++    76	    ) -> URL? {
++    77	        guard row.chat.style == 45, let handle = participantHandles.first else {
++    78	            return nil
++    79	        }
++    80	        return URL(string: "sms:\(handle)")
++    81	    }
++    82	
++    83	    private static func groupID(for chat: StowerSourceChatRow) -> String {
++    84	        if let guid = chat.guid, !guid.isEmpty {
++    85	            return guid
++    86	        }
++    87	        if !chat.identifier.isEmpty {
++    88	            return chat.identifier
++    89	        }
++    90	        return "chat:\(chat.rowID)"
++    91	    }
++    92	}
++   195	    ) throws {
++   196	        let cutoff = Date().addingTimeInterval(-86_400)
++   197	        let contents = try fileManager.contentsOfDirectory(
++   198	            at: temporaryDirectory,
++   199	            includingPropertiesForKeys: [.contentModificationDateKey],
++   200	            options: [.skipsHiddenFiles]
++   201	        )
++   202	        for url in contents where url.lastPathComponent.hasPrefix("stower-msg-") {
++   203	            let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
++   204	            guard let modified = values.contentModificationDate, modified < cutoff else {
++   205	                continue
++   206	            }
++   207	            try? fileManager.removeItem(at: url)
++   208	        }
++   209	    }
++   210	
++   211	    internal static func classify(_ error: Error, sourceURL: URL) -> StowerMessagesError {
++   212	        let nsError = error as NSError
++   213	        let isPOSIXPermissionError =
++   214	            nsError.domain == NSPOSIXErrorDomain
++   215	            && (nsError.code == Int(EACCES) || nsError.code == Int(EPERM))
++   216	        if isPOSIXPermissionError {
++   217	            return .fullDiskAccessMissing(sourceURL.path)
++   218	        }
++   219	        let isCocoaPermissionError =
++   220	            nsError.domain == NSCocoaErrorDomain
++   221	            && nsError.code == NSFileReadNoPermissionError
++   222	        if isCocoaPermissionError {
++   223	            return .fullDiskAccessMissing(sourceURL.path)
++   224	        }
++   225	        return .unreadableSource(nsError.localizedDescription)
++   226	    }
++   227	}
++   228	
++   229	private struct SnapshotComponents {
++   230	    fileprivate let rootURL: URL
++   231	    fileprivate let databaseURL: URL
++   232	    fileprivate let databaseQueue: DatabaseQueue
++   233	}
++
++exec
++/bin/zsh -lc 'git log --oneline --decorate --max-count=8 && git show --stat --oneline HEAD && git show --format=fuller --no-patch HEAD' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++4a0b5a5 (HEAD -> task16-real-data-fixes) fix: restrict Full Disk Access diagnosis to source-DB permission denials
++e29f558 (origin/task16-real-data-fixes) revert: drop group chat deep links — sms compose creates a new group
++5e7b03b feat: best-effort group chat deep links via full recipient set
++2f37cbf fix: build deep links from chat_identifier, not first participant handle
++16ce2d1 fix: classify wrapped copy denials as missing Full Disk Access
++3f27116 fix: address pre-landing review findings in index and ingestion
++e649f58 feat: add core index and messages ingestion
++c5eca62 Merge pull request #2 from emilykangdev/swift-pattern-skills
++4a0b5a5 fix: restrict Full Disk Access diagnosis to source-DB permission denials
++ Sources/StowerMessages/StowerChatSnapshot.swift    | 57 ++++++++++++++++++----
++ .../StowerChatSnapshotTests.swift                  | 39 +++++++++++++++
++ 2 files changed, 87 insertions(+), 9 deletions(-)
++commit 4a0b5a5cf0f88ae914ed90ca8a6b5d9f8f396191
++Author:     Emily-Kang77 <emilykang135@gmail.com>
++AuthorDate: Thu Jun 11 17:31:42 2026 -0700
++Commit:     Emily-Kang77 <emilykang135@gmail.com>
++CommitDate: Thu Jun 11 17:31:42 2026 -0700
++
++    fix: restrict Full Disk Access diagnosis to source-DB permission denials
++    
++    classify() sees failures from the whole snapshot copy pipeline (staging
++    createDirectory, source copyItem, moveItem into place). An unwritable
++    temporaryDirectory surfaces EACCES/EPERM too, so the prior chain-walk
++    reported fullDiskAccessMissing even when chat.db access was fine.
++    
++    Attribute the denial by path: diagnose Full Disk Access only when the
++    denied path is the source DB or a source sidecar, or when the denial
++    carries no path. A denial naming only a staging-destination path is now
++    classified as unreadableSource.
++
++exec
++/bin/zsh -lc "find . -maxdepth 3 -type f \\( -name '*.swift' -o -name '*.md' -o -name '*.sh' \\) -not -path './.claude/*' -not -path './.agents/*' -not -path './agents/*' | sort | wc -l; ls -la" in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++      56
++total 120
++drwxr-xr-x@ 25 emilykang  staff   800 Jun 11 17:27 .
++drwxr-xr-x@  5 emilykang  staff   160 Jun 11 17:20 ..
++drwxr-xr-x@  5 emilykang  staff   160 Jun 11 13:57 .agents
++drwxr-xr-x@ 13 emilykang  staff   416 Jun 11 17:31 .build
++drwxr-xr-x@  3 emilykang  staff    96 Jun 11 13:57 .claude
++drwxr-xr-x@  6 emilykang  staff   192 Jun 10 21:33 .context
++-rw-r--r--@  1 emilykang  staff    76 Jun 11 13:57 .git
++drwxr-xr-x@  3 emilykang  staff    96 Jun 11 13:57 .github
++-rw-r--r--@  1 emilykang  staff   414 Jun 11 13:57 .gitignore
++drwxr-xr-x@  3 emilykang  staff    96 Jun 11 17:27 .ship-with-codex
++-rw-r--r--@  1 emilykang  staff   618 Jun 11 13:57 .swift-format
++-rw-r--r--@  1 emilykang  staff  1092 Jun 11 13:57 .swiftlint.yml
++-rw-r--r--@  1 emilykang  staff  4334 Jun 11 13:57 AGENTS.md
++-rw-r--r--@  1 emilykang  staff   446 Jun 11 13:57 CLAUDE.md
++-rw-r--r--@  1 emilykang  staff  1765 Jun 11 13:57 CONTRIBUTING.md
++drwxr-xr-x@  9 emilykang  staff   288 Jun 11 13:57 Docs
++-rw-r--r--@  1 emilykang  staff  4199 Jun 11 13:57 LICENSE
++-rw-r--r--@  1 emilykang  staff  4119 Jun 11 13:57 PLAN.md
++-rw-r--r--@  1 emilykang  staff  2613 Jun 11 13:57 Package.resolved
++-rw-r--r--@  1 emilykang  staff  3024 Jun 11 13:57 Package.swift
++-rw-r--r--@  1 emilykang  staff  2127 Jun 11 13:57 README.md
++drwxr-xr-x@  7 emilykang  staff   224 Jun 11 13:57 Scripts
++drwxr-xr-x@  5 emilykang  staff   160 Jun 11 13:57 Sources
++drwxr-xr-x@  5 emilykang  staff   160 Jun 11 13:57 Tests
++drwxr-xr-x@  3 emilykang  staff    96 Jun 11 14:03 tmp
++
++exec
++/bin/zsh -lc "sed -n '1,110p' Docs/StowerMessages.md; sed -n '1,100p' Sources/StowerMessages/StowerMessagesError.swift; sed -n '1,90p' Sources/StowerMessages/StowerMessageItem.swift" in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++# StowerMessages
++
++## Why
++
++The Messages data-source adapter. Reads the local `chat.db` SQLite database
++(read-only) via GRDB, decodes the `attributedBody` typedstream blobs, joins
++against Contacts.app for handle→name resolution, and emits `StowerIndexedItem`
++values for `StowerCore` to index. It owns everything `chat.db`-specific so
++`StowerCore` stays source-agnostic.
++
++Must never import `StowerPhotos`. The two adapters never know about each other.
++
++## Public API surface
++
++- `StowerChatDatabaseReader.ingestWindow(days:now:)` reads the recent search
++  window across chats.
++- `StowerChatDatabaseReader.recentMessages(chatID:limit:)` reads the newest
++  messages in one chat without the search-window cutoff, then returns them in
++  chronological order.
++- `StowerMessageItem` is the adapter's `StowerIndexedItem` conformer and also
++  carries direction and resolved sender attribution for the thread view.
++
++## Constraints & known gotchas
++
++- **`attributedBody` is mandatory, not optional.** On Ventura+ the `text`
++  column is now `NULL` by default; the message body lives in the
++  `attributedBody` typedstream blob. The reader must decode it (see Apple
++  data-access research, Section 8). Plain-`text` reads alone will silently
++  miss most messages.
++
++- **Madrid 0.4.0 is pinned.** The decoder calls
++  `TypedStreamDecoder.decode(_:)` and extracts the first NSString object
++  directly. It does not use Madrid's lossy convenience text property, and its
++  implementation file is the only source importing `TypedStream`.
++
++- **The live Source DB is never opened.** The reader copies `chat.db` and any
++  WAL sidecars into a unique system-temp directory, atomically promotes the
++  copy, opens it with GRDB's read-only configuration, runs `PRAGMA quick_check`,
++  and retries one torn copy. The snapshot is reused for both read paths and
++  removed when the reader is released; snapshots older than one day are swept.
++
++- **Messages dates use two units.** Modern values are nanoseconds since 2001;
++  legacy rows use seconds. Zero is invalid. The SQL window filter and Swift
++  mapping use the same `1e12` threshold.
++
++- **Outgoing rows have no sender handle.** Chat participants are loaded in one
++  set-based query and provide the title for sent messages. Incoming sender
++  labels still use the row handle.
++
++- **Noise rows are excluded.** Tapbacks, system rows, empty attachment rows,
++  empty app-balloon rows, zero-date rows, and empty bodies do not become index
++  items. A message joined to multiple chats is indexed once using deterministic
++  query order.
++
++- **Full Disk Access required.** `chat.db` access needs FDA, which is a
++  user-granted TCC permission for a specific binary path — *not* an
++  entitlement. The Mac app target therefore CANNOT enable App Sandbox
++  (sandbox blocks FDA). This forfeits Mac App Store distribution for the
++  unified app — an accepted tradeoff (see the brief and Apple data-access
++  research, Section 13).
++
++- **macOS 26 Tahoe AppleScript group-chat regression.** Out of scope for v1
++  (no reply sending). Documented here so future contributors don't waste a day
++  re-discovering it: sending to group chats via AppleScript regressed on
++  Tahoe. v1 is recall-only; revisit if/when reply-sending is ever in scope.
++
++## Deferred
++
++- International phone normalization beyond exact E.164 and unambiguous
++  last-ten-digit matching.
++- Attachment content, tapbacks, edited-message history, and group deep links.
++- Incremental indexing and recall beyond the 180-day bulk window.
++
++## See also
++
++- Plan: `PLAN.md`
++- Apple data-access constraints (Section 7 chat.db schema, Section 8
++  attributedBody/Madrid, Section 13 FDA): `tmp/research/2026-05-12-apple-data-access.md`
++import Foundation
++
++/// Errors produced while reading the local Messages database.
++public enum StowerMessagesError: Error, LocalizedError, Sendable {
++    /// The configured Source DB does not exist.
++    case sourceNotFound(String)
++
++    /// macOS denied access to the Messages data directory.
++    case fullDiskAccessMissing(String)
++
++    /// The Source DB could not be copied or opened.
++    case unreadableSource(String)
++
++    /// A copied Source DB failed SQLite validation.
++    case invalidSnapshot
++
++    /// A Source DB row contained an invalid value.
++    case invalidRow(String)
++
++    /// A caller-supplied argument was out of range.
++    case invalidArgument(String)
++
++    /// A user-facing description of the failure.
++    public var errorDescription: String? {
++        switch self {
++        case .sourceNotFound(let path):
++            return "Messages database not found at \(path)."
++        case .fullDiskAccessMissing:
++            return "Full Disk Access is required to read Messages."
++        case .unreadableSource(let reason):
++            return "Unable to read Messages: \(reason)"
++        case .invalidSnapshot:
++            return "The copied Messages database failed validation."
++        case .invalidRow(let reason):
++            return "Messages contains an invalid row: \(reason)"
++        case .invalidArgument(let reason):
++            return "Invalid argument: \(reason)"
++        }
++    }
++}
++import Foundation
++import StowerCore
++
++/// A decoded Messages row ready for display and indexing.
++public struct StowerMessageItem: StowerIndexedItem, Sendable {
++    /// The stable native message GUID.
++    public let id: String
++
++    /// The decoded body.
++    public let text: String
++
++    /// The message date.
++    public let timestamp: Date
++
++    /// A best-effort Messages deep link.
++    public let deepLink: URL?
++
++    /// The stable chat identifier.
++    public let groupID: String
++
++    /// The resolved chat title.
++    public let groupTitle: String
++
++    /// Whether the current user sent the message.
++    public let isFromMe: Bool
++
++    /// The resolved sender label for this row.
++    public let sender: String
++
++    /// The source adapter.
++    public let source = StowerSource.messages
++
++    /// Scalar metadata persisted by StowerCore.
++    public var metadata: [String: String] {
++        ["direction": isFromMe ? "outgoing" : "incoming", "sender": sender]
++    }
++
++    internal init(
++        id: String,
++        text: String,
++        timestamp: Date,
++        deepLink: URL?,
++        groupID: String,
++        groupTitle: String,
++        isFromMe: Bool,
++        sender: String
++    ) {
++        self.id = id
++        self.text = text
++        self.timestamp = timestamp
++        self.deepLink = deepLink
++        self.groupID = groupID
++        self.groupTitle = groupTitle
++        self.isFromMe = isFromMe
++        self.sender = sender
++    }
++}
++
++exec
++/bin/zsh -lc 'git diff origin/main...HEAD -- Docs/StowerMessages.md PLAN.md README.md; git diff origin/main...HEAD --word-diff=porcelain' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++diff --git a/Sources/StowerMessages/StowerChatSnapshot.swift b/Sources/StowerMessages/StowerChatSnapshot.swift
++index d2ae506..5e9fb82 100644
++--- a/Sources/StowerMessages/StowerChatSnapshot.swift
+++++ b/Sources/StowerMessages/StowerChatSnapshot.swift
++@@ -209,20 +209,76 @@ internal final class StowerChatSnapshot {
++     }
++~
++ 
++~
++     internal static func classify(_ error: Error, sourceURL: URL) -> StowerMessagesError {
++~
++-let nsError = error as NSError
++~
++-        let isPOSIXPermissionError =
++~
++-            nsError.domain == NSPOSIXErrorDomain
++~
++-            && (nsError.code == Int(EACCES) || nsError.code == Int(EPERM))
++         if 
++-isPOSIXPermissionError
+++permissionDenialImplicatesSource(error, sourceURL: sourceURL)
++  {
++~
++             return .fullDiskAccessMissing(sourceURL.path)
++~
++         }
++~
++         
+++return .unreadableSource((error as NSError).localizedDescription)
++~
+++    }
++~
++~
+++    /// Reports whether a permission denial in the error chain is attributable to
++~
+++    /// the source database rather than the staging destination.
++~
+++    ///
++~
+++    /// `classify` sees failures from the whole copy pipeline — staging
++~
+++    /// `createDirectory`, the source `copyItem`, and the `moveItem` into place —
++~
+++    /// so an unwritable `temporaryDirectory` also surfaces EACCES/EPERM. Full
++~
+++    /// Disk Access is only the right diagnosis when the denied path is the source
++~
+++    /// DB (or a source sidecar), or when the denial carries no path to attribute
++~
+++    /// at all. A denial that names only a destination path is a staging-write
++~
+++    /// failure, not a TCC denial on `chat.db`.
++~
+++    private static func permissionDenialImplicatesSource(
++~
+++        _ error: Error,
++~
+++        sourceURL: URL
++~
+++    ) -> Bool {
++~
++         let 
++-isCocoaPermissionError
+++sourcePaths = sourcePathSet(for: sourceURL)
++~
+++        var sawDenial = false
++~
+++        var sawDestinationDenial = false
++~
+++        var current: NSError? = error as NSError
++~
+++        while let nsError = current {
++~
+++            if isPOSIXDenial(nsError) || isCocoaDenial(nsError) {
++~
+++                sawDenial = true
++~
+++                if let path = deniedPath(in: nsError) {
++~
+++                    if sourcePaths.contains(path) {
++~
+++                        return true
++~
+++                    }
++~
+++                    sawDestinationDenial = true
++~
+++                }
++~
+++            }
++~
+++            current
++  = 
++-nsError.domain == NSCocoaErrorDomain
+++nsError.userInfo[NSUnderlyingErrorKey] as? NSError
++~
+++        }
++~
+++        return sawDenial
++  && 
++-nsError.code == NSFileReadNoPermissionError
+++!sawDestinationDenial
++~
+++    }
++~
++~
+++    /// The source DB path plus its WAL/SHM sidecars, normalized for comparison
++~
+++    /// against the path Cocoa records on a file error.
++~
+++    private static func sourcePathSet(for sourceURL: URL) -> Set<String> {
++~
+++        let base = sourceURL.path
++~
+++        return Set([base, base + "-wal", base + "-shm"].map(normalizedPath))
++~
+++    }
++~
++~
+++    /// The file path a Cocoa/POSIX error blames,
++  if 
++-isCocoaPermissionError
+++any, normalized for comparison.
++~
+++    private static func deniedPath(in error: NSError) -> String? {
++~
+++        if let path = error.userInfo[NSFilePathErrorKey] as? String {
++~
+++            return normalizedPath(path)
++~
+++        }
++~
+++        if let url = error.userInfo[NSURLErrorKey] as? URL
++  {
++~
++             return 
++-.fullDiskAccessMissing(sourceURL.path)
+++normalizedPath(url.path)
++~
++         }
++~
++         return 
++-.unreadableSource(nsError.localizedDescription)
+++nil
++~
+++    }
++~
++~
+++    private static func normalizedPath(_ path: String) -> String {
++~
+++        URL(fileURLWithPath: path).standardizedFileURL.path
++~
+++    }
++~
++~
+++    private static func isPOSIXDenial(_ error: NSError) -> Bool {
++~
+++        error.domain == NSPOSIXErrorDomain
++~
+++            && (error.code == Int(EACCES) || error.code == Int(EPERM))
++~
+++    }
++~
++~
+++    private static func isCocoaDenial(_ error: NSError) -> Bool {
++~
+++        error.domain == NSCocoaErrorDomain
++~
+++            && (error.code == NSFileReadNoPermissionError
++~
+++                || error.code == NSFileWriteNoPermissionError)
++~
++     }
++~
++ }
++~
++ 
++~
++diff --git a/Sources/StowerMessages/StowerMessageMapper.swift b/Sources/StowerMessages/StowerMessageMapper.swift
++index d9ce629..9eae846 100644
++--- a/Sources/StowerMessages/StowerMessageMapper.swift
+++++ b/Sources/StowerMessages/StowerMessageMapper.swift
++@@ -25,7 +25,7 @@ internal enum StowerMessageMapper {
++             id: row.guid,
++~
++             text: body,
++~
++             timestamp: date,
++~
++             deepLink: deepLink(row: 
++-row, participantHandles: participantHandles),
+++row),
++~
++             groupID: groupID(for: row.chat),
++~
++             groupTitle: groupTitle,
++~
++             isFromMe: row.isFromMe,
++~
++@@ -70,14 +70,20 @@ internal enum StowerMessageMapper {
++         return contacts.displayName(for: handle)
++~
++     }
++~
++ 
++~
++     private static func 
++-deepLink(
++~
++-        row: StowerSourceMessageRow,
++~
++-        participantHandles: [String]
++~
++-    )
+++deepLink(row: StowerSourceMessageRow)
++  -> URL? {
++~
++         
+++// Group chats stay nil: there is no public per-chat URL, and an
++~
+++        // sms: compose link with the full recipient set CREATES A NEW group
++~
+++        // instead of matching the existing one (verified on real data,
++~
+++        // 2026-06-11). Callers must offer their own navigation fallback.
++~
++         guard row.chat.style == 
++-45, let handle = participantHandles.first
+++45
++  else {
++~
++             return nil
++~
++         }
++~
++         
+++// chat_identifier is the chat's canonical counterpart address. The
++~
+++        // participant list can hold several handles for one person (old
++~
+++        // email + current phone), so picking any of those can open the
++~
+++        // wrong conversation in Messages.
++~
+++        let address = row.chat.identifier.trimmingCharacters(in: .whitespaces)
++~
++         return 
+++address.isEmpty ? nil :
++  URL(string: 
++-"sms:\(handle)")
+++"sms:\(address)")
++~
++     }
++~
++ 
++~
++     private static func groupID(for chat: StowerSourceChatRow) -> String {
++~
++diff --git a/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift b/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
++index 7d19fd7..7200d88 100644
++--- a/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
+++++ b/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
++@@ -23,6 +23,15 @@ internal struct StowerChatDatabaseReaderTests {
++         #expect(!ids.contains("balloon"))
++~
++         #expect(!ids.contains("zero"))
++~
++         #expect(items.first(where: { $0.id == "link" })?.text == "https://example.com/article")
++~
++         
+++// Deep link must use chat_identifier, not the alphabetically-first
++~
+++        // participant handle (a stale old number/email opens the wrong chat).
++~
+++        #expect(
++~
+++            items.first(where: { $0.id == "bea-incoming" })?.deepLink?.absoluteString
++~
+++                == "sms:+14155550300"
++~
+++        )
++~
+++        // Groups get NO deep link: an sms: recipient-set compose creates a
++~
+++        // NEW group instead of matching the existing one (real-data check).
++~
+++        #expect(items.first(where: { $0.id == "group-incoming" })?.deepLink == nil)
++~
++         #expect(ids.filter { $0 == "duplicate" }.count == 1)
++~
++         #expect(items.first(where: { $0.id == "incoming" })?.text == "incoming NS Attribute")
++~
++         #expect(items.first(where: { $0.id == "outgoing" })?.groupTitle == "Alex")
++~
++diff --git a/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift b/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
++index aa91746..38d0531 100644
++--- a/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
+++++ b/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
++@@ -75,6 +75,64 @@ internal struct StowerChatSnapshotTests {
++         }
++~
++     }
++~
++ 
++~
++     
+++@Test("classifies a copy denial with a nested POSIX error as missing Full Disk Access")
++~
+++    internal func wrappedCopyPermissionClassification() {
++~
+++        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))
++~
+++        let copyDenied = NSError(
++~
+++            domain: NSCocoaErrorDomain,
++~
+++            code: NSFileWriteNoPermissionError,
++~
+++            userInfo: [NSUnderlyingErrorKey: posix]
++~
+++        )
++~
+++        let classified = StowerChatSnapshot.classify(
++~
+++            copyDenied,
++~
+++            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
++~
+++        )
++~
++~
+++        guard case .fullDiskAccessMissing = classified else {
++~
+++            Issue.record("Expected a Full Disk Access error for the wrapped copy denial.")
++~
+++            return
++~
+++        }
++~
+++    }
++~
++~
+++    @Test("classifies a copy denial that names the source path as missing Full Disk Access")
++~
+++    internal func sourcePathDenialIsFullDiskAccess() {
++~
+++        let denied = NSError(
++~
+++            domain: NSCocoaErrorDomain,
++~
+++            code: NSFileReadNoPermissionError,
++~
+++            userInfo: [NSFilePathErrorKey: "/fixture/chat.db"]
++~
+++        )
++~
+++        let classified = StowerChatSnapshot.classify(
++~
+++            denied,
++~
+++            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
++~
+++        )
++~
++~
+++        guard case .fullDiskAccessMissing = classified else {
++~
+++            Issue.record("Expected Full Disk Access when the denial names the source path.")
++~
+++            return
++~
+++        }
++~
+++    }
++~
++~
+++    @Test("does not blame Full Disk Access when only the staging destination is unwritable")
++~
+++    internal func destinationDenialIsNotFullDiskAccess() {
++~
+++        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
++~
+++        let stagingPath = "/var/folders/tmp/stower-msg-stage-ABC/chat.db"
++~
+++        let info: [String: Any] = [NSFilePathErrorKey: stagingPath, NSUnderlyingErrorKey: posix]
++~
+++        let writeDenied = NSError(
++~
+++            domain: NSCocoaErrorDomain,
++~
+++            code: NSFileWriteNoPermissionError,
++~
+++            userInfo: info
++~
+++        )
++~
+++        let classified = StowerChatSnapshot.classify(
++~
+++            writeDenied,
++~
+++            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
++~
+++        )
++~
++~
+++        guard case .unreadableSource = classified else {
++~
+++            Issue.record("Expected unreadableSource when only the staging destination is denied.")
++~
+++            return
++~
+++        }
++~
+++    }
++~
++~
++     private func modificationDate(_ url: URL) throws -> Date {
++~
++         let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
++~
++         return try #require(values.contentModificationDate)
++~
++diff --git a/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift b/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
++index b6a8ae4..29ade9d 100644
++--- a/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
+++++ b/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
++@@ -84,14 +84,19 @@ internal struct StowerFixtureDatabase {
++             sql: """
++~
++                 INSERT INTO handle (ROWID, id) VALUES
++~
++                   (1, '+14155550100'),
++~
++                   (2, 
++-'sam@example.com');
+++'sam@example.com'),
++~
+++                  (3, '+14155550299'),
++~
+++                  (4, '+14155550300');
++~
++                 INSERT INTO chat (ROWID, guid, chat_identifier, display_name, style) VALUES
++~
++                   (1, 'chat-alex', '+14155550100', NULL, 45),
++~
++                   (2, 'chat-group', 'group-identifier', 'Project Group', 
++-43);
+++43),
++~
+++                  (3, 'chat-bea', '+14155550300', NULL, 45);
++~
++                 INSERT INTO chat_handle_join (chat_id, handle_id) VALUES
++~
++                   (1, 1),
++~
++                   (2, 1),
++~
++                   (2, 
++-2);
+++2),
++~
+++                  (3, 3),
++~
+++                  (3, 4);
++~
++                 """
++~
++         )
++~
++     }
++~
++@@ -101,6 +106,7 @@ internal struct StowerFixtureDatabase {
++         var values = primaryMessages(recentBody: recentBody)
++~
++         values.append(contentsOf: filteredMessages())
++~
++         values.append(contentsOf: newestMessages())
++~
++         
+++values.append(contentsOf: deepLinkMessages())
++~
++         for (offset, value) in values.enumerated() {
++~
++             let rowID = Int64(offset + 1)
++~
++             try insertMessage(database, rowID: rowID, value: value)
++~
++@@ -117,7 +123,62 @@ internal struct StowerFixtureDatabase {
++         }
++~
++     }
++~
++ 
++~
++     private static func 
+++insertMessage(
++~
+++        _ database: Database,
++~
+++        rowID: Int64,
++~
+++        value: FixtureMessage
++~
+++    ) throws {
++~
+++        try database.execute(
++~
+++            sql: """
++~
+++                INSERT INTO message (
++~
+++                  ROWID, guid, text, attributedBody, date, is_from_me, handle_id,
++~
+++                  associated_message_type, item_type, cache_has_attachments, balloon_bundle_id
++~
+++                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++~
+++                """,
++~
+++            arguments: messageArguments(rowID: rowID, value: value)
++~
+++        )
++~
+++    }
++~
++~
+++    private static func messageArguments(
++~
+++        rowID: Int64,
++~
+++        value: FixtureMessage
++~
+++    ) -> StatementArguments {
++~
+++        var values: [DatabaseValueConvertible?] = []
++~
+++        values.append(rowID)
++~
+++        values.append(value.id)
++~
+++        values.append(value.text)
++~
+++        values.append(value.body)
++~
+++        values.append(value.date)
++~
+++        values.append(value.isFromMe)
++~
+++        values.append(value.handleID)
++~
+++        values.append(value.associatedType)
++~
+++        values.append(value.itemType)
++~
+++        values.append(value.hasAttachments)
++~
+++        values.append(value.balloonID)
++~
+++        return StatementArguments(values)
++~
+++    }
++~
++~
+++    private static func rawDate(daysAgo: Int) -> Int64 {
++~
+++        let date = now.addingTimeInterval(-Double(daysAgo) * 86_400)
++~
+++        return Int64(date.timeIntervalSinceReferenceDate * 1_000_000_000)
++~
+++    }
++~
++~
+++    private static func archive(_ value: Any) throws -> Data {
++~
+++        let selector = NSSelectorFromString("archivedDataWithRootObject:")
++~
+++        guard let archiver = NSClassFromString("NSArchiver") as? NSObject.Type,
++~
+++            let result = archiver.perform(selector, with: value),
++~
+++            let data = result.takeUnretainedValue() as? Data
++~
+++        else {
++~
+++            throw FixtureError.archiveFailed
++~
+++        }
++~
+++        return data
++~
+++    }
++~
+++}
++~
++~
+++// MARK: - Message fixtures
++~
++~
+++extension StowerFixtureDatabase {
++~
+++    fileprivate static func
++  primaryMessages(recentBody: Data) -> [FixtureMessage] {
++~
++         var values: [FixtureMessage] = []
++~
++         values.append(
++~
++             FixtureMessage(id: "old", text: "older than window", date: rawDate(daysAgo: 200))
++~
++@@ -155,7 +216,7 @@ internal struct StowerFixtureDatabase {
++         return values
++~
++     }
++~
++ 
++~
++     
++-private
+++fileprivate
++  static func filteredMessages() -> [FixtureMessage] {
++~
++         var values: [FixtureMessage] = []
++~
++         values.append(
++~
++             FixtureMessage(
++~
++@@ -188,7 +249,7 @@ internal struct StowerFixtureDatabase {
++         return values
++~
++     }
++~
++ 
++~
++     
++-private
+++fileprivate
++  static func newestMessages() -> [FixtureMessage] {
++~
++         var values: [FixtureMessage] = []
++~
++         values.append(
++~
++             FixtureMessage(id: "tie-a", text: "same timestamp a", date: rawDate(daysAgo: 2))
++~
++@@ -208,55 +269,20 @@ internal struct StowerFixtureDatabase {
++         return values
++~
++     }
++~
++ 
++~
++     
++-private
+++/// A 1:1 chat whose join row holds TWO handles (old + current number);
++~
+++    /// the deep link must follow chat_identifier, not the first handle.
++~
+++    fileprivate
++  static func 
++-insertMessage(
++~
++-        _ database: Database,
++~
++-        rowID: Int64,
++~
++-        value: FixtureMessage
++~
++-    ) throws
+++deepLinkMessages() -> [FixtureMessage]
++  {
++~
++         
++-try database.execute(
++~
++-            sql: """
++~
++-                INSERT INTO message (
++~
++-                  ROWID, guid, text, attributedBody, date, is_from_me, handle_id,
++~
++-                  associated_message_type, item_type, cache_has_attachments, balloon_bundle_id
+++var values: [FixtureMessage] = []
++~
+++        values.append(
++~
+++            FixtureMessage(
++~
+++                id: "bea-incoming",
++~
+++                text: "hello from the current number",
++~
+++                date: rawDate(daysAgo: 4),
++~
+++                handleID: 4,
++~
+++                chatID: 3
++~
++             )
++-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++~
++-                """,
++~
++-            arguments: messageArguments(rowID: rowID, value: value)
++~
++         )
++~
++-}
++~
++~
++-    private static func messageArguments(
++~
++-        rowID: Int64,
++~
++-        value: FixtureMessage
++~
++-    ) -> StatementArguments {
++~
++-        var values: [DatabaseValueConvertible?] = []
++~
++-        values.append(rowID)
++~
++-        values.append(value.id)
++~
++-        values.append(value.text)
++~
++-        values.append(value.body)
++~
++-        values.append(value.date)
++~
++-        values.append(value.isFromMe)
++~
++-        values.append(value.handleID)
++~
++-        values.append(value.associatedType)
++~
++-        values.append(value.itemType)
++~
++-        values.append(value.hasAttachments)
++~
++-        values.append(value.balloonID)
++         return 
++-StatementArguments(values)
++~
++-    }
++~
++~
++-    private static func rawDate(daysAgo: Int) -> Int64 {
++~
++-        let date = now.addingTimeInterval(-Double(daysAgo) * 86_400)
++~
++-        return Int64(date.timeIntervalSinceReferenceDate * 1_000_000_000)
++~
++-    }
++~
++~
++-    private static func archive(_ value: Any) throws -> Data {
++~
++-        let selector = NSSelectorFromString("archivedDataWithRootObject:")
++~
++-        guard let archiver = NSClassFromString("NSArchiver") as? NSObject.Type,
++~
++-            let result = archiver.perform(selector, with: value),
++~
++-            let data = result.takeUnretainedValue() as? Data
++~
++-        else {
++~
++-            throw FixtureError.archiveFailed
++~
++-        }
++~
++-        return data
+++values
++~
++     }
++~
++ }
++~
++ 
++~
++
++exec
++/bin/zsh -lc 'swift test --skip-build' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ exited 1 in 5321ms:
++2026-06-11 17:33:02.971 xcodebuild[84334:46224931]  DVTFilePathFSEvents: Failed to start fs event stream.
++2026-06-11 17:33:03.207 xcodebuild[84334:46224930] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
++2026-06-11 17:33:03.661 xcodebuild[84337:46224968]  DVTFilePathFSEvents: Failed to start fs event stream.
++2026-06-11 17:33:03.968 xcodebuild[84337:46224967] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
++swift: warning: confstr() failed with code 5: couldn't get path of DARWIN_USER_TEMP_DIR; using /tmp instead
++swift: error: couldn't create cache file '/tmp/xcrun_db-NHrgzifj' (errno=Operation not permitted)
++2026-06-11 17:33:04.455 xcodebuild[84432:46225211]  DVTFilePathFSEvents: Failed to start fs event stream.
++2026-06-11 17:33:04.606 xcodebuild[84432:46225210] [MT] DVTDeveloperPaths: Failed to get length of DARWIN_USER_CACHE_DIR from confstr(3), error = Error Domain=NSPOSIXErrorDomain Code=5 "Input/output error". Using NSCachesDirectory instead.
++error: InternalError(description: "Internal error. Please file a bug at https://github.com/swiftlang/swift-package-manager/issues with this info. Failed to parse target info (malformed(json: \"error: permissionDenied\", underlyingError: Error Domain=NSCocoaErrorDomain Code=3840 \"Invalid value around line 1, column 0.\" UserInfo={NSDebugDescription=Invalid value around line 1, column 0., NSJSONSerializationErrorIndex=0})).\nRaw compiler output: error: permissionDenied")
++
++exec
++/bin/zsh -lc 'git rev-parse origin/main HEAD $(git merge-base origin/main HEAD); git log --oneline --left-right origin/main...HEAD' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++df35fc6bb2bfb0b5621c0833c195fe07f7479eb7
++4a0b5a5cf0f88ae914ed90ca8a6b5d9f8f396191
++3f271164dcd81e33799990adeac3fff51b2bdba7
++> 4a0b5a5 fix: restrict Full Disk Access diagnosis to source-DB permission denials
++> e29f558 revert: drop group chat deep links — sms compose creates a new group
++> 5e7b03b feat: best-effort group chat deep links via full recipient set
++> 2f37cbf fix: build deep links from chat_identifier, not first participant handle
++> 16ce2d1 fix: classify wrapped copy denials as missing Full Disk Access
++< df35fc6 Merge pull request #3 from emilykangdev/core-index-messages-ingestion
++
++exec
++/bin/zsh -lc 'git diff --numstat origin/main...HEAD; git diff --find-renames --find-copies --summary origin/main...HEAD' in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++67	11	Sources/StowerMessages/StowerChatSnapshot.swift
++13	7	Sources/StowerMessages/StowerMessageMapper.swift
++9	0	Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
++58	0	Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
++80	54	Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
++
++exec
++/bin/zsh -lc "git show 16ce2d1:Sources/StowerMessages/StowerChatSnapshot.swift | nl -ba | sed -n '205,270p'; git show e29f558:Sources/StowerMessages/StowerMessageMapper.swift | nl -ba | sed -n '65,100p'" in /Users/emilykang/conductor/workspaces/stower/amsterdam
++ succeeded in 0ms:
++   205	                continue
++   206	            }
++   207	            try? fileManager.removeItem(at: url)
++   208	        }
++   209	    }
++   210	
++   211	    internal static func classify(_ error: Error, sourceURL: URL) -> StowerMessagesError {
++   212	        if isPermissionDenied(error) {
++   213	            return .fullDiskAccessMissing(sourceURL.path)
++   214	        }
++   215	        return .unreadableSource((error as NSError).localizedDescription)
++   216	    }
++   217	
++   218	    /// Walks the underlying-error chain because Cocoa wraps the TCC denial
++   219	    /// differently per operation: a direct read fails with
++   220	    /// NSFileReadNoPermissionError, while a copy fails with
++   221	    /// NSFileWriteNoPermissionError blaming the destination, and the POSIX
++   222	    /// EACCES/EPERM sits one or more levels down in NSUnderlyingErrorKey.
++   223	    private static func isPermissionDenied(_ error: Error) -> Bool {
++   224	        var current: NSError? = error as NSError
++   225	        while let nsError = current {
++   226	            if isPOSIXDenial(nsError) || isCocoaDenial(nsError) {
++   227	                return true
++   228	            }
++   229	            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
++   230	        }
++   231	        return false
++   232	    }
++   233	
++   234	    private static func isPOSIXDenial(_ error: NSError) -> Bool {
++   235	        error.domain == NSPOSIXErrorDomain
++   236	            && (error.code == Int(EACCES) || error.code == Int(EPERM))
++   237	    }
++   238	
++   239	    private static func isCocoaDenial(_ error: NSError) -> Bool {
++   240	        error.domain == NSCocoaErrorDomain
++   241	            && (error.code == NSFileReadNoPermissionError
++   242	                || error.code == NSFileWriteNoPermissionError)
++   243	    }
++   244	}
++   245	
++   246	private struct SnapshotComponents {
++   247	    fileprivate let rootURL: URL
++   248	    fileprivate let databaseURL: URL
++   249	    fileprivate let databaseQueue: DatabaseQueue
++   250	}
++    65	            return "Me"
++    66	        }
++    67	        guard let handle = row.senderHandle, !handle.isEmpty else {
++    68	            return "Unknown"
++    69	        }
++    70	        return contacts.displayName(for: handle)
++    71	    }
++    72	
++    73	    private static func deepLink(row: StowerSourceMessageRow) -> URL? {
++    74	        // Group chats stay nil: there is no public per-chat URL, and an
++    75	        // sms: compose link with the full recipient set CREATES A NEW group
++    76	        // instead of matching the existing one (verified on real data,
++    77	        // 2026-06-11). Callers must offer their own navigation fallback.
++    78	        guard row.chat.style == 45 else {
++    79	            return nil
++    80	        }
++    81	        // chat_identifier is the chat's canonical counterpart address. The
++    82	        // participant list can hold several handles for one person (old
++    83	        // email + current phone), so picking any of those can open the
++    84	        // wrong conversation in Messages.
++    85	        let address = row.chat.identifier.trimmingCharacters(in: .whitespaces)
++    86	        return address.isEmpty ? nil : URL(string: "sms:\(address)")
++    87	    }
++    88	
++    89	    private static func groupID(for chat: StowerSourceChatRow) -> String {
++    90	        if let guid = chat.guid, !guid.isEmpty {
++    91	            return guid
++    92	        }
++    93	        if !chat.identifier.isEmpty {
++    94	            return chat.identifier
++    95	        }
++    96	        return "chat:\(chat.rowID)"
++    97	    }
++    98	}
++
++codex
++{"severity":"P2","path":"Sources/StowerMessages/StowerChatSnapshot.swift","line":243,"category":"error-handling","summary":"FDA-denied source copies are misclassified because Cocoa reports the staging destination path","fix":"Classify by operation: treat permission errors from source copyItem calls as FDA, while createDirectory and move failures remain staging errors.","fingerprint":"Sources/StowerMessages/StowerChatSnapshot.swift:243:error-handling","confidence":9}
++hook: Stop
++hook: Stop Completed
++tokens used
++60,039
+diff --git a/Sources/StowerMessages/StowerChatSnapshot.swift b/Sources/StowerMessages/StowerChatSnapshot.swift
+index d2ae506..c8b492a 100644
+--- a/Sources/StowerMessages/StowerChatSnapshot.swift
++++ b/Sources/StowerMessages/StowerChatSnapshot.swift
+@@ -115,19 +115,33 @@ internal final class StowerChatSnapshot {
+             "stower-msg-\(UUID().uuidString)",
+             isDirectory: true
+         )
+-        try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
++        // Each step has different permission semantics, so they are classified
++        // separately. createDirectory and moveItem only touch temporaryDirectory:
++        // a denial there is a staging-write failure, never Full Disk Access on the
++        // source. copyItem is the one step that READS the source, so a denial
++        // during the copy is the TCC/Full Disk Access denial we want to surface.
++        do {
++            try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
++        } catch {
++            throw StowerMessagesError.unreadableSource((error as NSError).localizedDescription)
++        }
+         do {
+             try copyDatabaseFiles(
+                 sourceURL: sourceURL,
+                 destinationDirectory: stagingURL,
+                 fileManager: fileManager
+             )
++        } catch {
++            try? fileManager.removeItem(at: stagingURL)
++            throw classify(error, sourceURL: sourceURL)
++        }
++        do {
+             try fileManager.moveItem(at: stagingURL, to: finalURL)
+-            return finalURL
+         } catch {
+             try? fileManager.removeItem(at: stagingURL)
+-            throw error
++            throw StowerMessagesError.unreadableSource((error as NSError).localizedDescription)
+         }
++        return finalURL
+     }
+ 
+     private static func copyDatabaseFiles(
+@@ -208,21 +222,46 @@ internal final class StowerChatSnapshot {
+         }
+     }
+ 
++    /// Maps a copy-step failure to a `StowerMessagesError`.
++    ///
++    /// Only ever called on the source `copyItem` step (see `copySource`), so a
++    /// permission denial here means macOS withheld Full Disk Access from the
++    /// source DB. Already-classified errors pass through unchanged.
+     internal static func classify(_ error: Error, sourceURL: URL) -> StowerMessagesError {
+-        let nsError = error as NSError
+-        let isPOSIXPermissionError =
+-            nsError.domain == NSPOSIXErrorDomain
+-            && (nsError.code == Int(EACCES) || nsError.code == Int(EPERM))
+-        if isPOSIXPermissionError {
+-            return .fullDiskAccessMissing(sourceURL.path)
++        if let classified = error as? StowerMessagesError {
++            return classified
+         }
+-        let isCocoaPermissionError =
+-            nsError.domain == NSCocoaErrorDomain
+-            && nsError.code == NSFileReadNoPermissionError
+-        if isCocoaPermissionError {
++        if isPermissionDenied(error) {
+             return .fullDiskAccessMissing(sourceURL.path)
+         }
+-        return .unreadableSource(nsError.localizedDescription)
++        return .unreadableSource((error as NSError).localizedDescription)
++    }
++
++    /// Walks the underlying-error chain because Cocoa wraps the TCC denial
++    /// differently per operation: a direct read fails with
++    /// NSFileReadNoPermissionError, while a copy fails with
++    /// NSFileWriteNoPermissionError blaming the destination, and the POSIX
++    /// EACCES/EPERM sits one or more levels down in NSUnderlyingErrorKey.
++    private static func isPermissionDenied(_ error: Error) -> Bool {
++        var current: NSError? = error as NSError
++        while let nsError = current {
++            if isPOSIXDenial(nsError) || isCocoaDenial(nsError) {
++                return true
++            }
++            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
++        }
++        return false
++    }
++
++    private static func isPOSIXDenial(_ error: NSError) -> Bool {
++        error.domain == NSPOSIXErrorDomain
++            && (error.code == Int(EACCES) || error.code == Int(EPERM))
++    }
++
++    private static func isCocoaDenial(_ error: NSError) -> Bool {
++        error.domain == NSCocoaErrorDomain
++            && (error.code == NSFileReadNoPermissionError
++                || error.code == NSFileWriteNoPermissionError)
+     }
+ }
+ 
+diff --git a/Sources/StowerMessages/StowerMessageMapper.swift b/Sources/StowerMessages/StowerMessageMapper.swift
+index d9ce629..9eae846 100644
+--- a/Sources/StowerMessages/StowerMessageMapper.swift
++++ b/Sources/StowerMessages/StowerMessageMapper.swift
+@@ -25,7 +25,7 @@ internal enum StowerMessageMapper {
+             id: row.guid,
+             text: body,
+             timestamp: date,
+-            deepLink: deepLink(row: row, participantHandles: participantHandles),
++            deepLink: deepLink(row: row),
+             groupID: groupID(for: row.chat),
+             groupTitle: groupTitle,
+             isFromMe: row.isFromMe,
+@@ -70,14 +70,20 @@ internal enum StowerMessageMapper {
+         return contacts.displayName(for: handle)
+     }
+ 
+-    private static func deepLink(
+-        row: StowerSourceMessageRow,
+-        participantHandles: [String]
+-    ) -> URL? {
+-        guard row.chat.style == 45, let handle = participantHandles.first else {
++    private static func deepLink(row: StowerSourceMessageRow) -> URL? {
++        // Group chats stay nil: there is no public per-chat URL, and an
++        // sms: compose link with the full recipient set CREATES A NEW group
++        // instead of matching the existing one (verified on real data,
++        // 2026-06-11). Callers must offer their own navigation fallback.
++        guard row.chat.style == 45 else {
+             return nil
+         }
+-        return URL(string: "sms:\(handle)")
++        // chat_identifier is the chat's canonical counterpart address. The
++        // participant list can hold several handles for one person (old
++        // email + current phone), so picking any of those can open the
++        // wrong conversation in Messages.
++        let address = row.chat.identifier.trimmingCharacters(in: .whitespaces)
++        return address.isEmpty ? nil : URL(string: "sms:\(address)")
+     }
+ 
+     private static func groupID(for chat: StowerSourceChatRow) -> String {
+diff --git a/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift b/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
+index 7d19fd7..7200d88 100644
+--- a/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
++++ b/Tests/StowerMessagesTests/StowerChatDatabaseReaderTests.swift
+@@ -23,6 +23,15 @@ internal struct StowerChatDatabaseReaderTests {
+         #expect(!ids.contains("balloon"))
+         #expect(!ids.contains("zero"))
+         #expect(items.first(where: { $0.id == "link" })?.text == "https://example.com/article")
++        // Deep link must use chat_identifier, not the alphabetically-first
++        // participant handle (a stale old number/email opens the wrong chat).
++        #expect(
++            items.first(where: { $0.id == "bea-incoming" })?.deepLink?.absoluteString
++                == "sms:+14155550300"
++        )
++        // Groups get NO deep link: an sms: recipient-set compose creates a
++        // NEW group instead of matching the existing one (real-data check).
++        #expect(items.first(where: { $0.id == "group-incoming" })?.deepLink == nil)
+         #expect(ids.filter { $0 == "duplicate" }.count == 1)
+         #expect(items.first(where: { $0.id == "incoming" })?.text == "incoming NS Attribute")
+         #expect(items.first(where: { $0.id == "outgoing" })?.groupTitle == "Alex")
+diff --git a/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift b/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
+index aa91746..feee496 100644
+--- a/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
++++ b/Tests/StowerMessagesTests/StowerChatSnapshotTests.swift
+@@ -75,6 +75,58 @@ internal struct StowerChatSnapshotTests {
+         }
+     }
+ 
++    @Test("classifies a copy denial with a nested POSIX error as missing Full Disk Access")
++    internal func wrappedCopyPermissionClassification() {
++        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))
++        let copyDenied = NSError(
++            domain: NSCocoaErrorDomain,
++            code: NSFileWriteNoPermissionError,
++            userInfo: [NSUnderlyingErrorKey: posix]
++        )
++        let classified = StowerChatSnapshot.classify(
++            copyDenied,
++            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
++        )
++
++        guard case .fullDiskAccessMissing = classified else {
++            Issue.record("Expected a Full Disk Access error for the wrapped copy denial.")
++            return
++        }
++    }
++
++    @Test("reports an unwritable staging directory as unreadableSource, not Full Disk Access")
++    internal func unwritableStagingIsNotFullDiskAccess() throws {
++        let fixture = try StowerFixtureDatabase()
++        defer { fixture.remove() }
++        let readonlyRoot = fixture.rootURL.appendingPathComponent("ro", isDirectory: true)
++        try FileManager.default.createDirectory(at: readonlyRoot, withIntermediateDirectories: true)
++        // Strip owner write so staging createDirectory fails with EACCES even
++        // though the source DB is perfectly readable.
++        try FileManager.default.setAttributes(
++            [.posixPermissions: 0o500],
++            ofItemAtPath: readonlyRoot.path
++        )
++        defer {
++            try? FileManager.default.setAttributes(
++                [.posixPermissions: 0o700],
++                ofItemAtPath: readonlyRoot.path
++            )
++        }
++
++        do {
++            _ = try StowerChatSnapshot(
++                sourceURL: fixture.databaseURL,
++                temporaryDirectory: readonlyRoot
++            )
++            Issue.record("Expected snapshot creation to fail on a read-only staging directory.")
++        } catch let error as StowerMessagesError {
++            guard case .unreadableSource = error else {
++                Issue.record("Expected unreadableSource for unwritable staging, got \(error).")
++                return
++            }
++        }
++    }
++
+     private func modificationDate(_ url: URL) throws -> Date {
+         let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
+         return try #require(values.contentModificationDate)
+diff --git a/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift b/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
+index b6a8ae4..29ade9d 100644
+--- a/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
++++ b/Tests/StowerMessagesTests/Support/StowerFixtureDatabase.swift
+@@ -84,14 +84,19 @@ internal struct StowerFixtureDatabase {
+             sql: """
+                 INSERT INTO handle (ROWID, id) VALUES
+                   (1, '+14155550100'),
+-                  (2, 'sam@example.com');
++                  (2, 'sam@example.com'),
++                  (3, '+14155550299'),
++                  (4, '+14155550300');
+                 INSERT INTO chat (ROWID, guid, chat_identifier, display_name, style) VALUES
+                   (1, 'chat-alex', '+14155550100', NULL, 45),
+-                  (2, 'chat-group', 'group-identifier', 'Project Group', 43);
++                  (2, 'chat-group', 'group-identifier', 'Project Group', 43),
++                  (3, 'chat-bea', '+14155550300', NULL, 45);
+                 INSERT INTO chat_handle_join (chat_id, handle_id) VALUES
+                   (1, 1),
+                   (2, 1),
+-                  (2, 2);
++                  (2, 2),
++                  (3, 3),
++                  (3, 4);
+                 """
+         )
+     }
+@@ -101,6 +106,7 @@ internal struct StowerFixtureDatabase {
+         var values = primaryMessages(recentBody: recentBody)
+         values.append(contentsOf: filteredMessages())
+         values.append(contentsOf: newestMessages())
++        values.append(contentsOf: deepLinkMessages())
+         for (offset, value) in values.enumerated() {
+             let rowID = Int64(offset + 1)
+             try insertMessage(database, rowID: rowID, value: value)
+@@ -117,7 +123,62 @@ internal struct StowerFixtureDatabase {
+         }
+     }
+ 
+-    private static func primaryMessages(recentBody: Data) -> [FixtureMessage] {
++    private static func insertMessage(
++        _ database: Database,
++        rowID: Int64,
++        value: FixtureMessage
++    ) throws {
++        try database.execute(
++            sql: """
++                INSERT INTO message (
++                  ROWID, guid, text, attributedBody, date, is_from_me, handle_id,
++                  associated_message_type, item_type, cache_has_attachments, balloon_bundle_id
++                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
++                """,
++            arguments: messageArguments(rowID: rowID, value: value)
++        )
++    }
++
++    private static func messageArguments(
++        rowID: Int64,
++        value: FixtureMessage
++    ) -> StatementArguments {
++        var values: [DatabaseValueConvertible?] = []
++        values.append(rowID)
++        values.append(value.id)
++        values.append(value.text)
++        values.append(value.body)
++        values.append(value.date)
++        values.append(value.isFromMe)
++        values.append(value.handleID)
++        values.append(value.associatedType)
++        values.append(value.itemType)
++        values.append(value.hasAttachments)
++        values.append(value.balloonID)
++        return StatementArguments(values)
++    }
++
++    private static func rawDate(daysAgo: Int) -> Int64 {
++        let date = now.addingTimeInterval(-Double(daysAgo) * 86_400)
++        return Int64(date.timeIntervalSinceReferenceDate * 1_000_000_000)
++    }
++
++    private static func archive(_ value: Any) throws -> Data {
++        let selector = NSSelectorFromString("archivedDataWithRootObject:")
++        guard let archiver = NSClassFromString("NSArchiver") as? NSObject.Type,
++            let result = archiver.perform(selector, with: value),
++            let data = result.takeUnretainedValue() as? Data
++        else {
++            throw FixtureError.archiveFailed
++        }
++        return data
++    }
++}
++
++// MARK: - Message fixtures
++
++extension StowerFixtureDatabase {
++    fileprivate static func primaryMessages(recentBody: Data) -> [FixtureMessage] {
+         var values: [FixtureMessage] = []
+         values.append(
+             FixtureMessage(id: "old", text: "older than window", date: rawDate(daysAgo: 200))
+@@ -155,7 +216,7 @@ internal struct StowerFixtureDatabase {
+         return values
+     }
+ 
+-    private static func filteredMessages() -> [FixtureMessage] {
++    fileprivate static func filteredMessages() -> [FixtureMessage] {
+         var values: [FixtureMessage] = []
+         values.append(
+             FixtureMessage(
+@@ -188,7 +249,7 @@ internal struct StowerFixtureDatabase {
+         return values
+     }
+ 
+-    private static func newestMessages() -> [FixtureMessage] {
++    fileprivate static func newestMessages() -> [FixtureMessage] {
+         var values: [FixtureMessage] = []
+         values.append(
+             FixtureMessage(id: "tie-a", text: "same timestamp a", date: rawDate(daysAgo: 2))
+@@ -208,55 +269,20 @@ internal struct StowerFixtureDatabase {
+         return values
+     }
+ 
+-    private static func insertMessage(
+-        _ database: Database,
+-        rowID: Int64,
+-        value: FixtureMessage
+-    ) throws {
+-        try database.execute(
+-            sql: """
+-                INSERT INTO message (
+-                  ROWID, guid, text, attributedBody, date, is_from_me, handle_id,
+-                  associated_message_type, item_type, cache_has_attachments, balloon_bundle_id
+-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+-                """,
+-            arguments: messageArguments(rowID: rowID, value: value)
++    /// A 1:1 chat whose join row holds TWO handles (old + current number);
++    /// the deep link must follow chat_identifier, not the first handle.
++    fileprivate static func deepLinkMessages() -> [FixtureMessage] {
++        var values: [FixtureMessage] = []
++        values.append(
++            FixtureMessage(
++                id: "bea-incoming",
++                text: "hello from the current number",
++                date: rawDate(daysAgo: 4),
++                handleID: 4,
++                chatID: 3
++            )
+         )
+-    }
+-
+-    private static func messageArguments(
+-        rowID: Int64,
+-        value: FixtureMessage
+-    ) -> StatementArguments {
+-        var values: [DatabaseValueConvertible?] = []
+-        values.append(rowID)
+-        values.append(value.id)
+-        values.append(value.text)
+-        values.append(value.body)
+-        values.append(value.date)
+-        values.append(value.isFromMe)
+-        values.append(value.handleID)
+-        values.append(value.associatedType)
+-        values.append(value.itemType)
+-        values.append(value.hasAttachments)
+-        values.append(value.balloonID)
+-        return StatementArguments(values)
+-    }
+-
+-    private static func rawDate(daysAgo: Int) -> Int64 {
+-        let date = now.addingTimeInterval(-Double(daysAgo) * 86_400)
+-        return Int64(date.timeIntervalSinceReferenceDate * 1_000_000_000)
+-    }
+-
+-    private static func archive(_ value: Any) throws -> Data {
+-        let selector = NSSelectorFromString("archivedDataWithRootObject:")
+-        guard let archiver = NSClassFromString("NSArchiver") as? NSObject.Type,
+-            let result = archiver.perform(selector, with: value),
+-            let data = result.takeUnretainedValue() as? Data
+-        else {
+-            throw FixtureError.archiveFailed
+-        }
+-        return data
++        return values
+     }
+ }
+ 
