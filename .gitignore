@@ -10,3 +10,6 @@ DerivedData/
 # scratch don't pollute the codebase.
 tmp/
 .gstack/
+
+# Adversarial review run logs (diffs, findings, stderr) — local scratch only.
+.ship-with-codex/
