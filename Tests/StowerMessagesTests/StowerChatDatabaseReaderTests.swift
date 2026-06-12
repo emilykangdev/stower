@@ -23,6 +23,21 @@ internal struct StowerChatDatabaseReaderTests {
         #expect(!ids.contains("balloon"))
         #expect(!ids.contains("zero"))
         #expect(items.first(where: { $0.id == "link" })?.text == "https://example.com/article")
+        // Deep link must use chat_identifier, not the alphabetically-first
+        // participant handle (a stale old number/email opens the wrong chat).
+        #expect(
+            items.first(where: { $0.id == "bea-incoming" })?.deepLink?.absoluteString
+                == "sms:+14155550300"
+        )
+        // Groups get NO deep link: an sms: recipient-set compose creates a
+        // NEW group instead of matching the existing one (real-data check).
+        #expect(items.first(where: { $0.id == "group-incoming" })?.deepLink == nil)
+        // Reserved URL characters in an email identifier must be percent-encoded
+        // so the link opens the right conversation instead of a truncated one.
+        #expect(
+            items.first(where: { $0.id == "reserved-incoming" })?.deepLink?.absoluteString
+                == "sms:od%23d@example.com"
+        )
         #expect(ids.filter { $0 == "duplicate" }.count == 1)
         #expect(items.first(where: { $0.id == "incoming" })?.text == "incoming NS Attribute")
         #expect(items.first(where: { $0.id == "outgoing" })?.groupTitle == "Alex")

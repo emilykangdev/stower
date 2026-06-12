@@ -84,14 +84,22 @@ internal struct StowerFixtureDatabase {
             sql: """
                 INSERT INTO handle (ROWID, id) VALUES
                   (1, '+14155550100'),
-                  (2, 'sam@example.com');
+                  (2, 'sam@example.com'),
+                  (3, '+14155550299'),
+                  (4, '+14155550300'),
+                  (5, 'od#d@example.com');
                 INSERT INTO chat (ROWID, guid, chat_identifier, display_name, style) VALUES
                   (1, 'chat-alex', '+14155550100', NULL, 45),
-                  (2, 'chat-group', 'group-identifier', 'Project Group', 43);
+                  (2, 'chat-group', 'group-identifier', 'Project Group', 43),
+                  (3, 'chat-bea', '+14155550300', NULL, 45),
+                  (4, 'chat-reserved', 'od#d@example.com', NULL, 45);
                 INSERT INTO chat_handle_join (chat_id, handle_id) VALUES
                   (1, 1),
                   (2, 1),
-                  (2, 2);
+                  (2, 2),
+                  (3, 3),
+                  (3, 4),
+                  (4, 5);
                 """
         )
     }
@@ -101,6 +109,7 @@ internal struct StowerFixtureDatabase {
         var values = primaryMessages(recentBody: recentBody)
         values.append(contentsOf: filteredMessages())
         values.append(contentsOf: newestMessages())
+        values.append(contentsOf: deepLinkMessages())
         for (offset, value) in values.enumerated() {
             let rowID = Int64(offset + 1)
             try insertMessage(database, rowID: rowID, value: value)
@@ -115,97 +124,6 @@ internal struct StowerFixtureDatabase {
                 )
             }
         }
-    }
-
-    private static func primaryMessages(recentBody: Data) -> [FixtureMessage] {
-        var values: [FixtureMessage] = []
-        values.append(
-            FixtureMessage(id: "old", text: "older than window", date: rawDate(daysAgo: 200))
-        )
-        values.append(FixtureMessage(id: "incoming", body: recentBody, date: rawDate(daysAgo: 10)))
-        values.append(
-            FixtureMessage(
-                id: "outgoing",
-                text: "outgoing text",
-                date: rawDate(daysAgo: 9),
-                isFromMe: true,
-                handleID: 0
-            )
-        )
-        values.append(
-            FixtureMessage(id: "duplicate", text: "one indexed copy", date: rawDate(daysAgo: 7))
-        )
-        values.append(
-            FixtureMessage(
-                id: "group-incoming",
-                text: "group response",
-                date: rawDate(daysAgo: 6),
-                handleID: 2,
-                chatID: 2
-            )
-        )
-        values.append(
-            FixtureMessage(
-                id: "link",
-                text: "https://example.com/article",
-                date: rawDate(daysAgo: 5),
-                balloonID: "com.apple.messages.URLBalloonProvider"
-            )
-        )
-        return values
-    }
-
-    private static func filteredMessages() -> [FixtureMessage] {
-        var values: [FixtureMessage] = []
-        values.append(
-            FixtureMessage(
-                id: "tapback",
-                text: "Liked a message",
-                date: rawDate(daysAgo: 8),
-                associatedType: 2000
-            )
-        )
-        values.append(
-            FixtureMessage(
-                id: "system",
-                text: "Renamed chat",
-                date: rawDate(daysAgo: 8),
-                itemType: 1
-            )
-        )
-        values.append(
-            FixtureMessage(id: "attachment", date: rawDate(daysAgo: 8), hasAttachments: true)
-        )
-        values.append(
-            FixtureMessage(
-                id: "balloon",
-                text: "app payload text",
-                date: rawDate(daysAgo: 8),
-                balloonID: "fixture.app"
-            )
-        )
-        values.append(FixtureMessage(id: "zero", text: "invalid date", date: 0))
-        return values
-    }
-
-    private static func newestMessages() -> [FixtureMessage] {
-        var values: [FixtureMessage] = []
-        values.append(
-            FixtureMessage(id: "tie-a", text: "same timestamp a", date: rawDate(daysAgo: 2))
-        )
-        values.append(
-            FixtureMessage(
-                id: "tie-b",
-                text: "same timestamp b",
-                date: rawDate(daysAgo: 2),
-                isFromMe: true,
-                handleID: 0
-            )
-        )
-        values.append(
-            FixtureMessage(id: "newest", text: "newest message", date: rawDate(daysAgo: 1))
-        )
-        return values
     }
 
     private static func insertMessage(
@@ -257,6 +175,129 @@ internal struct StowerFixtureDatabase {
             throw FixtureError.archiveFailed
         }
         return data
+    }
+}
+
+// MARK: - Message fixtures
+
+extension StowerFixtureDatabase {
+    fileprivate static func primaryMessages(recentBody: Data) -> [FixtureMessage] {
+        var values: [FixtureMessage] = []
+        values.append(
+            FixtureMessage(id: "old", text: "older than window", date: rawDate(daysAgo: 200))
+        )
+        values.append(FixtureMessage(id: "incoming", body: recentBody, date: rawDate(daysAgo: 10)))
+        values.append(
+            FixtureMessage(
+                id: "outgoing",
+                text: "outgoing text",
+                date: rawDate(daysAgo: 9),
+                isFromMe: true,
+                handleID: 0
+            )
+        )
+        values.append(
+            FixtureMessage(id: "duplicate", text: "one indexed copy", date: rawDate(daysAgo: 7))
+        )
+        values.append(
+            FixtureMessage(
+                id: "group-incoming",
+                text: "group response",
+                date: rawDate(daysAgo: 6),
+                handleID: 2,
+                chatID: 2
+            )
+        )
+        values.append(
+            FixtureMessage(
+                id: "link",
+                text: "https://example.com/article",
+                date: rawDate(daysAgo: 5),
+                balloonID: "com.apple.messages.URLBalloonProvider"
+            )
+        )
+        return values
+    }
+
+    fileprivate static func filteredMessages() -> [FixtureMessage] {
+        var values: [FixtureMessage] = []
+        values.append(
+            FixtureMessage(
+                id: "tapback",
+                text: "Liked a message",
+                date: rawDate(daysAgo: 8),
+                associatedType: 2000
+            )
+        )
+        values.append(
+            FixtureMessage(
+                id: "system",
+                text: "Renamed chat",
+                date: rawDate(daysAgo: 8),
+                itemType: 1
+            )
+        )
+        values.append(
+            FixtureMessage(id: "attachment", date: rawDate(daysAgo: 8), hasAttachments: true)
+        )
+        values.append(
+            FixtureMessage(
+                id: "balloon",
+                text: "app payload text",
+                date: rawDate(daysAgo: 8),
+                balloonID: "fixture.app"
+            )
+        )
+        values.append(FixtureMessage(id: "zero", text: "invalid date", date: 0))
+        return values
+    }
+
+    fileprivate static func newestMessages() -> [FixtureMessage] {
+        var values: [FixtureMessage] = []
+        values.append(
+            FixtureMessage(id: "tie-a", text: "same timestamp a", date: rawDate(daysAgo: 2))
+        )
+        values.append(
+            FixtureMessage(
+                id: "tie-b",
+                text: "same timestamp b",
+                date: rawDate(daysAgo: 2),
+                isFromMe: true,
+                handleID: 0
+            )
+        )
+        values.append(
+            FixtureMessage(id: "newest", text: "newest message", date: rawDate(daysAgo: 1))
+        )
+        return values
+    }
+
+    /// A 1:1 chat whose join row holds TWO handles (old + current number);
+    /// the deep link must follow chat_identifier, not the first handle.
+    ///
+    /// Also covers an email identifier carrying a reserved URL character,
+    /// which must be percent-encoded in the deep link.
+    fileprivate static func deepLinkMessages() -> [FixtureMessage] {
+        var values: [FixtureMessage] = []
+        values.append(
+            FixtureMessage(
+                id: "bea-incoming",
+                text: "hello from the current number",
+                date: rawDate(daysAgo: 4),
+                handleID: 4,
+                chatID: 3
+            )
+        )
+        values.append(
+            FixtureMessage(
+                id: "reserved-incoming",
+                text: "hello from a reserved-char email",
+                date: rawDate(daysAgo: 3),
+                handleID: 5,
+                chatID: 4
+            )
+        )
+        return values
     }
 }
 

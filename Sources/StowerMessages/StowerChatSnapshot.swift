@@ -115,19 +115,33 @@ internal final class StowerChatSnapshot {
             "stower-msg-\(UUID().uuidString)",
             isDirectory: true
         )
-        try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
+        // Each step has different permission semantics, so they are classified
+        // separately. createDirectory and moveItem only touch temporaryDirectory:
+        // a denial there is a staging-write failure, never Full Disk Access on the
+        // source. copyItem is the one step that READS the source, so a denial
+        // during the copy is the TCC/Full Disk Access denial we want to surface.
+        do {
+            try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
+        } catch {
+            throw StowerMessagesError.unreadableSource((error as NSError).localizedDescription)
+        }
         do {
             try copyDatabaseFiles(
                 sourceURL: sourceURL,
                 destinationDirectory: stagingURL,
                 fileManager: fileManager
             )
-            try fileManager.moveItem(at: stagingURL, to: finalURL)
-            return finalURL
         } catch {
             try? fileManager.removeItem(at: stagingURL)
-            throw error
+            throw classify(error, sourceURL: sourceURL)
         }
+        do {
+            try fileManager.moveItem(at: stagingURL, to: finalURL)
+        } catch {
+            try? fileManager.removeItem(at: stagingURL)
+            throw StowerMessagesError.unreadableSource((error as NSError).localizedDescription)
+        }
+        return finalURL
     }
 
     private static func copyDatabaseFiles(
@@ -208,21 +222,46 @@ internal final class StowerChatSnapshot {
         }
     }
 
+    /// Maps a copy-step failure to a `StowerMessagesError`.
+    ///
+    /// Only ever called on the source `copyItem` step (see `copySource`), so a
+    /// permission denial here means macOS withheld Full Disk Access from the
+    /// source DB. Already-classified errors pass through unchanged.
     internal static func classify(_ error: Error, sourceURL: URL) -> StowerMessagesError {
-        let nsError = error as NSError
-        let isPOSIXPermissionError =
-            nsError.domain == NSPOSIXErrorDomain
-            && (nsError.code == Int(EACCES) || nsError.code == Int(EPERM))
-        if isPOSIXPermissionError {
+        if let classified = error as? StowerMessagesError {
+            return classified
+        }
+        if isPermissionDenied(error) {
             return .fullDiskAccessMissing(sourceURL.path)
         }
-        let isCocoaPermissionError =
-            nsError.domain == NSCocoaErrorDomain
-            && nsError.code == NSFileReadNoPermissionError
-        if isCocoaPermissionError {
-            return .fullDiskAccessMissing(sourceURL.path)
+        return .unreadableSource((error as NSError).localizedDescription)
+    }
+
+    /// Walks the underlying-error chain because Cocoa wraps the TCC denial
+    /// differently per operation: a direct read fails with
+    /// NSFileReadNoPermissionError, while a copy fails with
+    /// NSFileWriteNoPermissionError blaming the destination, and the POSIX
+    /// EACCES/EPERM sits one or more levels down in NSUnderlyingErrorKey.
+    private static func isPermissionDenied(_ error: Error) -> Bool {
+        var current: NSError? = error as NSError
+        while let nsError = current {
+            if isPOSIXDenial(nsError) || isCocoaDenial(nsError) {
+                return true
+            }
+            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
         }
-        return .unreadableSource(nsError.localizedDescription)
+        return false
+    }
+
+    private static func isPOSIXDenial(_ error: NSError) -> Bool {
+        error.domain == NSPOSIXErrorDomain
+            && (error.code == Int(EACCES) || error.code == Int(EPERM))
+    }
+
+    private static func isCocoaDenial(_ error: NSError) -> Bool {
+        error.domain == NSCocoaErrorDomain
+            && (error.code == NSFileReadNoPermissionError
+                || error.code == NSFileWriteNoPermissionError)
     }
 }
 

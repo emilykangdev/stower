@@ -75,6 +75,58 @@ internal struct StowerChatSnapshotTests {
         }
     }
 
+    @Test("classifies a copy denial with a nested POSIX error as missing Full Disk Access")
+    internal func wrappedCopyPermissionClassification() {
+        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))
+        let copyDenied = NSError(
+            domain: NSCocoaErrorDomain,
+            code: NSFileWriteNoPermissionError,
+            userInfo: [NSUnderlyingErrorKey: posix]
+        )
+        let classified = StowerChatSnapshot.classify(
+            copyDenied,
+            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
+        )
+
+        guard case .fullDiskAccessMissing = classified else {
+            Issue.record("Expected a Full Disk Access error for the wrapped copy denial.")
+            return
+        }
+    }
+
+    @Test("reports an unwritable staging directory as unreadableSource, not Full Disk Access")
+    internal func unwritableStagingIsNotFullDiskAccess() throws {
+        let fixture = try StowerFixtureDatabase()
+        defer { fixture.remove() }
+        let readonlyRoot = fixture.rootURL.appendingPathComponent("ro", isDirectory: true)
+        try FileManager.default.createDirectory(at: readonlyRoot, withIntermediateDirectories: true)
+        // Strip owner write so staging createDirectory fails with EACCES even
+        // though the source DB is perfectly readable.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o500],
+            ofItemAtPath: readonlyRoot.path
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: readonlyRoot.path
+            )
+        }
+
+        do {
+            _ = try StowerChatSnapshot(
+                sourceURL: fixture.databaseURL,
+                temporaryDirectory: readonlyRoot
+            )
+            Issue.record("Expected snapshot creation to fail on a read-only staging directory.")
+        } catch let error as StowerMessagesError {
+            guard case .unreadableSource = error else {
+                Issue.record("Expected unreadableSource for unwritable staging, got \(error).")
+                return
+            }
+        }
+    }
+
     private func modificationDate(_ url: URL) throws -> Date {
         let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
         return try #require(values.contentModificationDate)
