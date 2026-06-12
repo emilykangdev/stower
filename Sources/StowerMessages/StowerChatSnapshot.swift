@@ -115,19 +115,33 @@ internal final class StowerChatSnapshot {
             "stower-msg-\(UUID().uuidString)",
             isDirectory: true
         )
-        try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
+        // Each step has different permission semantics, so they are classified
+        // separately. createDirectory and moveItem only touch temporaryDirectory:
+        // a denial there is a staging-write failure, never Full Disk Access on the
+        // source. copyItem is the one step that READS the source, so a denial
+        // during the copy is the TCC/Full Disk Access denial we want to surface.
+        do {
+            try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
+        } catch {
+            throw StowerMessagesError.unreadableSource((error as NSError).localizedDescription)
+        }
         do {
             try copyDatabaseFiles(
                 sourceURL: sourceURL,
                 destinationDirectory: stagingURL,
                 fileManager: fileManager
             )
-            try fileManager.moveItem(at: stagingURL, to: finalURL)
-            return finalURL
         } catch {
             try? fileManager.removeItem(at: stagingURL)
-            throw error
+            throw classify(error, sourceURL: sourceURL)
         }
+        do {
+            try fileManager.moveItem(at: stagingURL, to: finalURL)
+        } catch {
+            try? fileManager.removeItem(at: stagingURL)
+            throw StowerMessagesError.unreadableSource((error as NSError).localizedDescription)
+        }
+        return finalURL
     }
 
     private static func copyDatabaseFiles(
@@ -208,66 +222,35 @@ internal final class StowerChatSnapshot {
         }
     }
 
+    /// Maps a copy-step failure to a `StowerMessagesError`.
+    ///
+    /// Only ever called on the source `copyItem` step (see `copySource`), so a
+    /// permission denial here means macOS withheld Full Disk Access from the
+    /// source DB. Already-classified errors pass through unchanged.
     internal static func classify(_ error: Error, sourceURL: URL) -> StowerMessagesError {
-        if permissionDenialImplicatesSource(error, sourceURL: sourceURL) {
+        if let classified = error as? StowerMessagesError {
+            return classified
+        }
+        if isPermissionDenied(error) {
             return .fullDiskAccessMissing(sourceURL.path)
         }
         return .unreadableSource((error as NSError).localizedDescription)
     }
 
-    /// Reports whether a permission denial in the error chain is attributable to
-    /// the source database rather than the staging destination.
-    ///
-    /// `classify` sees failures from the whole copy pipeline — staging
-    /// `createDirectory`, the source `copyItem`, and the `moveItem` into place —
-    /// so an unwritable `temporaryDirectory` also surfaces EACCES/EPERM. Full
-    /// Disk Access is only the right diagnosis when the denied path is the source
-    /// DB (or a source sidecar), or when the denial carries no path to attribute
-    /// at all. A denial that names only a destination path is a staging-write
-    /// failure, not a TCC denial on `chat.db`.
-    private static func permissionDenialImplicatesSource(
-        _ error: Error,
-        sourceURL: URL
-    ) -> Bool {
-        let sourcePaths = sourcePathSet(for: sourceURL)
-        var sawDenial = false
-        var sawDestinationDenial = false
+    /// Walks the underlying-error chain because Cocoa wraps the TCC denial
+    /// differently per operation: a direct read fails with
+    /// NSFileReadNoPermissionError, while a copy fails with
+    /// NSFileWriteNoPermissionError blaming the destination, and the POSIX
+    /// EACCES/EPERM sits one or more levels down in NSUnderlyingErrorKey.
+    private static func isPermissionDenied(_ error: Error) -> Bool {
         var current: NSError? = error as NSError
         while let nsError = current {
             if isPOSIXDenial(nsError) || isCocoaDenial(nsError) {
-                sawDenial = true
-                if let path = deniedPath(in: nsError) {
-                    if sourcePaths.contains(path) {
-                        return true
-                    }
-                    sawDestinationDenial = true
-                }
+                return true
             }
             current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
         }
-        return sawDenial && !sawDestinationDenial
-    }
-
-    /// The source DB path plus its WAL/SHM sidecars, normalized for comparison
-    /// against the path Cocoa records on a file error.
-    private static func sourcePathSet(for sourceURL: URL) -> Set<String> {
-        let base = sourceURL.path
-        return Set([base, base + "-wal", base + "-shm"].map(normalizedPath))
-    }
-
-    /// The file path a Cocoa/POSIX error blames, if any, normalized for comparison.
-    private static func deniedPath(in error: NSError) -> String? {
-        if let path = error.userInfo[NSFilePathErrorKey] as? String {
-            return normalizedPath(path)
-        }
-        if let url = error.userInfo[NSURLErrorKey] as? URL {
-            return normalizedPath(url.path)
-        }
-        return nil
-    }
-
-    private static func normalizedPath(_ path: String) -> String {
-        URL(fileURLWithPath: path).standardizedFileURL.path
+        return false
     }
 
     private static func isPOSIXDenial(_ error: NSError) -> Bool {

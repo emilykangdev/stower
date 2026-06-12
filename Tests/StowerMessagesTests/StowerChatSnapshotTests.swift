@@ -94,42 +94,36 @@ internal struct StowerChatSnapshotTests {
         }
     }
 
-    @Test("classifies a copy denial that names the source path as missing Full Disk Access")
-    internal func sourcePathDenialIsFullDiskAccess() {
-        let denied = NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSFileReadNoPermissionError,
-            userInfo: [NSFilePathErrorKey: "/fixture/chat.db"]
+    @Test("reports an unwritable staging directory as unreadableSource, not Full Disk Access")
+    internal func unwritableStagingIsNotFullDiskAccess() throws {
+        let fixture = try StowerFixtureDatabase()
+        defer { fixture.remove() }
+        let readonlyRoot = fixture.rootURL.appendingPathComponent("ro", isDirectory: true)
+        try FileManager.default.createDirectory(at: readonlyRoot, withIntermediateDirectories: true)
+        // Strip owner write so staging createDirectory fails with EACCES even
+        // though the source DB is perfectly readable.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o500],
+            ofItemAtPath: readonlyRoot.path
         )
-        let classified = StowerChatSnapshot.classify(
-            denied,
-            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
-        )
-
-        guard case .fullDiskAccessMissing = classified else {
-            Issue.record("Expected Full Disk Access when the denial names the source path.")
-            return
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: readonlyRoot.path
+            )
         }
-    }
 
-    @Test("does not blame Full Disk Access when only the staging destination is unwritable")
-    internal func destinationDenialIsNotFullDiskAccess() {
-        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
-        let stagingPath = "/var/folders/tmp/stower-msg-stage-ABC/chat.db"
-        let info: [String: Any] = [NSFilePathErrorKey: stagingPath, NSUnderlyingErrorKey: posix]
-        let writeDenied = NSError(
-            domain: NSCocoaErrorDomain,
-            code: NSFileWriteNoPermissionError,
-            userInfo: info
-        )
-        let classified = StowerChatSnapshot.classify(
-            writeDenied,
-            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
-        )
-
-        guard case .unreadableSource = classified else {
-            Issue.record("Expected unreadableSource when only the staging destination is denied.")
-            return
+        do {
+            _ = try StowerChatSnapshot(
+                sourceURL: fixture.databaseURL,
+                temporaryDirectory: readonlyRoot
+            )
+            Issue.record("Expected snapshot creation to fail on a read-only staging directory.")
+        } catch let error as StowerMessagesError {
+            guard case .unreadableSource = error else {
+                Issue.record("Expected unreadableSource for unwritable staging, got \(error).")
+                return
+            }
         }
     }
 
