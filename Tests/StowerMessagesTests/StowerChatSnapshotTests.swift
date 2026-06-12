@@ -94,6 +94,45 @@ internal struct StowerChatSnapshotTests {
         }
     }
 
+    @Test("classifies a copy denial that names the source path as missing Full Disk Access")
+    internal func sourcePathDenialIsFullDiskAccess() {
+        let denied = NSError(
+            domain: NSCocoaErrorDomain,
+            code: NSFileReadNoPermissionError,
+            userInfo: [NSFilePathErrorKey: "/fixture/chat.db"]
+        )
+        let classified = StowerChatSnapshot.classify(
+            denied,
+            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
+        )
+
+        guard case .fullDiskAccessMissing = classified else {
+            Issue.record("Expected Full Disk Access when the denial names the source path.")
+            return
+        }
+    }
+
+    @Test("does not blame Full Disk Access when only the staging destination is unwritable")
+    internal func destinationDenialIsNotFullDiskAccess() {
+        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
+        let stagingPath = "/var/folders/tmp/stower-msg-stage-ABC/chat.db"
+        let info: [String: Any] = [NSFilePathErrorKey: stagingPath, NSUnderlyingErrorKey: posix]
+        let writeDenied = NSError(
+            domain: NSCocoaErrorDomain,
+            code: NSFileWriteNoPermissionError,
+            userInfo: info
+        )
+        let classified = StowerChatSnapshot.classify(
+            writeDenied,
+            sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
+        )
+
+        guard case .unreadableSource = classified else {
+            Issue.record("Expected unreadableSource when only the staging destination is denied.")
+            return
+        }
+    }
+
     private func modificationDate(_ url: URL) throws -> Date {
         let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
         return try #require(values.contentModificationDate)
