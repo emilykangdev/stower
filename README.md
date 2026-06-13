@@ -6,9 +6,10 @@ and Stower runs a hybrid full-text + embedding search across your Photos and
 iMessages, entirely on-device, and hands back the matches with a short
 summary. Nothing leaves your Mac.
 
-> **Status: scaffolding.** Module structure, guardrails, and CI are in place;
-> no runtime features yet. See [`PLAN.md`](PLAN.md) for the roadmap and current
-> status.
+> **Status: early.** The Messages recall path ships — a hybrid FTS5 + bge-small
+> embedding retriever in `StowerCore` and a permanent `stower` CLI
+> (index / search / eval). Photos, voice query, and the local-LLM summary are
+> still ahead. See [`PLAN.md`](PLAN.md) for the roadmap and current status.
 
 ## Architecture
 
@@ -25,6 +26,48 @@ Three library targets, one-directional dependency graph:
 them, and they never import each other. This keeps the v3 Photos-only iOS app
 from ever linking the Messages code. See [`Docs/`](Docs/) for per-subsystem
 rationale.
+
+### System overview
+
+`①` is the index path (write); `②` is the query path (read). Dashed nodes/edges
+are planned (not built yet).
+
+```mermaid
+flowchart TD
+    chatdb[("chat.db<br/>~/Library/Messages")]
+    convert["convert-embedding-model.py"]
+    model[("Core ML model dir<br/>mlpackage · tokenizer · manifest.json")]
+    convert -->|"one-time, offline"| model
+
+    cli["stower CLI<br/>index · search · eval"]
+    mac["StowerMac<br/>branch 2 · planned"]
+    msgs["StowerMessages<br/>chat.db reader + Contacts"]
+
+    subgraph core["StowerCore"]
+        index["StowerIndex<br/>FTS5 keyword arm"]
+        store["StowerEmbeddingStore"]
+        embedder["StowerCoreMLEmbedder"]
+        retriever["StowerRetriever<br/>RRF fusion, k=60"]
+        idxdb[("index.sqlite")]
+        embdb[("embeddings.sqlite")]
+        index --- idxdb
+        store --- embdb
+    end
+
+    chatdb -->|"ephemeral snapshot (read-only)"| msgs
+
+    cli -->|"① index"| msgs
+    msgs -->|"[StowerMessageItem]"| index
+    msgs -->|"message text"| embedder
+    model -->|"compile once → .mlmodelc"| embedder
+    embedder -->|"vectors"| store
+
+    cli -->|"② search / eval"| retriever
+    mac -.->|"② search"| retriever
+    retriever -->|"keyword arm"| index
+    retriever -->|"semantic arm (cosine)"| store
+    retriever -->|"query vector"| embedder
+```
 
 ## Quickstart
 
@@ -44,6 +87,36 @@ swift test
 `swift test` uses Swift Testing and needs full Xcode locally; under Command
 Line Tools only, run it through `./Scripts/precheck.sh`, which injects the
 required framework flags automatically.
+
+## The `stower` CLI (recall over your Messages)
+
+`stower` indexes a window of your local Messages and searches it with a hybrid
+of FTS5 keyword matching and bge-small embeddings, fused by reciprocal-rank
+fusion. Everything is on-device.
+
+```bash
+# 1. Convert the embedding model once (downloads weights from Hugging Face,
+#    writes a Core ML package to ~/Library/Application Support/Stower/Models/).
+#    Pinned deps run under uv — no ambient-Python roulette.
+uv run Scripts/convert-embedding-model.py --model BAAI/bge-small-en-v1.5
+
+# 2. Grant Full Disk Access AND Contacts to your terminal app, in
+#    System Settings → Privacy & Security. Full Disk Access requires fully
+#    quitting and reopening the terminal afterward to take effect.
+
+# 3. Index the last 180 days, then search. Use a release build for real timings.
+swift build -c release
+.build/release/stower index --days 180
+.build/release/stower search "the pizza place Sam mentioned"
+.build/release/stower search "quarterly numbers" --arm fts   # keyword-only, no model needed
+```
+
+The model and index default to `~/Library/Application Support/Stower/` so
+Conductor worktrees share one conversion and one index. Override with
+`--model-path` / `--index-dir`. Re-running `index` embeds only new messages
+(the cache survives rebuilds). `stower eval <queries.tsv>` scores a
+pre-registered recall set; the query file must be gitignored (it holds personal
+queries) — the command refuses a non-ignored in-repo path.
 
 ## Contributing
 

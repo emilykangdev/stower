@@ -196,6 +196,8 @@ git diff <base>...HEAD
 
 ## Open questions
 
+RESEARCH AND ANSWER OPEN QUESTIONS TO THE BEST OF YOUR ABILITY. PROVIDE QUESTIONS AND ANSWERS HERE. DON'T MAKE THE USER ASK YOU ANSWER CLEARLY VERIFIABLE QUESTIONS. THAT'S A WASTE OF TIME. If you're still not sure (there is more than 1 answer) after thorough research, then leave it as open.
+
 Known unknowns the implementer must surface (ask the user) rather than guess. Empty is fine — `n/a` if there are none. **Not** a parking lot for "future work" — that goes in §Non-goals.
 
 - <Ambiguity 1 — what's unclear, and what the implementer should do if it comes up mid-implementation.>

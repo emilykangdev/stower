@@ -12,9 +12,11 @@ is small, reviewable changes that keep the guardrails green.
 - Run `./Scripts/precheck.sh`. It runs swift-format, SwiftLint, `swift build`,
   `swift test`, and the module-boundary checks. It must exit 0.
 - Install the git hooks once with `./Scripts/install-hooks.sh` (or run
-  `./Scripts/new-worktree.sh`): pre-commit runs `precheck.sh` on every commit,
-  and pre-push runs the advisory `swift-signal-review` before you open a PR.
+  `./Scripts/new-worktree.sh`): pre-commit runs `precheck.sh` on every commit.
   Works in regular clones and git worktrees.
+- When you open a PR, run `./Scripts/pre-pr.sh` (it opens the PR if needed, then
+  fires the advisory `swift-signal-review` once, scoped to the PR's base). It is
+  deliberately not a git hook — a push happens many times per branch, a PR once.
 - Keep commits scoped: one commit, one concern. Do not refactor unrelated
   code while landing a feature.
 
