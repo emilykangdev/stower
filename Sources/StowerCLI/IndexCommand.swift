@@ -20,6 +20,12 @@ internal struct IndexCommand: AsyncParsableCommand {
         stowerWarnIfContactsDenied()
         let clock = ContinuousClock()
 
+        // The index and embedding stores hold real message text. Refuse to write
+        // them into a git repo unless they are gitignored, so private data can't
+        // be committed by accident (same guard the eval query file gets).
+        try stowerEnsureGitIgnored(locations.indexPath)
+        try stowerEnsureGitIgnored(locations.storePath)
+
         // SQLite opens a file but never creates its parent dir; on a fresh
         // machine the default Index directory does not exist yet.
         try FileManager.default.createDirectory(

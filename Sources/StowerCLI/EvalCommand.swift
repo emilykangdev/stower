@@ -11,6 +11,9 @@ internal struct EvalCommand: AsyncParsableCommand {
 
     internal static let inWindowHitCriterion = 7
 
+    /// The pre-registered suite size; the "≥7/10" verdict requires the full set.
+    internal static let minimumSuiteSize = 10
+
     /// Items pulled per arm before conversation grouping; deep enough that a few
     /// chatty conversations can't crowd out other top-N conversations.
     private static let itemCandidateBudget = 100
@@ -36,6 +39,14 @@ internal struct EvalCommand: AsyncParsableCommand {
         try stowerEnsureGitIgnored(queriesFile)
         if let out { try stowerEnsureGitIgnored(out) }
         let queries = try loadQueries()
+        // The "≥7/10" criterion is only meaningful against the full pre-registered
+        // suite; a truncated file (e.g. 7 in-window queries) must not pass as 7/10.
+        guard queries.count >= Self.minimumSuiteSize else {
+            throw StowerCLIError.incompleteGateSuite(
+                found: queries.count,
+                required: Self.minimumSuiteSize
+            )
+        }
 
         let locations = shared.locations()
         let index = try await openNonEmptyIndex(at: locations.indexPath)
@@ -60,12 +71,14 @@ internal struct EvalCommand: AsyncParsableCommand {
                 inWindowHits += hybridHit ? 1 : 0
             }
         }
-        let verdict = inWindowHits >= Self.inWindowHitCriterion ? "PASS" : "FAIL"
+        let passed = inWindowHits >= Self.inWindowHitCriterion
         transcript.line(
             "GATE: \(inWindowHits)/\(inWindowTotal) in-window hybrid hits "
-                + "(criterion ≥ \(Self.inWindowHitCriterion)) — \(verdict)"
+                + "(criterion ≥ \(Self.inWindowHitCriterion)) — \(passed ? "PASS" : "FAIL")"
         )
         try transcript.flush()
+        // Exit non-zero on FAIL so CI and scripts don't read a failed gate as success.
+        if !passed { throw ExitCode.failure }
     }
 
     private func preflight(

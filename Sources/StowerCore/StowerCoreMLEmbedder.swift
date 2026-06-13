@@ -112,11 +112,14 @@ public actor StowerCoreMLEmbedder: StowerEmbedder {
         let staging = cacheDirectory.appendingPathComponent("staging-\(UUID().uuidString).mlmodelc")
         try? FileManager.default.removeItem(at: staging)
         try FileManager.default.copyItem(at: compiled, to: staging)
-        if FileManager.default.fileExists(atPath: finalURL.path) {
+        do {
+            try FileManager.default.moveItem(at: staging, to: finalURL)
+        } catch {
+            // Another process compiled and installed first (the move loses the
+            // race on an existing destination); discard our staging and use theirs.
             try? FileManager.default.removeItem(at: staging)
-            return finalURL
+            guard FileManager.default.fileExists(atPath: finalURL.path) else { throw error }
         }
-        try FileManager.default.moveItem(at: staging, to: finalURL)
         return finalURL
     }
 

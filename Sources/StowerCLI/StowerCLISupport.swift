@@ -177,6 +177,7 @@ internal enum StowerCLIError: Error, LocalizedError {
     case queryFileUnreadable(path: String, reason: String)
     case emptyQueryFile(path: String)
     case malformedQueryLine(path: String, number: Int, reason: String)
+    case incompleteGateSuite(found: Int, required: Int)
     case noEmbeddingsForGate
 
     internal var errorDescription: String? {
@@ -191,6 +192,8 @@ internal enum StowerCLIError: Error, LocalizedError {
             return "Query file at \(path) has no usable query lines."
         case .malformedQueryLine(let path, let number, let reason):
             return "Malformed query at \(path):\(number) — \(reason)"
+        case .incompleteGateSuite(let found, let required):
+            return "Gate needs the full \(required)-query suite; found only \(found)."
         case .noEmbeddingsForGate:
             return """
                 The index has zero embeddings, so eval would silently test FTS-only. \
