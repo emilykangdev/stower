@@ -18,7 +18,8 @@ internal struct StowerTestItem: StowerIndexedItem {
         text: String,
         title: String = "Fixture",
         timestamp: Date = Date(timeIntervalSince1970: 1_700_000_000),
-        metadata: [String: String] = [:]
+        metadata: [String: String] = [:],
+        groupID: String? = nil
     ) {
         self.id = id
         self.source = source
@@ -26,7 +27,7 @@ internal struct StowerTestItem: StowerIndexedItem {
         self.timestamp = timestamp
         self.metadata = metadata
         deepLink = nil
-        groupID = "group-\(id)"
+        self.groupID = groupID ?? "group-\(id)"
         groupTitle = title
     }
 

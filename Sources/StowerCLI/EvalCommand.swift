@@ -103,13 +103,22 @@ internal struct EvalCommand: AsyncParsableCommand {
     }
 
     private func armHit(_ results: [StowerRetrievedItem], expected: String) -> Bool {
-        results.contains { $0.item.text.localizedCaseInsensitiveContains(expected) }
+        // Aggregate recall: a hit is the expected *conversation* surfacing in the
+        // top-N groups (expected = a conversation/person name), with a fallback to
+        // a message-text match for point-recall queries.
+        let groups = results.stowerGroupedByConversation().prefix(limit)
+        if groups.contains(where: { $0.groupTitle.localizedCaseInsensitiveContains(expected) }) {
+            return true
+        }
+        return results.contains { $0.item.text.localizedCaseInsensitiveContains(expected) }
     }
 
     private func topSnippet(_ results: [StowerRetrievedItem]) -> String {
-        guard let first = results.first else { return "(none)" }
-        let body = first.snippet ?? String(first.item.text.prefix(60))
-        return body.replacingOccurrences(of: "\n", with: " ")
+        let groups = results.stowerGroupedByConversation()
+        guard let top = groups.first else { return "(none)" }
+        let body = top.best.snippet ?? String(top.best.item.text.prefix(60))
+        let clean = body.replacingOccurrences(of: "\n", with: " ")
+        return "[\(groups.count) convo(s)] \(top.groupTitle): \(clean)"
     }
 
     private func loadQueries() throws -> [EvalQuery] {

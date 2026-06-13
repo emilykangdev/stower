@@ -29,6 +29,52 @@ public struct StowerRetrievedItem: Sendable {
     public let fusedScore: Double
 }
 
+/// A conversation-level result: the best-ranked item in a group, plus how many
+/// of the group's items surfaced in the ranking.
+///
+/// Aggregate recall ("did I text anyone about the discussion meeting?") wants
+/// answers shaped as conversations, not individual messages; this collapses a
+/// ranked item list to one entry per conversation.
+public struct StowerGroupedResult: Sendable {
+    /// The conversation identifier the group collapsed on.
+    public let groupID: String
+
+    /// The conversation display title.
+    public let groupTitle: String
+
+    /// The highest-ranked item in this conversation.
+    public let best: StowerRetrievedItem
+
+    /// How many of the conversation's items appeared in the source ranking.
+    public let matchCount: Int
+}
+
+extension Array where Element == StowerRetrievedItem {
+    /// Collapses ranked items to conversations, best group first.
+    ///
+    /// The retriever returns items in a deterministic fused-rank order, so a
+    /// group taking the slot of its first-seen (highest-ranked) item preserves
+    /// that ranking across conversations.
+    public func stowerGroupedByConversation() -> [StowerGroupedResult] {
+        var order: [String] = []
+        var byGroup: [String: [StowerRetrievedItem]] = [:]
+        for hit in self {
+            let groupID = hit.item.groupID
+            if byGroup[groupID] == nil { order.append(groupID) }
+            byGroup[groupID, default: []].append(hit)
+        }
+        return order.compactMap { groupID in
+            guard let hits = byGroup[groupID], let best = hits.first else { return nil }
+            return StowerGroupedResult(
+                groupID: groupID,
+                groupTitle: best.item.groupTitle,
+                best: best,
+                matchCount: hits.count
+            )
+        }
+    }
+}
+
 /// The result of one retrieval pass, exposing every arm.
 ///
 /// A single `evaluate` pass fills all three arms from one query embedding, so
