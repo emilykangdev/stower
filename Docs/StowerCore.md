@@ -35,6 +35,53 @@ loop and lets us add new sources without churn.
   `rebuild` in one transaction. v1 intentionally has no incremental path.
 - A stale `schema_version` erases and recreates the Index DB.
 
+## Data model
+
+Two SQLite files in the index directory. `index.sqlite` is **disposable** —
+`replaceAll` rewrites `item` every launch, and a schema bump erases the whole
+file. `embeddings.sqlite` is **precious** — it survives both, because re-embedding
+180 days is slow. They are never joined in SQL; the retriever resolves
+`embedding.item_id` back to `item.id` in code (orphans are dropped).
+
+```mermaid
+erDiagram
+    meta {
+        text key PK
+        text value
+    }
+    item {
+        text id PK "source:native-id"
+        text source
+        text text
+        double timestamp
+        text deep_link "nullable"
+        text group_id
+        text group_title
+        text metadata "sorted-key JSON"
+    }
+    item_fts {
+        text text "FTS5 external content"
+        text group_title
+    }
+    schema_meta {
+        text key PK
+        text value
+    }
+    embedding {
+        text model_id PK "manifest fingerprint"
+        text item_id PK "equals item.id"
+        text text_hash "re-embed when changed"
+        blob vector "float32 L2-normalized; NULL when skipped"
+        int dims
+    }
+    item ||--|| item_fts : "rowid (external content)"
+    item ||--o| embedding : "item.id (cross-file, resolved in code)"
+```
+
+`meta` + `item` + `item_fts` live in `index.sqlite`; `schema_meta` + `embedding`
+live in `embeddings.sqlite`. `embedding`'s primary key is the composite
+`(model_id, item_id)`, so a second model never collides with the first.
+
 ## Hybrid retrieval
 
 The semantic arm lives alongside FTS5 and is fused by reciprocal-rank fusion:

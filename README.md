@@ -6,9 +6,10 @@ and Stower runs a hybrid full-text + embedding search across your Photos and
 iMessages, entirely on-device, and hands back the matches with a short
 summary. Nothing leaves your Mac.
 
-> **Status: scaffolding.** Module structure, guardrails, and CI are in place;
-> no runtime features yet. See [`PLAN.md`](PLAN.md) for the roadmap and current
-> status.
+> **Status: early.** The Messages recall path ships — a hybrid FTS5 + bge-small
+> embedding retriever in `StowerCore` and a permanent `stower` CLI
+> (index / search / eval). Photos, voice query, and the local-LLM summary are
+> still ahead. See [`PLAN.md`](PLAN.md) for the roadmap and current status.
 
 ## Architecture
 
@@ -25,6 +26,48 @@ Three library targets, one-directional dependency graph:
 them, and they never import each other. This keeps the v3 Photos-only iOS app
 from ever linking the Messages code. See [`Docs/`](Docs/) for per-subsystem
 rationale.
+
+### System overview
+
+`①` is the index path (write); `②` is the query path (read). Dashed nodes/edges
+are planned (not built yet).
+
+```mermaid
+flowchart TD
+    chatdb[("chat.db<br/>~/Library/Messages")]
+    convert["convert-embedding-model.py"]
+    model[("Core ML model dir<br/>mlpackage · tokenizer · manifest.json")]
+    convert -->|"one-time, offline"| model
+
+    cli["stower CLI<br/>index · search · eval"]
+    mac["StowerMac<br/>branch 2 · planned"]
+    msgs["StowerMessages<br/>chat.db reader + Contacts"]
+
+    subgraph core["StowerCore"]
+        index["StowerIndex<br/>FTS5 keyword arm"]
+        store["StowerEmbeddingStore"]
+        embedder["StowerCoreMLEmbedder"]
+        retriever["StowerRetriever<br/>RRF fusion, k=60"]
+        idxdb[("index.sqlite")]
+        embdb[("embeddings.sqlite")]
+        index --- idxdb
+        store --- embdb
+    end
+
+    chatdb -->|"ephemeral snapshot (read-only)"| msgs
+
+    cli -->|"① index"| msgs
+    msgs -->|"[StowerMessageItem]"| index
+    msgs -->|"message text"| embedder
+    model -->|"compile once → .mlmodelc"| embedder
+    embedder -->|"vectors"| store
+
+    cli -->|"② search / eval"| retriever
+    mac -.->|"② search"| retriever
+    retriever -->|"keyword arm"| index
+    retriever -->|"semantic arm (cosine)"| store
+    retriever -->|"query vector"| embedder
+```
 
 ## Quickstart
 
