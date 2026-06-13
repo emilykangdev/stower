@@ -35,6 +35,21 @@ public struct StowerCachedVector: Sendable {
     public let vector: [Float]
 }
 
+/// Every stored vector for one model, packed into a single contiguous buffer.
+///
+/// `flat` holds `ids.count * dims` floats row-major, so the semantic arm is one
+/// matrix·vector multiply with no per-row allocations.
+public struct StowerFlatVectors: Sendable {
+    /// The source-namespaced item ids, in row order matching `flat`.
+    public let ids: [String]
+
+    /// All vectors concatenated, row-major (`dims` floats per id).
+    public let flat: ContiguousArray<Float>
+
+    /// The per-vector dimensionality.
+    public let dims: Int
+}
+
 /// Errors raised while reading or writing the embedding cache.
 public enum StowerEmbeddingStoreError: Error, Sendable, Equatable {
     /// A stored vector BLOB failed validation (wrong byte count or non-finite).
@@ -120,6 +135,41 @@ public actor StowerEmbeddingStore {
                 sql: "SELECT COUNT(*) FROM embedding WHERE model_id = ? AND vector IS NOT NULL",
                 arguments: [fingerprint]
             ) ?? 0
+        }
+    }
+
+    /// Streams every stored vector for `fingerprint` into one contiguous buffer.
+    ///
+    /// Uses a cursor and appends each decoded vector directly, so peak memory is
+    /// the result buffer plus one transient row — never N retained row copies.
+    public func loadFlatVectors(fingerprint: String) throws -> StowerFlatVectors {
+        try databaseQueue.read { database in
+            let cursor = try Row.fetchCursor(
+                database,
+                sql: """
+                    SELECT item_id, vector, dims FROM embedding
+                    WHERE model_id = ? AND vector IS NOT NULL
+                    """,
+                arguments: [fingerprint]
+            )
+            var ids: [String] = []
+            var flat = ContiguousArray<Float>()
+            var dims = 0
+            while let row = try cursor.next() {
+                let itemID: String = row["item_id"]
+                let rowDims: Int = row["dims"]
+                if dims == 0 { dims = rowDims }
+                guard rowDims == dims else {
+                    throw StowerEmbeddingStoreError.corruptVector(
+                        itemID: itemID,
+                        detail: "inconsistent dims \(rowDims) vs \(dims)"
+                    )
+                }
+                let data: Data = row["vector"]
+                flat.append(contentsOf: try Self.decodeVector(data, dims: dims, itemID: itemID))
+                ids.append(itemID)
+            }
+            return StowerFlatVectors(ids: ids, flat: flat, dims: dims)
         }
     }
 

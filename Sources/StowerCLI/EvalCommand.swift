@@ -158,11 +158,22 @@ internal struct EvalCommand: AsyncParsableCommand {
         // throws with its line number rather than being silently dropped — a
         // dropped row would shrink the gate set and could spuriously PASS.
         var queries: [EvalQuery] = []
+        var seen: Set<String> = []
         let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
         for (index, rawLine) in lines.enumerated() {
             let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
             if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
-            queries.append(try parseQueryLine(trimmed, number: index + 1))
+            let query = try parseQueryLine(trimmed, number: index + 1)
+            // Reject duplicates so a suite padded with repeats can't meet the size
+            // requirement and inflate the verdict.
+            guard seen.insert(query.query.lowercased()).inserted else {
+                throw StowerCLIError.malformedQueryLine(
+                    path: queriesFile,
+                    number: index + 1,
+                    reason: "duplicate query — each pre-registered query must be distinct"
+                )
+            }
+            queries.append(query)
         }
         guard !queries.isEmpty else { throw StowerCLIError.emptyQueryFile(path: queriesFile) }
         return queries

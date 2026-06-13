@@ -32,6 +32,7 @@ import hashlib
 import json
 import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import coremltools as ct
@@ -214,7 +215,7 @@ def main() -> None:
     prefix = args.query_prefix if args.query_prefix is not None else prefix
 
     output = Path(args.output) if args.output else default_output(slug)
-    output.mkdir(parents=True, exist_ok=True)
+    output.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Downloading {args.model} @ {revision} …")
     source = Path(snapshot_download(args.model, revision=revision))
@@ -222,39 +223,49 @@ def main() -> None:
     encoder = AutoModel.from_pretrained(source).eval()
     module = EmbeddingModule(encoder, pooling)
 
-    package = trace_and_convert(module, output)
-    run_parity_check(module, ct.models.MLModel(str(package)), encoder.config.vocab_size)
-
-    tokenizer_hashes = vendor_tokenizer(source, output)
-    package_sha = sha256_dir(package)
-    # The fingerprint is BOTH the embedding cache key and the compiled-model cache
-    # key on the Swift side. Fold pooling, query prefix, and the package hash into
-    # it so re-converting the same revision with a different pooling/prefix yields
-    # a new fingerprint — never reusing incompatible vectors or a stale .mlmodelc.
-    config_digest = hashlib.sha256(
-        f"{pooling}\0{prefix}\0{package_sha}".encode("utf-8")
-    ).hexdigest()[:12]
-    fingerprint = f"{base_fingerprint}+{config_digest}"
-    manifest = {
-        "model_id": args.model,
-        "hf_revision": revision,
-        "fingerprint": fingerprint,
-        "dims": int(encoder.config.hidden_size),
-        "pooling": pooling,
-        "query_prefix": prefix,
-        "max_tokens": MAX_TOKENS,
-        "pad_token_id": int(tokenizer.pad_token_id),
-        "cls_token_id": int(tokenizer.cls_token_id),
-        "sep_token_id": int(tokenizer.sep_token_id),
-        "input_ids_name": "input_ids",
-        "attention_mask_name": "attention_mask",
-        "output_name": "embeddings",
-        "mlpackage": "model.mlpackage",
-        "mlpackage_sha256": package_sha,
-        "tokenizer_dir": "tokenizer",
-        "tokenizer_files": tokenizer_hashes,
-    }
-    (output / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    # Build and validate the whole model dir in a sibling staging dir, then swap it
+    # into place only after parity AND the manifest succeed. A failed re-conversion
+    # (e.g. parity exits non-zero) must never destroy a working model in `output`.
+    staging = Path(tempfile.mkdtemp(prefix=".stower-convert-", dir=output.parent))
+    try:
+        package = trace_and_convert(module, staging)
+        run_parity_check(module, ct.models.MLModel(str(package)), encoder.config.vocab_size)
+        tokenizer_hashes = vendor_tokenizer(source, staging)
+        package_sha = sha256_dir(package)
+        # The fingerprint is BOTH the embedding cache key and the compiled-model cache
+        # key on the Swift side. Fold pooling, query prefix, and the package hash into
+        # it so re-converting the same revision with a different pooling/prefix yields
+        # a new fingerprint — never reusing incompatible vectors or a stale .mlmodelc.
+        config_digest = hashlib.sha256(
+            f"{pooling}\0{prefix}\0{package_sha}".encode("utf-8")
+        ).hexdigest()[:12]
+        fingerprint = f"{base_fingerprint}+{config_digest}"
+        manifest = {
+            "model_id": args.model,
+            "hf_revision": revision,
+            "fingerprint": fingerprint,
+            "dims": int(encoder.config.hidden_size),
+            "pooling": pooling,
+            "query_prefix": prefix,
+            "max_tokens": MAX_TOKENS,
+            "pad_token_id": int(tokenizer.pad_token_id),
+            "cls_token_id": int(tokenizer.cls_token_id),
+            "sep_token_id": int(tokenizer.sep_token_id),
+            "input_ids_name": "input_ids",
+            "attention_mask_name": "attention_mask",
+            "output_name": "embeddings",
+            "mlpackage": "model.mlpackage",
+            "mlpackage_sha256": package_sha,
+            "tokenizer_dir": "tokenizer",
+            "tokenizer_files": tokenizer_hashes,
+        }
+        (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
+        if output.exists():
+            shutil.rmtree(output)
+        shutil.move(str(staging), str(output))
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
     if args.output is None:
         link_default(output)
     print(f"Wrote {output}/manifest.json ({manifest['dims']} dims, {pooling} pooling)")

@@ -80,7 +80,7 @@ public actor StowerRetriever {
     private func vectorCache() async throws -> StowerVectorCache {
         if let cachedVectors { return cachedVectors }
         let built = StowerVectorCache(
-            vectors: try await store.vectors(fingerprint: embedder.modelFingerprint)
+            try await store.loadFlatVectors(fingerprint: embedder.modelFingerprint)
         )
         cachedVectors = built
         return built

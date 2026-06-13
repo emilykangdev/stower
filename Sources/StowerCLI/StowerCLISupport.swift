@@ -145,17 +145,47 @@ internal func stowerFormatResult(_ rank: Int, _ item: StowerRetrievedItem) -> St
 internal func stowerEnsureGitIgnored(_ path: String) throws {
     let expanded = (path as NSString).expandingTildeInPath
     let absolute = URL(fileURLWithPath: expanded).standardizedFileURL.path
-    let directory = URL(fileURLWithPath: absolute).deletingLastPathComponent().path
-    let status = stowerRunGit(["-C", directory, "check-ignore", "-q", absolute])
-    switch status {
-    case 0, 128:  // ignored, or not inside a git repo
-        return
+    // Anchor git at the nearest EXISTING ancestor: the target itself (and its
+    // parent) may not exist yet, and `git -C <missing>` fails with 128, which we
+    // must not mistake for "not in a repo".
+    let anchor = stowerNearestExistingDirectory(of: absolute)
+    let insideRepo = stowerRunGit(["-C", anchor, "rev-parse", "--is-inside-work-tree"])
+    switch insideRepo {
+    case .exit(128):
+        return  // genuinely not inside any git repo — nothing to leak into
+    case .exit(0):
+        break  // inside a repo — the path must be ignored
     default:
+        // git could not be run, or some other error: we cannot verify safety.
         throw StowerCLIError.pathNotGitIgnored(absolute)
     }
+    if case .exit(0) = stowerRunGit(["-C", anchor, "check-ignore", "-q", absolute]) {
+        return  // ignored — safe to write here
+    }
+    throw StowerCLIError.pathNotGitIgnored(absolute)
 }
 
-private func stowerRunGit(_ arguments: [String]) -> Int32 {
+/// Walks up from `path` to the first directory that actually exists.
+private func stowerNearestExistingDirectory(of path: String) -> String {
+    var url = URL(fileURLWithPath: path).deletingLastPathComponent()
+    var isDirectory: ObjCBool = false
+    while url.path != "/" {
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+        if exists && isDirectory.boolValue {
+            return url.path
+        }
+        url = url.deletingLastPathComponent()
+    }
+    return "/"
+}
+
+/// The outcome of running git: a real exit status, or a failure to launch it.
+private enum StowerGitResult: Equatable {
+    case exit(Int32)
+    case couldNotRun
+}
+
+private func stowerRunGit(_ arguments: [String]) -> StowerGitResult {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     process.arguments = arguments
@@ -164,9 +194,9 @@ private func stowerRunGit(_ arguments: [String]) -> Int32 {
     do {
         try process.run()
         process.waitUntilExit()
-        return process.terminationStatus
+        return .exit(process.terminationStatus)
     } catch {
-        return 128
+        return .couldNotRun
     }
 }
 

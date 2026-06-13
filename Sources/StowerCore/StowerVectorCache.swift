@@ -11,18 +11,10 @@ internal struct StowerVectorCache: Sendable {
 
     internal var isEmpty: Bool { ids.isEmpty }
 
-    internal init(vectors: [StowerCachedVector]) {
-        dims = vectors.first?.vector.count ?? 0
-        var ids: [String] = []
-        var flat = ContiguousArray<Float>()
-        ids.reserveCapacity(vectors.count)
-        flat.reserveCapacity(vectors.count * dims)
-        for vector in vectors where vector.vector.count == dims && dims > 0 {
-            ids.append(vector.itemID)
-            flat.append(contentsOf: vector.vector)
-        }
-        self.ids = ids
-        self.flat = flat
+    internal init(_ source: StowerFlatVectors) {
+        ids = source.ids
+        flat = source.flat
+        dims = source.dims
     }
 
     /// Returns the `count` highest-cosine ids, best first.
