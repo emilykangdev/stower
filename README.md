@@ -45,6 +45,36 @@ swift test
 Line Tools only, run it through `./Scripts/precheck.sh`, which injects the
 required framework flags automatically.
 
+## The `stower` CLI (recall over your Messages)
+
+`stower` indexes a window of your local Messages and searches it with a hybrid
+of FTS5 keyword matching and bge-small embeddings, fused by reciprocal-rank
+fusion. Everything is on-device.
+
+```bash
+# 1. Convert the embedding model once (downloads weights from Hugging Face,
+#    writes a Core ML package to ~/Library/Application Support/Stower/Models/).
+#    Pinned deps run under uv — no ambient-Python roulette.
+uv run Scripts/convert-embedding-model.py --model BAAI/bge-small-en-v1.5
+
+# 2. Grant Full Disk Access AND Contacts to your terminal app, in
+#    System Settings → Privacy & Security. Full Disk Access requires fully
+#    quitting and reopening the terminal afterward to take effect.
+
+# 3. Index the last 180 days, then search. Use a release build for real timings.
+swift build -c release
+.build/release/stower index --days 180
+.build/release/stower search "the pizza place Sam mentioned"
+.build/release/stower search "quarterly numbers" --arm fts   # keyword-only, no model needed
+```
+
+The model and index default to `~/Library/Application Support/Stower/` so
+Conductor worktrees share one conversion and one index. Override with
+`--model-path` / `--index-dir`. Re-running `index` embeds only new messages
+(the cache survives rebuilds). `stower eval <queries.tsv>` scores a
+pre-registered recall set; the query file must be gitignored (it holds personal
+queries) — the command refuses a non-ignored in-repo path.
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) (agent rule

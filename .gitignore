@@ -13,3 +13,11 @@ tmp/
 
 # Adversarial review run logs (diffs, findings, stderr) — local scratch only.
 .ship-with-codex/
+
+# Converted embedding model artifacts. The conversion script writes to the
+# user-level app-support dir by default; repo-relative Models/ is a safety net.
+Models/
+# Personal eval query files (natural-language queries over real messages).
+*.local.txt
+# Python bytecode cache from the conversion script.
+__pycache__/

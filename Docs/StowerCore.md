@@ -35,12 +35,32 @@ loop and lets us add new sources without churn.
   `rebuild` in one transaction. v1 intentionally has no incremental path.
 - A stale `schema_version` erases and recreates the Index DB.
 
+## Hybrid retrieval
+
+The semantic arm lives alongside FTS5 and is fused by reciprocal-rank fusion:
+
+- **Embedding model**: `BAAI/bge-small-en-v1.5` converted to Core ML
+  (`Scripts/convert-embedding-model.py`). The model is swappable: pooling, query
+  prefix, dims, max tokens, special-token ids, and the pinned HF revision all
+  travel in a `manifest.json` beside the `.mlpackage`, so a swap is a re-embed,
+  not a code change. `StowerEmbedder` is the seam; `StowerCoreMLEmbedder` reads
+  the manifest. (Resolved: not NLContextualEmbedding, not MLX, for v1.)
+- **Embedding storage format**: float32 BLOB, L2-normalized at write so the
+  retriever's dot product is cosine similarity. (Resolved: not fp16 — 1.5KB/row
+  is acceptable at this scale, and fp16 would add encode/decode at every read.)
+- **Embedding cache lives in its own `embeddings.sqlite`**, not the index file.
+  The index is disposable (`replaceAll` per launch, schema-version erase); the
+  cache is precious (101s to rebuild). Keying on stable `item.id` (never the FTS
+  rowid), it survives both. `StowerEmbeddingStore` owns it.
+- **Fusion**: `StowerRetriever` brute-force cosine over a once-per-process flat
+  vector cache, RRF (`k = 60`, per-arm depth 100), deterministic total order
+  (fused score, timestamp, id). Constants live only in `StowerRetriever`.
+
 ## Open questions
 
-- Embedding model: `all-MiniLM-L6-v2` via CoreML vs. on-device sentence
-  transformer via MLX. Defer until we have measured latency on M-series.
-- Embedding storage format: float16 quantized vs. float32. Defer.
-- v1.1 embeddings should join to stable `item.id`, never the FTS rowid.
+- Thread-chunk vs message-level embedding — message-level for v1; first suspect
+  if the gate fails on context-dependent queries (v1.1 research note).
+- fp16 vectors — revisit only if the float32 cache size is actually felt.
 
 ## See also
 
