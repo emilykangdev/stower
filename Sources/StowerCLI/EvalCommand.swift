@@ -116,9 +116,10 @@ internal struct EvalCommand: AsyncParsableCommand {
     private func topSnippet(_ results: [StowerRetrievedItem]) -> String {
         let groups = results.stowerGroupedByConversation()
         guard let top = groups.first else { return "(none)" }
-        let body = top.best.snippet ?? String(top.best.item.text.prefix(60))
-        let clean = body.replacingOccurrences(of: "\n", with: " ")
-        return "[\(groups.count) convo(s)] \(top.groupTitle): \(clean)"
+        let rawBody = top.best.snippet ?? String(top.best.item.text.prefix(60))
+        let body = stowerSanitizedForTerminal(rawBody)
+        let title = stowerSanitizedForTerminal(top.groupTitle)
+        return "[\(groups.count) convo(s)] \(title): \(body)"
     }
 
     private func loadQueries() throws -> [EvalQuery] {
@@ -131,9 +132,41 @@ internal struct EvalCommand: AsyncParsableCommand {
                 reason: (error as NSError).localizedDescription
             )
         }
-        let queries = contents.split(separator: "\n").compactMap { EvalQuery(line: String($0)) }
+        // Parse strictly: blank/comment lines are skipped, but a malformed row
+        // throws with its line number rather than being silently dropped — a
+        // dropped row would shrink the gate set and could spuriously PASS.
+        var queries: [EvalQuery] = []
+        let lines = contents.split(separator: "\n", omittingEmptySubsequences: false)
+        for (index, rawLine) in lines.enumerated() {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            queries.append(try parseQueryLine(trimmed, number: index + 1))
+        }
         guard !queries.isEmpty else { throw StowerCLIError.emptyQueryFile(path: queriesFile) }
         return queries
+    }
+
+    private func parseQueryLine(_ line: String, number: Int) throws -> EvalQuery {
+        let fields = line.components(separatedBy: "\t")
+        guard fields.count == 3 else {
+            throw StowerCLIError.malformedQueryLine(
+                path: queriesFile,
+                number: number,
+                reason: "expected 3 tab-separated fields, found \(fields.count)"
+            )
+        }
+        let inWindow: Bool
+        switch fields[2] {
+        case "in-window": inWindow = true
+        case "out-of-window": inWindow = false
+        default:
+            throw StowerCLIError.malformedQueryLine(
+                path: queriesFile,
+                number: number,
+                reason: "third field must be in-window or out-of-window, found '\(fields[2])'"
+            )
+        }
+        return EvalQuery(query: fields[0], expected: fields[1], inWindow: inWindow)
     }
 
     private func openNonEmptyIndex(at path: String) async throws -> StowerIndex {
@@ -151,16 +184,6 @@ internal struct EvalQuery {
     internal let query: String
     internal let expected: String
     internal let inWindow: Bool
-
-    internal init?(line: String) {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { return nil }
-        let fields = trimmed.components(separatedBy: "\t")
-        guard fields.count == 3 else { return nil }
-        query = fields[0]
-        expected = fields[1]
-        inWindow = fields[2] == "in-window"
-    }
 }
 
 /// Buffers eval output, printing live and optionally writing to a guarded file.

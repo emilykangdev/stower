@@ -20,6 +20,13 @@ internal struct IndexCommand: AsyncParsableCommand {
         stowerWarnIfContactsDenied()
         let clock = ContinuousClock()
 
+        // SQLite opens a file but never creates its parent dir; on a fresh
+        // machine the default Index directory does not exist yet.
+        try FileManager.default.createDirectory(
+            at: locations.indexDirectory,
+            withIntermediateDirectories: true
+        )
+
         let items = try await ingest(locations: locations, clock: clock)
         let index = try StowerIndex(path: locations.indexPath)
         let ftsStart = clock.now

@@ -207,8 +207,8 @@ def default_output(slug: str) -> Path:
 def main() -> None:
     args = parse_args()
     revision = resolve_revision(args.model, args.revision)
-    fingerprint = f"{args.model}@{revision}"
-    slug = fingerprint.replace("/", "_")
+    base_fingerprint = f"{args.model}@{revision}"
+    slug = base_fingerprint.replace("/", "_")
     pooling, prefix = defaults_for(args.model)
     pooling = args.pooling or pooling
     prefix = args.query_prefix if args.query_prefix is not None else prefix
@@ -226,6 +226,15 @@ def main() -> None:
     run_parity_check(module, ct.models.MLModel(str(package)), encoder.config.vocab_size)
 
     tokenizer_hashes = vendor_tokenizer(source, output)
+    package_sha = sha256_dir(package)
+    # The fingerprint is BOTH the embedding cache key and the compiled-model cache
+    # key on the Swift side. Fold pooling, query prefix, and the package hash into
+    # it so re-converting the same revision with a different pooling/prefix yields
+    # a new fingerprint — never reusing incompatible vectors or a stale .mlmodelc.
+    config_digest = hashlib.sha256(
+        f"{pooling}\0{prefix}\0{package_sha}".encode("utf-8")
+    ).hexdigest()[:12]
+    fingerprint = f"{base_fingerprint}+{config_digest}"
     manifest = {
         "model_id": args.model,
         "hf_revision": revision,
@@ -241,7 +250,7 @@ def main() -> None:
         "attention_mask_name": "attention_mask",
         "output_name": "embeddings",
         "mlpackage": "model.mlpackage",
-        "mlpackage_sha256": sha256_dir(package),
+        "mlpackage_sha256": package_sha,
         "tokenizer_dir": "tokenizer",
         "tokenizer_files": tokenizer_hashes,
     }

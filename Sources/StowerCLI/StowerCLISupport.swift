@@ -119,11 +119,23 @@ internal func stowerProvenance(_ item: StowerRetrievedItem) -> String {
     return parts.joined(separator: " ")
 }
 
+/// Strips control and escape characters from untrusted message text before it
+/// is printed, so a message body or contact name cannot inject terminal escape
+/// sequences (cursor moves, OSC clipboard/title writes) into the user's shell.
+internal func stowerSanitizedForTerminal(_ text: String) -> String {
+    let scalars = text.unicodeScalars.compactMap { scalar -> Unicode.Scalar? in
+        if scalar == "\n" || scalar == "\t" { return Unicode.Scalar(UInt8(0x20)) }
+        if scalar.value < 0x20 || (scalar.value >= 0x7F && scalar.value <= 0x9F) { return nil }
+        return scalar
+    }
+    return String(String.UnicodeScalarView(scalars))
+}
+
 /// Formats one ranked result as a compact, single-line row.
 internal func stowerFormatResult(_ rank: Int, _ item: StowerRetrievedItem) -> String {
-    let body = item.snippet ?? String(item.item.text.prefix(80))
-    let oneLine = body.replacingOccurrences(of: "\n", with: " ")
-    return "  \(rank). [\(item.item.groupTitle)] \(oneLine)  (\(stowerProvenance(item)))"
+    let body = stowerSanitizedForTerminal(item.snippet ?? String(item.item.text.prefix(80)))
+    let title = stowerSanitizedForTerminal(item.item.groupTitle)
+    return "  \(rank). [\(title)] \(body)  (\(stowerProvenance(item)))"
 }
 
 /// Refuses a path that lives inside a git repo but is not gitignored.
@@ -164,6 +176,7 @@ internal enum StowerCLIError: Error, LocalizedError {
     case pathNotGitIgnored(String)
     case queryFileUnreadable(path: String, reason: String)
     case emptyQueryFile(path: String)
+    case malformedQueryLine(path: String, number: Int, reason: String)
     case noEmbeddingsForGate
 
     internal var errorDescription: String? {
@@ -176,6 +189,8 @@ internal enum StowerCLIError: Error, LocalizedError {
             return "Query file at \(path) could not be read: \(reason)"
         case .emptyQueryFile(let path):
             return "Query file at \(path) has no usable query lines."
+        case .malformedQueryLine(let path, let number, let reason):
+            return "Malformed query at \(path):\(number) — \(reason)"
         case .noEmbeddingsForGate:
             return """
                 The index has zero embeddings, so eval would silently test FTS-only. \
