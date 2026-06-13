@@ -43,12 +43,16 @@ public actor StowerRetriever {
         arm: StowerSearchArm = .hybrid,
         limit: Int = 10
     ) async throws -> [StowerRetrievedItem] {
-        let arms = try await evaluate(query, limit: limit)
-        switch arm {
-        case .hybrid: return arms.hybrid
-        case .fts: return arms.fts
-        case .semantic: return arms.semantic
+        // Pure keyword path: never load the vector cache or touch the embedder, so
+        // FTS search keeps working with no model, a corrupt model, or stale vectors.
+        if arm == .fts {
+            guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, limit > 0 else {
+                return []
+            }
+            return ftsArm(try await index.search(query, limit: armDepth), limit: limit)
         }
+        let arms = try await evaluate(query, limit: limit)
+        return arm == .semantic ? arms.semantic : arms.hybrid
     }
 
     /// Runs every arm from one query embedding and returns all three rankings.

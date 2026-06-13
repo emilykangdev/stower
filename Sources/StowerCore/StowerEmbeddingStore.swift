@@ -111,6 +111,18 @@ public actor StowerEmbeddingStore {
         }
     }
 
+    /// Counts embedded (non-skipped) vectors for `fingerprint` without decoding
+    /// them — for cheap coverage checks that must not load the whole table.
+    public func count(fingerprint: String) throws -> Int {
+        try databaseQueue.read { database in
+            try Int.fetchOne(
+                database,
+                sql: "SELECT COUNT(*) FROM embedding WHERE model_id = ? AND vector IS NOT NULL",
+                arguments: [fingerprint]
+            ) ?? 0
+        }
+    }
+
     /// Returns every stored vector for `fingerprint`, skipping skipped rows.
     public func vectors(fingerprint: String) throws -> [StowerCachedVector] {
         try databaseQueue.read { database in

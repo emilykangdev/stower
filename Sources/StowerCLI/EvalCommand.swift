@@ -11,12 +11,16 @@ internal struct EvalCommand: AsyncParsableCommand {
 
     internal static let inWindowHitCriterion = 7
 
+    /// Items pulled per arm before conversation grouping; deep enough that a few
+    /// chatty conversations can't crowd out other top-N conversations.
+    private static let itemCandidateBudget = 100
+
     @OptionGroup internal var shared: StowerSharedOptions
 
     @Argument(help: "TSV: query <TAB> expected-target-substring <TAB> in-window|out-of-window.")
     internal var queriesFile: String
 
-    @Option(name: .long, help: "Results per arm.")
+    @Option(name: .long, help: "Top-N conversations per arm to score against.")
     internal var limit: Int = 10
 
     @Flag(
@@ -47,7 +51,8 @@ internal struct EvalCommand: AsyncParsableCommand {
         var inWindowHits = 0
         var inWindowTotal = 0
         for entry in queries {
-            let arms = try await retriever.evaluate(entry.query, limit: limit)
+            // Retrieve a deep item set, then score against the top-N conversations.
+            let arms = try await retriever.evaluate(entry.query, limit: Self.itemCandidateBudget)
             let hybridHit = armHit(arms.hybrid, expected: entry.expected)
             report(entry: entry, arms: arms, hybridHit: hybridHit, into: &transcript)
             if entry.inWindow {
@@ -70,7 +75,7 @@ internal struct EvalCommand: AsyncParsableCommand {
         into transcript: inout StowerTranscript
     ) async throws {
         let itemCount = try await index.count()
-        let embeddingCount = try await store.vectors(fingerprint: embedder.modelFingerprint).count
+        let embeddingCount = try await store.count(fingerprint: embedder.modelFingerprint)
         let coverage = itemCount > 0 ? Double(embeddingCount) / Double(itemCount) * 100 : 0
         let percent = String(format: "%.1f", coverage)
         transcript.line(
@@ -104,13 +109,17 @@ internal struct EvalCommand: AsyncParsableCommand {
 
     private func armHit(_ results: [StowerRetrievedItem], expected: String) -> Bool {
         // Aggregate recall: a hit is the expected *conversation* surfacing in the
-        // top-N groups (expected = a conversation/person name), with a fallback to
-        // a message-text match for point-recall queries.
-        let groups = results.stowerGroupedByConversation().prefix(limit)
-        if groups.contains(where: { $0.groupTitle.localizedCaseInsensitiveContains(expected) }) {
-            return true
+        // top-N conversations (expected = a conversation/person name), with a
+        // message-text fallback for point-recall queries — bounded to those same
+        // top-N conversations so a deep, off-topic item can't manufacture a hit.
+        let topGroupIDs = Set(
+            results.stowerGroupedByConversation().prefix(limit).map(\.groupID)
+        )
+        return results.contains { item in
+            guard topGroupIDs.contains(item.item.groupID) else { return false }
+            return item.item.groupTitle.localizedCaseInsensitiveContains(expected)
+                || item.item.text.localizedCaseInsensitiveContains(expected)
         }
-        return results.contains { $0.item.text.localizedCaseInsensitiveContains(expected) }
     }
 
     private func topSnippet(_ results: [StowerRetrievedItem]) -> String {
@@ -155,6 +164,15 @@ internal struct EvalCommand: AsyncParsableCommand {
                 reason: "expected 3 tab-separated fields, found \(fields.count)"
             )
         }
+        let query = fields[0].trimmingCharacters(in: .whitespaces)
+        let expected = fields[1].trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty, !expected.isEmpty else {
+            throw StowerCLIError.malformedQueryLine(
+                path: queriesFile,
+                number: number,
+                reason: "query and expected-target fields must be non-empty"
+            )
+        }
         let inWindow: Bool
         switch fields[2] {
         case "in-window": inWindow = true
@@ -166,7 +184,7 @@ internal struct EvalCommand: AsyncParsableCommand {
                 reason: "third field must be in-window or out-of-window, found '\(fields[2])'"
             )
         }
-        return EvalQuery(query: fields[0], expected: fields[1], inWindow: inWindow)
+        return EvalQuery(query: query, expected: expected, inWindow: inWindow)
     }
 
     private func openNonEmptyIndex(at path: String) async throws -> StowerIndex {
