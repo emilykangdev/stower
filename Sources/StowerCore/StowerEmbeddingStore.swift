@@ -124,11 +124,11 @@ public actor StowerEmbeddingStore {
             )
             return try rows.map { row in
                 let itemID: String = row["item_id"]
-                let data: Data = row["vector"]
+                let vectorBlob: Data = row["vector"]
                 let dims: Int = row["dims"]
                 return StowerCachedVector(
                     itemID: itemID,
-                    vector: try Self.decodeVector(data, dims: dims, itemID: itemID)
+                    vector: try Self.decodeVector(vectorBlob, dims: dims, itemID: itemID)
                 )
             }
         }

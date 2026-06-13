@@ -37,12 +37,15 @@ internal struct StowerTokenizerTests {
         }
     }
 
-    @Test("CJK under an English vocab is skipped (acceptable: skipped or tokenized)")
-    internal func cjkHandled() {
-        let outcome = plan("你好世界")
-        if case .encoded = outcome { return }
-        if case .skipped = outcome { return }
-        Issue.record("expected CJK to be skipped or encoded, not crash")
+    @Test("CJK under an English vocab tokenizes to UNK and is skipped")
+    internal func cjkSkipped() {
+        // The fixture vocab has no CJK, so every char is [UNK] → zero meaningful
+        // tokens → skipped. Asserting .skipped is a real regression check, not a
+        // vacuous "didn't crash".
+        guard case .skipped = plan("你好世界") else {
+            Issue.record("expected CJK under an English vocab to be skipped")
+            return
+        }
     }
 
     @Test("text longer than the model limit truncates to max tokens")

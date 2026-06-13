@@ -122,11 +122,17 @@ internal struct EvalCommand: AsyncParsableCommand {
     }
 
     private func loadQueries() throws -> [EvalQuery] {
-        guard let contents = try? String(contentsOfFile: queriesFile, encoding: .utf8) else {
-            throw StowerCLIError.queryFileUnreadable(path: queriesFile)
+        let contents: String
+        do {
+            contents = try String(contentsOfFile: queriesFile, encoding: .utf8)
+        } catch {
+            throw StowerCLIError.queryFileUnreadable(
+                path: queriesFile,
+                reason: (error as NSError).localizedDescription
+            )
         }
         let queries = contents.split(separator: "\n").compactMap { EvalQuery(line: String($0)) }
-        guard !queries.isEmpty else { throw StowerCLIError.queryFileUnreadable(path: queriesFile) }
+        guard !queries.isEmpty else { throw StowerCLIError.emptyQueryFile(path: queriesFile) }
         return queries
     }
 

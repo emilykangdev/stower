@@ -162,7 +162,8 @@ private func stowerRunGit(_ arguments: [String]) -> Int32 {
 internal enum StowerCLIError: Error, LocalizedError {
     case emptyIndex(path: String)
     case pathNotGitIgnored(String)
-    case queryFileUnreadable(path: String)
+    case queryFileUnreadable(path: String, reason: String)
+    case emptyQueryFile(path: String)
     case noEmbeddingsForGate
 
     internal var errorDescription: String? {
@@ -171,8 +172,10 @@ internal enum StowerCLIError: Error, LocalizedError {
             return "No indexed items at \(path) — run `stower index` first."
         case .pathNotGitIgnored(let path):
             return "Refusing to use \(path): it is inside a git repo but not gitignored."
-        case .queryFileUnreadable(let path):
-            return "Query file not found or empty at \(path)."
+        case .queryFileUnreadable(let path, let reason):
+            return "Query file at \(path) could not be read: \(reason)"
+        case .emptyQueryFile(let path):
+            return "Query file at \(path) has no usable query lines."
         case .noEmbeddingsForGate:
             return """
                 The index has zero embeddings, so eval would silently test FTS-only. \

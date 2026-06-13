@@ -91,8 +91,8 @@ internal struct StowerModelManifest: Codable, Sendable {
         for case let fileURL as URL in enumerator {
             let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
             guard values.isRegularFile == true else { continue }
-            let data = try Data(contentsOf: fileURL)
-            let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+            let fileContents = try Data(contentsOf: fileURL)
+            let hash = SHA256.hash(data: fileContents).map { String(format: "%02x", $0) }.joined()
             entries.append((relativePath(of: fileURL, under: resolvedRoot), hash))
         }
         entries.sort { $0.relative < $1.relative }
