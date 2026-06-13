@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -260,9 +261,20 @@ def main() -> None:
             "tokenizer_files": tokenizer_hashes,
         }
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True))
+        # Move the old model aside, install the new one, then delete the backup —
+        # restoring the backup if the install fails, so a crash never leaves no model.
+        backup = None
         if output.exists():
-            shutil.rmtree(output)
-        shutil.move(str(staging), str(output))
+            backup = output.with_name(f"{output.name}.bak-{os.getpid()}")
+            output.rename(backup)
+        try:
+            shutil.move(str(staging), str(output))
+        except Exception:
+            if backup is not None:
+                backup.rename(output)
+            raise
+        if backup is not None:
+            shutil.rmtree(backup, ignore_errors=True)
     finally:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)

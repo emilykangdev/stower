@@ -27,10 +27,13 @@ internal struct IndexCommand: AsyncParsableCommand {
         try stowerEnsureGitIgnored(locations.storePath)
 
         // SQLite opens a file but never creates its parent dir; on a fresh
-        // machine the default Index directory does not exist yet.
+        // machine the default Index directory does not exist yet. Lock it to the
+        // owner (0700): the index holds plaintext message text and, unlike
+        // chat.db, is not TCC-protected, so other local users must not read it.
         try FileManager.default.createDirectory(
             at: locations.indexDirectory,
-            withIntermediateDirectories: true
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
         )
 
         let items = try await ingest(locations: locations, clock: clock)

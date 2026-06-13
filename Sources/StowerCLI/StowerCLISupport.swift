@@ -208,6 +208,7 @@ internal enum StowerCLIError: Error, LocalizedError {
     case emptyQueryFile(path: String)
     case malformedQueryLine(path: String, number: Int, reason: String)
     case incompleteGateSuite(found: Int, required: Int)
+    case incompleteCoverage(items: Int, processed: Int)
     case noEmbeddingsForGate
 
     internal var errorDescription: String? {
@@ -224,6 +225,10 @@ internal enum StowerCLIError: Error, LocalizedError {
             return "Malformed query at \(path):\(number) — \(reason)"
         case .incompleteGateSuite(let found, let required):
             return "Gate needs the full \(required)-query suite; found only \(found)."
+        case .incompleteCoverage(let items, let processed):
+            return
+                "Index/embeddings out of sync (\(processed)/\(items) processed) — "
+                + "re-run `stower index`, or pass --allow-fts-only."
         case .noEmbeddingsForGate:
             return """
                 The index has zero embeddings, so eval would silently test FTS-only. \

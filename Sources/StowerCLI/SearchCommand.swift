@@ -42,6 +42,15 @@ internal struct SearchCommand: AsyncParsableCommand {
             armDepth: armDepth ?? StowerRetriever.defaultArmDepth
         )
 
+        // Hybrid/semantic silently fall back to FTS-only when the current model
+        // has no vectors; say so loudly instead of pretending the semantic arm ran.
+        if arm != .fts, try await store.count(fingerprint: embedder.modelFingerprint) == 0 {
+            stowerStandardError(
+                "warning: no embeddings for model \(embedder.modelFingerprint) — "
+                    + "results are FTS-only. Run `stower index`."
+            )
+        }
+
         let results = try await retriever.search(query, arm: arm, limit: limit)
         guard !results.isEmpty else {
             print("no results for \"\(query)\" (\(arm.rawValue))")

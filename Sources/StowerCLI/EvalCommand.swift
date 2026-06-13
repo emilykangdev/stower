@@ -89,14 +89,24 @@ internal struct EvalCommand: AsyncParsableCommand {
     ) async throws {
         let itemCount = try await index.count()
         let embeddingCount = try await store.count(fingerprint: embedder.modelFingerprint)
-        let coverage = itemCount > 0 ? Double(embeddingCount) / Double(itemCount) * 100 : 0
+        // Processed = items with a cache row (embedded OR explicitly skipped) for
+        // the current model. After a complete index this equals itemCount; a
+        // shortfall means an interrupted index or a model change, where "hybrid"
+        // would silently be mostly FTS.
+        let processed = try await store.existingHashes(fingerprint: embedder.modelFingerprint).count
+        let coverage = itemCount > 0 ? Double(processed) / Double(itemCount) * 100 : 0
         let percent = String(format: "%.1f", coverage)
+        let fingerprint = embedder.modelFingerprint
         transcript.line(
-            "preflight: \(itemCount) items, \(embeddingCount) embeddings "
-                + "(\(percent)% coverage), model \(embedder.modelFingerprint)"
+            "preflight: \(itemCount) items, \(embeddingCount) embeddings, "
+                + "\(processed) processed (\(percent)% coverage), model \(fingerprint)"
         )
-        if embeddingCount == 0 && !allowFTSOnly {
-            throw StowerCLIError.noEmbeddingsForGate
+        guard allowFTSOnly else {
+            guard embeddingCount > 0 else { throw StowerCLIError.noEmbeddingsForGate }
+            guard processed >= itemCount else {
+                throw StowerCLIError.incompleteCoverage(items: itemCount, processed: processed)
+            }
+            return
         }
     }
 
