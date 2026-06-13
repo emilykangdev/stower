@@ -48,6 +48,30 @@ public actor StowerIndex {
         }
     }
 
+    /// The number of indexed items; used by the CLI to detect an empty index.
+    public func count() throws -> Int {
+        try databaseQueue.read { database in
+            try Int.fetchOne(database, sql: "SELECT COUNT(*) FROM item") ?? 0
+        }
+    }
+
+    /// Fetches stored items by their source-namespaced ids, in unspecified order.
+    ///
+    /// Resolves the retriever's semantic-arm hits back to full items. Ids with no
+    /// matching row — a cache entry that outlived its item — are simply absent
+    /// from the result; callers drop them and continue ranking.
+    public func items(ids: [String]) throws -> [StowerStoredItem] {
+        guard !ids.isEmpty else { return [] }
+        let placeholders = Array(repeating: "?", count: ids.count).joined(separator: ",")
+        return try databaseQueue.read { database in
+            try StowerStoredItem.fetchAll(
+                database,
+                sql: "SELECT * FROM item WHERE id IN (\(placeholders))",
+                arguments: StatementArguments(ids)
+            )
+        }
+    }
+
     private func rebuild(with items: [StowerStoredItem]) throws {
         try databaseQueue.write { database in
             try database.execute(sql: "DELETE FROM item")

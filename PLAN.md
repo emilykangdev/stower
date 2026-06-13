@@ -6,6 +6,22 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-13: Hybrid retrieval substrate + permanent `stower` CLI (feature 4).
+  `StowerCore` gained: `StowerEmbeddingStore` on its own `embeddings.sqlite`
+  (survives `replaceAll` and FTS schema-version erases; per-batch resumable
+  upserts; safe `loadUnaligned` BLOB decode), `StowerEmbedder` (async/Sendable
+  model-agnostic seam) + `StowerCoreMLEmbedder` (compile-to-`.mlmodelc` cache,
+  manifest-driven pooling/prefix, post-tokenization skip), `StowerRetriever`
+  (brute-force cosine over a flat vector cache + RRF, deterministic total order,
+  single-sourced constants), and `StowerIndex.items(ids:)`/`count()`.
+  `Scripts/convert-embedding-model.py` (PEP 723 / `uv`) converts any HF model to
+  a batched Core ML package + `manifest.json` with an in-script parity check.
+  New `stower` CLI: `index` (delta-embed, resumable, timed), `search` (hybrid /
+  fts / semantic with per-arm provenance), `eval` (3-arm HIT/MISS over a
+  gitignored pre-registered TSV, scored gate, preflight). All invariants covered
+  by Swift Testing; no Core ML in unit tests (model exercised via the CLI).
+  Remaining human step: convert the model, grant FDA+Contacts, run the 10-query
+  gate against Messages.app on the real 180-day window.
 - 2026-06-11 (later): Pre-landing review pass fixed all findings. Highlights:
   WAL recovery for the copied snapshot (a raw copy of the live WAL-mode
   `chat.db` could not be opened read-only — `PRAGMA journal_mode=DELETE` on

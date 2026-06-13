@@ -18,7 +18,7 @@ echo "==> Resolving Swift package dependencies (swift package resolve)..."
 # Package.resolved by hand. See AGENTS.md.)
 swift package resolve
 
-echo "==> Installing git hooks: pre-commit (precheck) + pre-push (signal-review)..."
+echo "==> Installing git hooks: pre-commit (precheck). Signal-review runs at PR time via Scripts/pre-pr.sh."
 ./Scripts/install-hooks.sh
 
 echo "==> Checking lint tools required by Scripts/precheck.sh..."
