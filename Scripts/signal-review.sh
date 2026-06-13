@@ -33,7 +33,11 @@ fi
 
 # CWD intentionally NOT changed — claude inherits this shell's pwd so the review
 # scopes to whichever worktree you invoked from.
-claude -p "$(cat <<EOF
+#
+# Pin the model explicitly: a headless `claude -p` otherwise inherits the user's
+# configured default (e.g. an unavailable `claude-fable-5[1m]`) and aborts. Any
+# capable model works for an advisory review; override with SIGNAL_REVIEW_MODEL.
+claude -p --model "${SIGNAL_REVIEW_MODEL:-sonnet}" "$(cat <<EOF
 Run swift-signal-review against the current git working state in this directory,
 following the skill in your system prompt. The bad->good pattern catalog is
 .claude/skills/SWIFT_PATTERNS.md — Read it first; it is the single source of truth.
