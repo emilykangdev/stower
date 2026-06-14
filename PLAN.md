@@ -6,6 +6,19 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-14: Relationship "no-reply" engine in `StowerMessages` (feature 5).
+  Two-layer, pure, reads only the local 180-day window on the existing read-only
+  snapshot — index path untouched. Layer 1 is a neutral facts extractor
+  (`StowerConversationState` / `StowerConversationStateExtractor`): true last act
+  + `lastMessageKind` from a chronology read over all content types, recent
+  reciprocity, and tapback-clearing via chat-provenance reactions with
+  prefix-normalized (`p:N/`, `bp:`) target GUIDs. Layer 2 is the first policy over
+  those facts (`StowerNoReplyPolicy` / `noReplyCandidates`): 1:1 → recency-gated
+  mutuality → counterpart-last → not tapback-cleared → ≥ threshold, ranked
+  most-recently-unanswered first. `stower no-reply` CLI is the local measurement
+  vehicle. 21 new tests; `Scripts/precheck.sh` green. Deferred to v1.1: precise
+  attachment kind via the `attachment`-table UTI, per-contact dedupe.
+
 - 2026-06-13: Hybrid retrieval substrate + permanent `stower` CLI (feature 4).
   `StowerCore` gained: `StowerEmbeddingStore` on its own `embeddings.sqlite`
   (survives `replaceAll` and FTS schema-version erases; per-batch resumable

@@ -56,6 +56,7 @@ internal struct StowerFixtureDatabase {
                   is_from_me INTEGER NOT NULL,
                   handle_id INTEGER NOT NULL,
                   associated_message_type INTEGER NOT NULL,
+                  associated_message_guid TEXT,
                   item_type INTEGER NOT NULL,
                   cache_has_attachments INTEGER NOT NULL,
                   balloon_bundle_id TEXT
@@ -80,26 +81,51 @@ internal struct StowerFixtureDatabase {
     }
 
     private static func insertHandlesAndChats(_ database: Database) throws {
+        try insertHandles(database)
+        try insertChats(database)
+        try insertChatHandleJoins(database)
+    }
+
+    private static func insertHandles(_ database: Database) throws {
         try database.execute(
             sql: """
                 INSERT INTO handle (ROWID, id) VALUES
-                  (1, '+14155550100'),
-                  (2, 'sam@example.com'),
-                  (3, '+14155550299'),
-                  (4, '+14155550300'),
-                  (5, 'od#d@example.com');
+                  (1, '+14155550100'), (2, 'sam@example.com'), (3, '+14155550299'),
+                  (4, '+14155550300'), (5, 'od#d@example.com'), (6, '+14155550601'),
+                  (7, '+14155550602'), (8, '+14155550603'), (9, '+14155550604'),
+                  (10, '+14155550605'), (11, '+14155550606'), (12, '+14155550607'),
+                  (13, '+14155550608'), (14, '+14155550609');
+                """
+        )
+    }
+
+    private static func insertChats(_ database: Database) throws {
+        try database.execute(
+            sql: """
                 INSERT INTO chat (ROWID, guid, chat_identifier, display_name, style) VALUES
                   (1, 'chat-alex', '+14155550100', NULL, 45),
                   (2, 'chat-group', 'group-identifier', 'Project Group', 43),
                   (3, 'chat-bea', '+14155550300', NULL, 45),
-                  (4, 'chat-reserved', 'od#d@example.com', NULL, 45);
+                  (4, 'chat-reserved', 'od#d@example.com', NULL, 45),
+                  (5, 'chat-clears', '+14155550601', NULL, 45),
+                  (6, 'chat-removed', '+14155550602', NULL, 45),
+                  (7, 'chat-oldreact', '+14155550603', NULL, 45),
+                  (8, 'chat-attach-react', '+14155550604', NULL, 45),
+                  (9, 'chat-prefixed', '+14155550605', NULL, 45),
+                  (10, 'chat-outbound-attach', '+14155550606', NULL, 45),
+                  (11, 'chat-inbound-photo', '+14155550607', NULL, 45),
+                  (12, 'chat-system', '+14155550608', NULL, 45),
+                  (13, 'chat-stale', '+14155550609', NULL, 45);
+                """
+        )
+    }
+
+    private static func insertChatHandleJoins(_ database: Database) throws {
+        try database.execute(
+            sql: """
                 INSERT INTO chat_handle_join (chat_id, handle_id) VALUES
-                  (1, 1),
-                  (2, 1),
-                  (2, 2),
-                  (3, 3),
-                  (3, 4),
-                  (4, 5);
+                  (1, 1), (2, 1), (2, 2), (3, 3), (3, 4), (4, 5), (5, 6), (6, 7),
+                  (7, 8), (8, 9), (9, 10), (10, 11), (11, 12), (12, 13), (13, 14);
                 """
         )
     }
@@ -110,6 +136,8 @@ internal struct StowerFixtureDatabase {
         values.append(contentsOf: filteredMessages())
         values.append(contentsOf: newestMessages())
         values.append(contentsOf: deepLinkMessages())
+        values.append(contentsOf: reactionScenarios())
+        values.append(contentsOf: chronologyScenarios())
         for (offset, value) in values.enumerated() {
             let rowID = Int64(offset + 1)
             try insertMessage(database, rowID: rowID, value: value)
@@ -135,8 +163,9 @@ internal struct StowerFixtureDatabase {
             sql: """
                 INSERT INTO message (
                   ROWID, guid, text, attributedBody, date, is_from_me, handle_id,
-                  associated_message_type, item_type, cache_has_attachments, balloon_bundle_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  associated_message_type, associated_message_guid, item_type,
+                  cache_has_attachments, balloon_bundle_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
             arguments: messageArguments(rowID: rowID, value: value)
         )
@@ -155,13 +184,14 @@ internal struct StowerFixtureDatabase {
         values.append(value.isFromMe)
         values.append(value.handleID)
         values.append(value.associatedType)
+        values.append(value.associatedGuid)
         values.append(value.itemType)
         values.append(value.hasAttachments)
         values.append(value.balloonID)
         return StatementArguments(values)
     }
 
-    private static func rawDate(daysAgo: Int) -> Int64 {
+    internal static func rawDate(daysAgo: Int) -> Int64 {
         let date = now.addingTimeInterval(-Double(daysAgo) * 86_400)
         return Int64(date.timeIntervalSinceReferenceDate * 1_000_000_000)
     }
@@ -305,16 +335,17 @@ private enum FixtureError: Error {
     case archiveFailed
 }
 
-private struct FixtureMessage {
-    fileprivate let id: String
-    fileprivate var text: String?
-    fileprivate var body: Data?
-    fileprivate let date: Int64
-    fileprivate var isFromMe = false
-    fileprivate var handleID: Int64 = 1
-    fileprivate var associatedType: Int64 = 0
-    fileprivate var itemType: Int64 = 0
-    fileprivate var hasAttachments = false
-    fileprivate var balloonID: String?
-    fileprivate var chatID: Int64 = 1
+internal struct FixtureMessage {
+    internal let id: String
+    internal var text: String?
+    internal var body: Data?
+    internal let date: Int64
+    internal var isFromMe = false
+    internal var handleID: Int64 = 1
+    internal var associatedType: Int64 = 0
+    internal var associatedGuid: String?
+    internal var itemType: Int64 = 0
+    internal var hasAttachments = false
+    internal var balloonID: String?
+    internal var chatID: Int64 = 1
 }
