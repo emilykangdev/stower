@@ -18,7 +18,34 @@ Must never import `StowerPhotos`. The two adapters never know about each other.
   messages in one chat without the search-window cutoff, then returns them in
   chronological order.
 - `StowerMessageItem` is the adapter's `StowerIndexedItem` conformer and also
-  carries direction and resolved sender attribution for the thread view.
+  carries direction, resolved sender attribution, and an `isOneToOne` flag for
+  the thread view.
+- `StowerChatDatabaseReader.conversationStates(windowDays:now:)` returns neutral
+  per-1:1 conversation facts (`StowerConversationState`): the true last act and
+  its kind (from a chronology read over **all** content types, not just
+  indexable text), recent reciprocity, and whether the user tapped back the last
+  message. This is the facts boundary — a future "drift" policy reads the same
+  states with no engine re-cut.
+- `StowerChatDatabaseReader.noReplyCandidates(unansweredForDays:minimumReciprocity:windowDays:now:)`
+  is the first policy over those facts (`StowerNoReplyPolicy`): the 1:1
+  conversations where the counterpart acted last and the user hasn't replied,
+  ranked most-recently-unanswered first. Mutuality is recency-gated (recent
+  reciprocal exchanges, not a lifetime boolean), a tapback counts as a reply, and
+  a non-text last act is surfaced with its `lastMessageKind`, never suppressed.
+
+### No-reply engine reads (not indexed)
+
+The engine adds two read paths on the **same** read-only snapshot, never the
+index: a chronology read (`activityRows`, every real message of any content type
+— `associated_message_type = 0 AND item_type = 0`) for the true last act, and a
+reaction read (`myReactionRows`, the user's own tapbacks `2000–3999`) for
+mutuality and last-message clearing. Reactions carry their own chat provenance so
+mutuality-by-reaction works even when the reacted-to message is non-indexable.
+`associated_message_guid` is prefix-encoded on real data and is normalized to the
+bare `message.guid` before comparison — see `Docs/AppleEncodings.md` §1 (GUID
+prefix), §2 (reaction-type ranges), §3 (URL balloons). `style == 45` marks a 1:1
+chat. Neither read produces `StowerIndexedItem`s; the content-only index is
+untouched.
 
 ## Constraints & known gotchas
 
@@ -68,7 +95,12 @@ Must never import `StowerPhotos`. The two adapters never know about each other.
 
 - International phone normalization beyond exact E.164 and unambiguous
   last-ten-digit matching.
-- Attachment content, tapbacks, edited-message history, and group deep links.
+- Attachment content, edited-message history, and group deep links. (Tapbacks
+  are no longer deferred — the no-reply engine reads them on a separate,
+  non-indexed path.)
+- Splitting the generic `attachment` last-message kind into photo/voice/video/
+  file (needs the `attachment`-table `uti` join), and per-contact dedupe of a
+  person's SMS + iMessage threads (needs a stable contact-identity key).
 - Incremental indexing and recall beyond the 180-day bulk window.
 
 ## See also

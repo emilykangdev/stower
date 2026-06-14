@@ -25,11 +25,12 @@ internal enum StowerMessageMapper {
             id: row.guid,
             text: body,
             timestamp: date,
-            deepLink: deepLink(row: row),
-            groupID: groupID(for: row.chat),
+            deepLink: row.chat.deepLink,
+            groupID: row.chat.groupID,
             groupTitle: groupTitle,
             isFromMe: row.isFromMe,
-            sender: sender
+            sender: sender,
+            isOneToOne: row.chat.isOneToOne
         )
     }
 
@@ -68,39 +69,5 @@ internal enum StowerMessageMapper {
             return "Unknown"
         }
         return contacts.displayName(for: handle)
-    }
-
-    private static func deepLink(row: StowerSourceMessageRow) -> URL? {
-        // Group chats stay nil: there is no public per-chat URL, and an
-        // sms: compose link with the full recipient set CREATES A NEW group
-        // instead of matching the existing one (verified on real data,
-        // 2026-06-11). Callers must offer their own navigation fallback.
-        guard row.chat.style == 45 else {
-            return nil
-        }
-        // chat_identifier is the chat's canonical counterpart address. The
-        // participant list can hold several handles for one person (old
-        // email + current phone), so picking any of those can open the
-        // wrong conversation in Messages.
-        let address = row.chat.identifier.trimmingCharacters(in: .whitespaces)
-        // Email identifiers can carry reserved URL characters (#, ?, %) in the
-        // local part; interpolating them raw would split the address into a
-        // fragment/query and open the wrong conversation, so percent-encode first.
-        guard !address.isEmpty,
-            let encoded = address.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
-        else {
-            return nil
-        }
-        return URL(string: "sms:\(encoded)")
-    }
-
-    private static func groupID(for chat: StowerSourceChatRow) -> String {
-        if let guid = chat.guid, !guid.isEmpty {
-            return guid
-        }
-        if !chat.identifier.isEmpty {
-            return chat.identifier
-        }
-        return "chat:\(chat.rowID)"
     }
 }
