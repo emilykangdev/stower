@@ -163,10 +163,13 @@ internal enum StowerConversationStateExtractor {
         return count
     }
 
-    /// Keeps the latest add/remove event per `(chat, target)`.
+    /// Keeps the latest add/remove event per `(chat, raw part-qualified target)`.
     ///
-    /// A removed tapback thus nets out; deterministic on equal dates via the
-    /// reaction ROWID.
+    /// A removed tapback nets out; deterministic on equal dates via the reaction
+    /// ROWID. The key is the RAW target (`p:N/<guid>`), not the bare guid, so
+    /// reactions to distinct parts of one multipart message (e.g. photo +
+    /// caption) net independently — removing one part must not mark the whole
+    /// message un-reacted while another part is still active.
     private static func netReactions(
         _ reactions: [StowerSourceReactionRow]
     ) -> [ChatTargetKey: ReactionEvent] {
@@ -177,26 +180,25 @@ internal enum StowerConversationStateExtractor {
         }
         var net: [ChatTargetKey: ReactionEvent] = [:]
         for reaction in ordered {
-            guard let guid = reaction.associatedMessageGuid,
+            guard let target = reaction.associatedMessageGuid,
                 let date = StowerMessageDate.date(from: reaction.rawDate)
             else {
                 continue
             }
-            let key = ChatTargetKey(
-                chatID: reaction.chat.groupID,
-                target: StowerMessageQuery.normalizeAssociatedGUID(guid)
-            )
+            let key = ChatTargetKey(chatID: reaction.chat.groupID, target: target)
             net[key] = ReactionEvent(isActive: reaction.associatedMessageType < 3000, date: date)
         }
         return net
     }
 
+    /// Bare message GUIDs with at least one net-active reacted part, per chat.
     private static func activeTargetsByChat(
         _ net: [ChatTargetKey: ReactionEvent]
     ) -> [String: Set<String>] {
         var result: [String: Set<String>] = [:]
         for (key, event) in net where event.isActive {
-            result[key.chatID, default: []].insert(key.target)
+            let bareGUID = StowerMessageQuery.normalizeAssociatedGUID(key.target)
+            result[key.chatID, default: []].insert(bareGUID)
         }
         return result
     }

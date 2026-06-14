@@ -169,6 +169,21 @@ internal struct StowerConversationStateExtractorTests {
         #expect(state.userReactedToLastMessage == false)
     }
 
+    @Test("removing one reacted part does not un-react a multipart message")
+    internal func multipartReactionPartsNetIndependently() throws {
+        let chat = chat("m")
+        let states = extract(
+            activity: acts(activity("msg", daysAgo: 10, fromMe: false, chat: chat)),
+            reactions: reacts(
+                reaction(1, target: "p:0/msg", daysAgo: 9, type: 2000, chat: chat),
+                reaction(2, target: "p:1/msg", daysAgo: 8, type: 2000, chat: chat),
+                reaction(3, target: "p:1/msg", daysAgo: 7, type: 3000, chat: chat)
+            )
+        )
+        let state = try #require(states.first { $0.chatID == "m" })
+        #expect(state.userReactedToLastMessage)
+    }
+
     @Test("a prefixed target GUID clears only after normalization")
     internal func prefixedTargetClears() throws {
         let chat = chat("p")
