@@ -20,7 +20,10 @@ internal struct NoReplyCommand: AsyncParsableCommand {
     @Option(name: .long, help: "Days of history to read.")
     internal var days: Int = 180
 
-    @Option(name: .customLong("unanswered-days"), help: "Minimum days since their last message.")
+    @Option(
+        name: .customLong("unanswered-days"),
+        help: "Minimum days since their last message (must be <= --days)."
+    )
     internal var unansweredDays: Int
 
     @Option(name: .customLong("min-reciprocity"), help: "Minimum recent two-way exchanges.")

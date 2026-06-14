@@ -96,15 +96,17 @@ public actor StowerChatDatabaseReader {
     ///
     /// - Parameters:
     ///   - unansweredForDays: Minimum whole days since the counterpart's last
-    ///     act (UI presets are days). Must be `>= 0`.
+    ///     act (UI presets are days). Must be in `0...windowDays` — a threshold
+    ///     beyond the read window could only ever match unread history.
     ///   - minimumReciprocity: Minimum recent reciprocal exchanges for the
     ///     thread to count as a real two-way relationship. Must be `>= 0`.
     ///   - windowDays: How far back to read. Must be `>= 0`.
     ///   - now: The reference instant the age is measured against.
     /// - Returns: The candidates, ranked most-recently-unanswered first.
-    /// - Throws: `StowerMessagesError.invalidArgument` for a negative argument,
-    ///   or `.unreadableSource` if a snapshot read fails. Full Disk Access is
-    ///   surfaced earlier, at `init`, as `.fullDiskAccessMissing`.
+    /// - Throws: `StowerMessagesError.invalidArgument` for a negative argument or
+    ///   an `unansweredForDays` greater than `windowDays`, or `.unreadableSource`
+    ///   if a snapshot read fails. Full Disk Access is surfaced earlier, at
+    ///   `init`, as `.fullDiskAccessMissing`.
     public func noReplyCandidates(
         unansweredForDays: Int,
         minimumReciprocity: Int = 1,
@@ -116,6 +118,14 @@ public actor StowerChatDatabaseReader {
         }
         guard minimumReciprocity >= 0 else {
             throw StowerMessagesError.invalidArgument("minimumReciprocity must not be negative.")
+        }
+        // A threshold beyond the read window can only match history we never
+        // read, so it would silently return zero. Reject it: widen windowDays.
+        guard unansweredForDays <= windowDays else {
+            throw StowerMessagesError.invalidArgument(
+                "unansweredForDays (\(unansweredForDays)) must not exceed windowDays "
+                    + "(\(windowDays)); widen the read window to cover the threshold."
+            )
         }
         let states = try conversationStates(windowDays: windowDays, now: now)
         return StowerNoReplyPolicy.candidates(

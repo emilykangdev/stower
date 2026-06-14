@@ -165,6 +165,14 @@ internal struct StowerChatDatabaseReaderTests {
                 now: StowerFixtureDatabase.now
             )
         }
+        // A threshold beyond the read window could only match unread history.
+        await #expect(throws: StowerMessagesError.self) {
+            _ = try await reader.noReplyCandidates(
+                unansweredForDays: 200,
+                windowDays: 180,
+                now: StowerFixtureDatabase.now
+            )
+        }
     }
 
     private var contacts: StowerContactsResolver {

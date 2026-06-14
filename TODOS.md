@@ -40,3 +40,10 @@ Deferred work with context, written by the 2026-06-12 /autoplan review of
   names (same verify-first lesson as the `associated_message_guid` prefix). Also splits
   sticker-vs-photo. Decided coarse for v1 on 2026-06-13. Effort: S-M.
   Depends on: no-reply engine landed.
+- [ ] **`conversationStates` should decode only last-act bodies, not the whole window** —
+  it reuses `ingestWindow`, which `attributedBody`-decodes every message in the window just
+  to recover the last-act text per chat (cost ≈ one `stower index` ingest). Fine while the
+  only caller is the local `stower no-reply` measurement CLI; becomes a hot path once the Mac
+  app consumes the engine. Fix: read `activityRows` first, then fetch+decode only the
+  last-act message body per chat (and the title) instead of the full window. (Codex
+  ship-with-codex P2→P3, 2026-06-14.) Effort: M.

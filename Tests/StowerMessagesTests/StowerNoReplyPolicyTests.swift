@@ -55,6 +55,13 @@ internal struct StowerNoReplyPolicyTests {
         #expect(candidates(for: input, unansweredForDays: 14).map(\.chatID) == ["at"])
     }
 
+    @Test("negative arguments fail closed (no candidates), never inverting the gate")
+    internal func negativeArgumentsFailClosed() {
+        let qualifying = states(state(chatID: "a"))
+        #expect(candidates(for: qualifying, unansweredForDays: -1).isEmpty)
+        #expect(candidates(for: qualifying, unansweredForDays: 14, minimumReciprocity: -1).isEmpty)
+    }
+
     @Test("candidates rank most-recently-unanswered first, ties broken by chatID")
     internal func rankingDeterministic() {
         let input = states(

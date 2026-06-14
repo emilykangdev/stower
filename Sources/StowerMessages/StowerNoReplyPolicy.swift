@@ -70,10 +70,11 @@ public enum StowerNoReplyPolicy {
     /// - Parameters:
     ///   - states: Per-1:1 facts from `StowerConversationStateExtractor`.
     ///   - unansweredForDays: Minimum whole days since the counterpart's last
-    ///     act. Negative values yield no candidates rather than crashing; the
-    ///     reader validates the public boundary.
+    ///     act. A negative value yields no candidates rather than inverting the
+    ///     gate; the reader validates the public boundary.
     ///   - minimumReciprocity: Minimum recent reciprocal exchanges to count the
-    ///     thread as a real two-way relationship.
+    ///     thread as a real two-way relationship. A negative value yields no
+    ///     candidates.
     ///   - now: The reference instant the age is measured against.
     /// - Returns: The qualifying candidates, ranked most-recently-unanswered first.
     public static func candidates(
@@ -82,6 +83,12 @@ public enum StowerNoReplyPolicy {
         minimumReciprocity: Int = 1,
         now: Date
     ) -> [StowerNoReplyCandidate] {
+        // A negative threshold/floor would otherwise INVERT each gate (every
+        // age >= a negative threshold; every count >= a negative floor), so a
+        // misuse would surface MORE candidates, not fewer. Fail closed.
+        guard unansweredForDays >= 0, minimumReciprocity >= 0 else {
+            return []
+        }
         let threshold = Double(unansweredForDays) * 86_400
         return
             states
