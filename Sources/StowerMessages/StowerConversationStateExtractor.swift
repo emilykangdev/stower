@@ -163,13 +163,15 @@ internal enum StowerConversationStateExtractor {
         return count
     }
 
-    /// Keeps the latest add/remove event per `(chat, raw part-qualified target)`.
+    /// Keeps the latest add/remove event per `(chat, part, bare guid)`.
     ///
     /// A removed tapback nets out; deterministic on equal dates via the reaction
-    /// ROWID. The key is the RAW target (`p:N/<guid>`), not the bare guid, so
-    /// reactions to distinct parts of one multipart message (e.g. photo +
-    /// caption) net independently — removing one part must not mark the whole
-    /// message un-reacted while another part is still active.
+    /// ROWID. The key keeps the part index but canonicalizes the wrapper to the
+    /// bare guid, so two things hold at once: distinct parts of one multipart
+    /// message (photo + caption) net independently — removing one part must not
+    /// mark the whole message un-reacted while another part stays active — AND a
+    /// part's add/remove still net when stored under different encodings (an old
+    /// bare add vs a new `p:0/` remove across an OS migration).
     private static func netReactions(
         _ reactions: [StowerSourceReactionRow]
     ) -> [ChatTargetKey: ReactionEvent] {
@@ -185,7 +187,11 @@ internal enum StowerConversationStateExtractor {
             else {
                 continue
             }
-            let key = ChatTargetKey(chatID: reaction.chat.groupID, target: target)
+            let key = ChatTargetKey(
+                chatID: reaction.chat.groupID,
+                part: StowerMessageQuery.associatedGUIDPart(target),
+                guid: StowerMessageQuery.normalizeAssociatedGUID(target)
+            )
             net[key] = ReactionEvent(isActive: reaction.associatedMessageType < 3000, date: date)
         }
         return net
@@ -197,8 +203,7 @@ internal enum StowerConversationStateExtractor {
     ) -> [String: Set<String>] {
         var result: [String: Set<String>] = [:]
         for (key, event) in net where event.isActive {
-            let bareGUID = StowerMessageQuery.normalizeAssociatedGUID(key.target)
-            result[key.chatID, default: []].insert(bareGUID)
+            result[key.chatID, default: []].insert(key.guid)
         }
         return result
     }
@@ -220,7 +225,8 @@ internal enum StowerConversationStateExtractor {
 
     private struct ChatTargetKey: Hashable {
         let chatID: String
-        let target: String
+        let part: String
+        let guid: String
     }
 
     private struct ReactionEvent {

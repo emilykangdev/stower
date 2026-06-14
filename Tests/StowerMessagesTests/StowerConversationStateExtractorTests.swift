@@ -184,6 +184,20 @@ internal struct StowerConversationStateExtractorTests {
         #expect(state.userReactedToLastMessage)
     }
 
+    @Test("a part's add and remove net out across encoding wrappers (bare add, p:0 remove)")
+    internal func reactionNetsAcrossEncodings() throws {
+        let chat = chat("e")
+        let states = extract(
+            activity: acts(activity("e1", daysAgo: 10, fromMe: false, chat: chat)),
+            reactions: reacts(
+                reaction(1, target: "e1", daysAgo: 9, type: 2000, chat: chat),
+                reaction(2, target: "p:0/e1", daysAgo: 8, type: 3000, chat: chat)
+            )
+        )
+        let state = try #require(states.first { $0.chatID == "e" })
+        #expect(state.userReactedToLastMessage == false)
+    }
+
     @Test("a prefixed target GUID clears only after normalization")
     internal func prefixedTargetClears() throws {
         let chat = chat("p")
@@ -233,6 +247,14 @@ internal struct StowerConversationStateExtractorTests {
         #expect(StowerMessageQuery.normalizeAssociatedGUID("p:12/X-Y-Z") == "X-Y-Z")
         #expect(StowerMessageQuery.normalizeAssociatedGUID("bp:ABC") == "ABC")
         #expect(StowerMessageQuery.normalizeAssociatedGUID("ABC") == "ABC")
+    }
+
+    @Test("associatedGUIDPart reads the part index, defaulting bare/bp to part 0")
+    internal func partIndexParsing() {
+        #expect(StowerMessageQuery.associatedGUIDPart("p:0/ABC") == "0")
+        #expect(StowerMessageQuery.associatedGUIDPart("p:12/ABC") == "12")
+        #expect(StowerMessageQuery.associatedGUIDPart("bp:ABC") == "0")
+        #expect(StowerMessageQuery.associatedGUIDPart("ABC") == "0")
     }
 }
 

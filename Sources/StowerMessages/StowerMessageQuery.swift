@@ -117,6 +117,22 @@ internal enum StowerMessageQuery {
         return value
     }
 
+    /// The part index a `p:N/<guid>` reaction target points at.
+    ///
+    /// Returns `N` for `p:N/<guid>`; `"0"` for the bare and `bp:` shapes, which
+    /// carry no explicit part and target the message as a whole. Pairing this
+    /// with `normalizeAssociatedGUID` gives a `(part, guid)` identity that nets a
+    /// part's add/remove together — even across encoding migrations (an old bare
+    /// add vs a new `p:0/` remove) — while keeping distinct parts of one
+    /// multipart message independent. See `Docs/AppleEncodings.md` §1.
+    internal static func associatedGUIDPart(_ value: String) -> String {
+        guard value.hasPrefix("p:"), let slashIndex = value.firstIndex(of: "/") else {
+            return "0"
+        }
+        let start = value.index(value.startIndex, offsetBy: 2)
+        return String(value[start..<slashIndex])
+    }
+
     internal static func participants(
         database: Database,
         chatRowIDs: Set<Int64>
