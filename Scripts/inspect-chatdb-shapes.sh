@@ -12,7 +12,9 @@
 # SAFETY (see the plan's INV1-INV5):
 #   - The live Messages database is NEVER handed to the query engine. It is
 #     copied with `cp` (a filesystem copy, not a checkpoint-capable database
-#     connection); only the copy is opened, read-only + immutable.
+#     connection). Only the PRIVATE COPY is then opened — first to fold its own
+#     WAL frames in (a checkpoint of the copy, never the live DB), then read-only
+#     + immutable for the queries.
 #   - Every SELECT names ONLY structural columns (counts, balloon_bundle_id,
 #     associated_message_type, derived prefix heads, NULL-ness booleans). No
 #     message body, attributedBody, handle, chat identifier, or full GUID value
@@ -154,10 +156,10 @@ GUARD_PATTERN='([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})|(\+[0-9 ()-]{6,}
 GUARD_LONGTOKEN='[A-Za-z0-9_-]{25,}'
 
 # ── Read-only query helper ────────────────────────────────────────────────────
-# Opens the COPY only, read-only + immutable (immutable ignores any WAL, so no
-# shared-memory file is needed and the copy is treated as a frozen snapshot).
-# Falls back to plain -readonly if this sqlite3 build lacks URI filenames. The
-# live path is never passed here.
+# Opens the COPY only, read-only + immutable. The copy's WAL was already folded
+# in by the checkpoint above, so immutable's WAL-skipping is now harmless and no
+# shared-memory file is needed. Falls back to plain -readonly if this sqlite3
+# build lacks URI filenames. The live path is never passed here.
 run_sql() {
     local db="$1" query="$2"
     if sqlite3 -readonly "file:${db}?immutable=1" "$query" 2>/dev/null; then
@@ -304,8 +306,7 @@ copy_err="$(cp "$DB_LIVE" "$DBCOPY" 2>&1 1>/dev/null)" || {
     exit 1
 }
 
-# Copy the WAL/SHM sidecars too (immutable=1 ignores them, but keep the snapshot
-# complete in case the fallback -readonly path is used).
+# Copy the WAL/SHM sidecars too, so the checkpoint below has the frames to fold.
 for suffix in -wal -shm; do
     if [ -f "${DB_LIVE}${suffix}" ]; then
         cp "${DB_LIVE}${suffix}" "${DBCOPY}${suffix}" || {
@@ -314,6 +315,19 @@ for suffix in -wal -shm; do
         }
     fi
 done
+
+# Fold the copied WAL frames into the main copy BEFORE querying. immutable=1 (and
+# a read-only open of a WAL database without shared memory) does NOT replay the
+# WAL, so un-checkpointed recent rows would be silently omitted from every count.
+# `journal_mode=DELETE` checkpoints the frames in and deletes the sidecars. This
+# opens the PRIVATE COPY writably only — the live chat.db is never touched —
+# mirroring StowerChatSnapshot.recoverWriteAheadLog.
+if [ -f "${DBCOPY}-wal" ]; then
+    if ! sqlite3 "$DBCOPY" 'PRAGMA journal_mode=DELETE;' >/dev/null 2>&1; then
+        printf 'WARNING: could not checkpoint the copied WAL; very recent rows may\n' >&2
+        printf '  be omitted from the counts below.\n' >&2
+    fi
+fi
 
 # ── Diagnose mode: report which section trips the guard, then stop ────────────
 if [ "$MODE" = diagnose ]; then
