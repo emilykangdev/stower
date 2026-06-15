@@ -69,12 +69,15 @@ internal enum StowerMessageQuery {
         )
     }
 
-    /// Reads the user's own tapback rows in the window, each joined to its chat.
+    /// Reads both sides' tapback rows in the window, each joined to its chat.
     ///
-    /// Restricted to `is_from_me = 1` (only the user's reactions establish their
-    /// engagement) and the reaction range `2000–3999` (added and removed). The
+    /// Both directions are read so the extractor can net them separately: the
+    /// user's reactions (`is_from_me = 1`) establish engagement and clear the
+    /// user's view of a thread, while the counterpart's reactions
+    /// (`is_from_me = 0`) clear a Ghosted candidate (a 👍 on your last message).
+    /// Restricted to the reaction range `2000–3999` (added and removed); the
     /// `(date, ROWID)` order makes add/remove netting deterministic.
-    internal static func myReactionRows(
+    internal static func reactionRows(
         database: Database,
         since date: Date
     ) throws -> [StowerSourceReactionRow] {
@@ -91,8 +94,7 @@ internal enum StowerMessageQuery {
                 FROM message m
                 JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
                 JOIN chat c ON c.ROWID = cmj.chat_id
-                WHERE m.is_from_me = 1
-                  AND m.associated_message_type BETWEEN 2000 AND 3999
+                WHERE m.associated_message_type BETWEEN 2000 AND 3999
                   AND \(referenceSecondsExpression) >= ?
                 ORDER BY m.date ASC, m.ROWID ASC
                 """,

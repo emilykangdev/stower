@@ -80,7 +80,7 @@ internal final class StowerChatSnapshot {
         since date: Date
     ) throws -> [StowerSourceReactionRow] {
         try databaseQueue.read { database in
-            try StowerMessageQuery.myReactionRows(database: database, since: date)
+            try StowerMessageQuery.reactionRows(database: database, since: date)
         }
     }
 

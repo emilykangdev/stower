@@ -5,72 +5,79 @@ import Testing
 
 @Suite("StowerNoReplyPolicy")
 internal struct StowerNoReplyPolicyTests {
-    @Test("a recent two-way thread the user owes becomes a candidate")
+    @Test("a recent two-way thread the user owes becomes a row")
     internal func qualifyingThreadSurfaces() {
-        let result = candidates(for: states(state(chatID: "a")))
+        let result = neglected(for: [judged(state(chatID: "a"))])
         #expect(result.map(\.chatID) == ["a"])
     }
 
     @Test("a group / non-1:1 state never appears")
     internal func groupExcluded() {
-        let result = candidates(for: states(state(chatID: "g", isOneToOne: false)))
+        let result = neglected(for: [judged(state(chatID: "g", isOneToOne: false))])
         #expect(result.isEmpty)
     }
 
     @Test("the mutuality gate excludes below minimumReciprocity, includes at or above")
     internal func mutualityGate() {
-        let pair = states(
-            state(chatID: "lone", recentExchangeCount: 0),
-            state(chatID: "mutual", recentExchangeCount: 2)
-        )
-        #expect(candidates(for: pair).map(\.chatID) == ["mutual"])
-        #expect(candidates(for: pair, minimumReciprocity: 2).map(\.chatID) == ["mutual"])
-        let one = states(state(chatID: "one", recentExchangeCount: 1))
-        #expect(candidates(for: one, minimumReciprocity: 2).isEmpty)
+        let pair = [
+            judged(state(chatID: "lone", recentExchangeCount: 0)),
+            judged(state(chatID: "mutual", recentExchangeCount: 2))
+        ]
+        #expect(neglected(for: pair).map(\.chatID) == ["mutual"])
+        #expect(neglected(for: pair, minimumReciprocity: 2).map(\.chatID) == ["mutual"])
+        let one = [judged(state(chatID: "one", recentExchangeCount: 1))]
+        #expect(neglected(for: one, minimumReciprocity: 2).isEmpty)
     }
 
     @Test("a thread whose true last act is the user's is excluded")
     internal func userLastActExcluded() {
-        #expect(candidates(for: states(state(chatID: "u", lastActor: .user))).isEmpty)
+        #expect(neglected(for: [judged(state(chatID: "u", lastActor: .user))]).isEmpty)
     }
 
     @Test("a tapback-cleared thread is excluded")
     internal func reactedExcluded() {
-        #expect(candidates(for: states(state(chatID: "x", userReactedToLastMessage: true))).isEmpty)
+        let cleared = judged(state(chatID: "x", userReactedToLastMessage: true))
+        #expect(neglected(for: [cleared]).isEmpty)
     }
 
     @Test("a non-text last act is surfaced with its kind and nil text, not suppressed")
     internal func nonTextSurfaced() throws {
-        let input = states(
-            state(chatID: "photo", lastMessageKind: .attachment, lastMessageText: nil)
-        )
-        let candidate = try #require(candidates(for: input).first)
-        #expect(candidate.lastMessageKind == .attachment)
-        #expect(candidate.lastMessageText == nil)
+        let input = [
+            judged(
+                state(chatID: "photo", lastMessageKind: .attachment, lastMessageText: nil),
+                expectsReply: false
+            )
+        ]
+        let row = try #require(neglected(for: input).first)
+        #expect(row.lastMessageKind == .attachment)
+        #expect(row.lastMessageText == nil)
     }
 
     @Test("threshold honored exactly: age below is excluded, at or above is included")
     internal func thresholdBoundary() {
-        let input = states(state(chatID: "below", daysAgo: 13), state(chatID: "at", daysAgo: 14))
-        #expect(candidates(for: input, unansweredForDays: 14).map(\.chatID) == ["at"])
+        let input = [
+            judged(state(chatID: "below", daysAgo: 13)),
+            judged(state(chatID: "at", daysAgo: 14))
+        ]
+        #expect(neglected(for: input, unansweredForDays: 14).map(\.chatID) == ["at"])
     }
 
-    @Test("negative arguments fail closed (no candidates), never inverting the gate")
+    @Test("negative arguments fail closed (no rows), never inverting the gate")
     internal func negativeArgumentsFailClosed() {
-        let qualifying = states(state(chatID: "a"))
-        #expect(candidates(for: qualifying, unansweredForDays: -1).isEmpty)
-        #expect(candidates(for: qualifying, unansweredForDays: 14, minimumReciprocity: -1).isEmpty)
+        let qualifying = [judged(state(chatID: "a"))]
+        #expect(neglected(for: qualifying, unansweredForDays: -1).isEmpty)
+        #expect(neglected(for: qualifying, unansweredForDays: 14, minimumReciprocity: -1).isEmpty)
     }
 
-    @Test("candidates rank most-recently-unanswered first, ties broken by chatID")
-    internal func rankingDeterministic() {
-        let input = states(
-            state(chatID: "older", daysAgo: 30),
-            state(chatID: "tie-b", daysAgo: 20),
-            state(chatID: "tie-a", daysAgo: 20),
-            state(chatID: "newer", daysAgo: 16)
-        )
-        #expect(candidates(for: input).map(\.chatID) == ["newer", "tie-a", "tie-b", "older"])
+    @Test("ranks expectsReply-true first, then most-recently-unanswered, ties by chatID")
+    internal func rankingTwoTier() {
+        let input = [
+            judged(state(chatID: "chitchat", daysAgo: 15), expectsReply: false),
+            judged(state(chatID: "older-ask", daysAgo: 30), expectsReply: true),
+            judged(state(chatID: "newer-ask", daysAgo: 16), expectsReply: true)
+        ]
+        // Both asks rank above the (even newer) chit-chat; never drops a row.
+        #expect(neglected(for: input).map(\.chatID) == ["newer-ask", "older-ask", "chitchat"])
     }
 }
 
@@ -79,20 +86,31 @@ internal struct StowerNoReplyPolicyTests {
 extension StowerNoReplyPolicyTests {
     private var now: Date { Date(timeIntervalSinceReferenceDate: 800_000_000) }
 
-    fileprivate func states(_ values: StowerConversationState...) -> [StowerConversationState] {
-        values
-    }
-
-    fileprivate func candidates(
-        for states: [StowerConversationState],
+    fileprivate func neglected(
+        for judged: [StowerJudgedConversation],
         unansweredForDays: Int = 14,
         minimumReciprocity: Int = 1
-    ) -> [StowerNoReplyCandidate] {
-        StowerNoReplyPolicy.candidates(
-            from: states,
+    ) -> [StowerDebtItem] {
+        StowerNoReplyPolicy.neglected(
+            from: judged,
             unansweredForDays: unansweredForDays,
             minimumReciprocity: minimumReciprocity,
             now: now
+        )
+    }
+
+    fileprivate func judged(
+        _ state: StowerConversationState,
+        expectsReply: Bool = true,
+        confidence: Double = 1.0
+    ) -> StowerJudgedConversation {
+        StowerJudgedConversation(
+            state: state,
+            verdict: StowerReplyExpectation(
+                expectsReply: expectsReply,
+                replyExpectationConfidence: confidence,
+                verdictSource: .heuristic
+            )
         )
     }
 
@@ -102,6 +120,7 @@ extension StowerNoReplyPolicyTests {
         lastActor: StowerConversationLastActor = .counterpart,
         recentExchangeCount: Int = 2,
         userReactedToLastMessage: Bool = false,
+        counterpartReactedToLastMessage: Bool = false,
         lastMessageKind: StowerConversationLastMessageKind = .text,
         lastMessageText: String? = "hi",
         daysAgo: Double = 30
@@ -120,6 +139,7 @@ extension StowerNoReplyPolicyTests {
             lastMessageTimestamp: now.addingTimeInterval(-daysAgo * 86_400),
             recentExchangeCount: recentExchangeCount,
             userReactedToLastMessage: userReactedToLastMessage,
+            counterpartReactedToLastMessage: counterpartReactedToLastMessage,
             deepLink: nil
         )
     }

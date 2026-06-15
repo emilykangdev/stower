@@ -1,107 +1,40 @@
 import Foundation
 
-/// A 1:1 conversation where the counterpart acted last and the user has not
-/// responded — the surfaced subset of a `StowerConversationState`.
+/// The Neglected lens: the counterpart acted last and you haven't replied.
 ///
-/// A non-text last act (photo/sticker/attachment) is surfaced with its
-/// `lastMessageKind` set and `lastMessageText == nil`, never suppressed. The UI
-/// derives the unanswered duration from `lastMessageTimestamp`.
-public struct StowerNoReplyCandidate: Sendable, Equatable {
-    /// The stable chat identity.
-    public let chatID: String
-
-    /// The resolved conversation title.
-    public let chatTitle: String
-
-    /// The resolved counterpart name, or the raw handle when Contacts has none.
-    public let counterpart: String
-
-    /// The counterpart's raw identifier; a display fallback, not a dedupe key.
-    public let counterpartHandle: String
-
-    /// The kind of the counterpart's last act.
-    public let lastMessageKind: StowerConversationLastMessageKind
-
-    /// The text of the last act, or `nil` for a non-text last act.
-    public let lastMessageText: String?
-
-    /// The timestamp of the unanswered last act.
-    public let lastMessageTimestamp: Date
-
-    /// A best-effort Messages deep link, or `nil` when none can be formed.
-    public let deepLink: URL?
-
-    /// Creates a no-reply candidate.
-    public init(
-        chatID: String,
-        chatTitle: String,
-        counterpart: String,
-        counterpartHandle: String,
-        lastMessageKind: StowerConversationLastMessageKind,
-        lastMessageText: String?,
-        lastMessageTimestamp: Date,
-        deepLink: URL?
-    ) {
-        self.chatID = chatID
-        self.chatTitle = chatTitle
-        self.counterpart = counterpart
-        self.counterpartHandle = counterpartHandle
-        self.lastMessageKind = lastMessageKind
-        self.lastMessageText = lastMessageText
-        self.lastMessageTimestamp = lastMessageTimestamp
-        self.deepLink = deepLink
-    }
-}
-
-/// The first policy over conversation-state facts: the "you haven't replied" pass.
-///
-/// Pure and stateless. Future framings (e.g. "you're drifting from this
-/// person") are separate policies over the same `StowerConversationState`
-/// facts, so they need no engine re-cut.
-public enum StowerNoReplyPolicy {
-    /// Selects the 1:1 conversations the user owes a reply to.
+/// Pure and stateless. RANKS, never filters on the verdict — they messaged you
+/// and you owe at least an acknowledgment regardless, so every qualifying row
+/// stays; `expectsReply` only floats real questions above the chit-chat. The
+/// structural gate is unchanged from the original no-reply pass (1:1,
+/// mutuality, counterpart-last, not tapped back, unanswered long enough).
+internal enum StowerNoReplyPolicy {
+    /// Selects and ranks the conversations you owe a reply to.
     ///
-    /// Applies, per state: one-to-one → recent-reciprocity mutuality gate
-    /// (`recentExchangeCount >= minimumReciprocity`) → counterpart acted last →
-    /// the user has not tapped back the last act → unanswered for at least
-    /// `unansweredForDays` days. Results are ranked most-recently-unanswered
-    /// first, with deterministic ties (older timestamp loses, then `chatID`).
-    ///
-    /// - Parameters:
-    ///   - states: Per-1:1 facts from `StowerConversationStateExtractor`.
-    ///   - unansweredForDays: Minimum whole days since the counterpart's last
-    ///     act. A negative value yields no candidates rather than inverting the
-    ///     gate; the reader validates the public boundary.
-    ///   - minimumReciprocity: Minimum recent reciprocal exchanges to count the
-    ///     thread as a real two-way relationship. A negative value yields no
-    ///     candidates.
-    ///   - now: The reference instant the age is measured against.
-    /// - Returns: The qualifying candidates, ranked most-recently-unanswered first.
-    public static func candidates(
-        from states: [StowerConversationState],
+    /// Ranks two-tier: `expectsReply` first, then most-recently-unanswered, with
+    /// deterministic ties (older timestamp loses, then `chatID`). A negative
+    /// threshold or floor fails closed (no rows) rather than inverting the gate.
+    internal static func neglected(
+        from judged: [StowerJudgedConversation],
         unansweredForDays: Int,
-        minimumReciprocity: Int = 1,
+        minimumReciprocity: Int,
         now: Date
-    ) -> [StowerNoReplyCandidate] {
-        // A negative threshold/floor would otherwise INVERT each gate (every
-        // age >= a negative threshold; every count >= a negative floor), so a
-        // misuse would surface MORE candidates, not fewer. Fail closed.
+    ) -> [StowerDebtItem] {
         guard unansweredForDays >= 0, minimumReciprocity >= 0 else {
             return []
         }
         let threshold = Double(unansweredForDays) * 86_400
         return
-            states
+            judged
             .filter {
                 qualifies(
-                    $0,
+                    $0.state,
                     minimumReciprocity: minimumReciprocity,
                     threshold: threshold,
                     now: now
                 )
             }
-            .sorted(by: rank)
-            .map(candidate)
+            .sorted(by: neglectedRank)
+            .map { StowerDebtItem(state: $0.state, verdict: $0.verdict) }
     }
 
     private static func qualifies(
@@ -117,7 +50,19 @@ public enum StowerNoReplyPolicy {
             && now.timeIntervalSince(state.lastMessageTimestamp) >= threshold
     }
 
-    private static func rank(
+    private static func neglectedRank(
+        _ lhs: StowerJudgedConversation,
+        _ rhs: StowerJudgedConversation
+    ) -> Bool {
+        if lhs.verdict.expectsReply != rhs.verdict.expectsReply {
+            return lhs.verdict.expectsReply
+        }
+        return rank(lhs.state, rhs.state)
+    }
+
+    /// The total recency order shared with `StowerGhostedPolicy` (M-E2): newer
+    /// unanswered first, ties broken by `chatID` for a stable sort.
+    internal static func rank(
         _ lhs: StowerConversationState,
         _ rhs: StowerConversationState
     ) -> Bool {
@@ -125,18 +70,5 @@ public enum StowerNoReplyPolicy {
             return lhs.lastMessageTimestamp > rhs.lastMessageTimestamp
         }
         return lhs.chatID < rhs.chatID
-    }
-
-    private static func candidate(_ state: StowerConversationState) -> StowerNoReplyCandidate {
-        StowerNoReplyCandidate(
-            chatID: state.chatID,
-            chatTitle: state.chatTitle,
-            counterpart: state.counterpart,
-            counterpartHandle: state.counterpartHandle,
-            lastMessageKind: state.lastMessageKind,
-            lastMessageText: state.lastMessageText,
-            lastMessageTimestamp: state.lastMessageTimestamp,
-            deepLink: state.deepLink
-        )
     }
 }

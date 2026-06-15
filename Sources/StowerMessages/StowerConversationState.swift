@@ -79,6 +79,13 @@ public struct StowerConversationState: Sendable, Equatable {
     /// Whether the user has an active tapback on the true last act.
     public let userReactedToLastMessage: Bool
 
+    /// Whether the counterpart has an active tapback on the true last act.
+    ///
+    /// Symmetric to `userReactedToLastMessage`. The Ghosted gate reads it: a
+    /// counterpart 👍 on your last message means they acknowledged it, so it is
+    /// not a ghost even though they sent no text reply.
+    public let counterpartReactedToLastMessage: Bool
+
     /// A best-effort Messages deep link, or `nil` when none can be formed.
     public let deepLink: URL?
 
@@ -97,6 +104,7 @@ public struct StowerConversationState: Sendable, Equatable {
         lastMessageTimestamp: Date,
         recentExchangeCount: Int,
         userReactedToLastMessage: Bool,
+        counterpartReactedToLastMessage: Bool,
         deepLink: URL?
     ) {
         self.chatID = chatID
@@ -112,6 +120,7 @@ public struct StowerConversationState: Sendable, Equatable {
         self.lastMessageTimestamp = lastMessageTimestamp
         self.recentExchangeCount = recentExchangeCount
         self.userReactedToLastMessage = userReactedToLastMessage
+        self.counterpartReactedToLastMessage = counterpartReactedToLastMessage
         self.deepLink = deepLink
     }
 }

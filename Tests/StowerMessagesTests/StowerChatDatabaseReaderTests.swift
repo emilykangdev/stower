@@ -107,20 +107,16 @@ internal struct StowerChatDatabaseReaderTests {
         #expect(byChat["chat-attach-react"]?.counterpart == "+14155550604")
     }
 
-    @Test("noReplyCandidates applies mutuality, clearing, and the threshold over the fixture")
-    internal func noReplyCandidates() async throws {
+    @Test("the Neglected lens applies mutuality, clearing, and the threshold over the fixture")
+    internal func neglectedOverFixture() async throws {
         let fixture = try StowerFixtureDatabase()
         defer { fixture.remove() }
-        let reader = try StowerChatDatabaseReader(
-            sourceURL: fixture.databaseURL,
-            contactsResolver: contacts
-        )
 
-        let candidates = try await reader.noReplyCandidates(
-            unansweredForDays: 1,
+        let board = try await provider(over: fixture).loadDebtBoard(
+            config: StowerDebtConfig(unansweredForDays: 1, judgeMode: .heuristic),
             now: StowerFixtureDatabase.now
         )
-        let ids = Set(candidates.map(\.chatID))
+        let ids = Set(board.neglected.map(\.chatID))
 
         // Surfaced: netted-out reaction, old reaction, reaction-mutuality, photo, system.
         #expect(ids.contains("chat-removed"))
@@ -136,43 +132,52 @@ internal struct StowerChatDatabaseReaderTests {
         #expect(!ids.contains("chat-stale"))
         // Groups never appear.
         #expect(!ids.contains("chat-group"))
-        // Ranked most-recently-unanswered first.
-        #expect(
-            candidates.map(\.lastMessageTimestamp)
-                == candidates.map(\.lastMessageTimestamp).sorted(by: >)
-        )
+        // Ranked: expectsReply-true first, then most-recently-unanswered.
+        let expectsFirst =
+            board.neglected.map(\.expectsReply)
+            == board.neglected.map(\.expectsReply).sorted(by: { $0 && !$1 })
+        #expect(expectsFirst)
     }
 
-    @Test("noReplyCandidates rejects negative arguments")
-    internal func noReplyCandidatesValidatesArguments() async throws {
+    @Test("negative knobs fail closed to an empty board, never inverting a gate")
+    internal func negativeKnobsFailClosed() async throws {
         let fixture = try StowerFixtureDatabase()
         defer { fixture.remove() }
-        let reader = try StowerChatDatabaseReader(
-            sourceURL: fixture.databaseURL,
-            contactsResolver: contacts
-        )
+        let prov = provider(over: fixture)
 
-        await #expect(throws: StowerMessagesError.self) {
-            _ = try await reader.noReplyCandidates(
-                unansweredForDays: -1,
-                now: StowerFixtureDatabase.now
-            )
-        }
-        await #expect(throws: StowerMessagesError.self) {
-            _ = try await reader.noReplyCandidates(
+        let negativeDays = try await prov.loadDebtBoard(
+            config: StowerDebtConfig(unansweredForDays: -1, judgeMode: .heuristic),
+            now: StowerFixtureDatabase.now
+        )
+        #expect(negativeDays.neglected.isEmpty)
+        #expect(negativeDays.ghosted.isEmpty)
+
+        let negativeReciprocity = try await prov.loadDebtBoard(
+            config: StowerDebtConfig(
                 unansweredForDays: 1,
                 minimumReciprocity: -1,
-                now: StowerFixtureDatabase.now
-            )
-        }
-        // A threshold beyond the read window could only match unread history.
-        await #expect(throws: StowerMessagesError.self) {
-            _ = try await reader.noReplyCandidates(
-                unansweredForDays: 200,
-                windowDays: 180,
-                now: StowerFixtureDatabase.now
-            )
-        }
+                judgeMode: .heuristic
+            ),
+            now: StowerFixtureDatabase.now
+        )
+        #expect(negativeReciprocity.neglected.isEmpty)
+        #expect(negativeReciprocity.ghosted.isEmpty)
+    }
+
+    private func provider(
+        over fixture: StowerFixtureDatabase,
+        windowDays: Int = 180
+    ) -> StowerDebtBoardProvider {
+        let url = fixture.databaseURL
+        let resolver = contacts
+        return StowerDebtBoardProvider(
+            readerFactory: {
+                try StowerChatDatabaseReader(sourceURL: url, contactsResolver: resolver)
+            },
+            languageModelJudge: nil,
+            cache: nil,
+            windowDays: windowDays
+        )
     }
 
     private var contacts: StowerContactsResolver {

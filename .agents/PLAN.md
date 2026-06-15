@@ -139,7 +139,7 @@ Approaches that were on the table and got ruled out. Logging these here stops th
 
 ## Architecture Overview
 
-<ASCII diagram of the data/control flow. Show: single source of truth → call sites → component(s) → rendered surface(s). Mark who reads vs. writes. Use it to make the symmetry (or asymmetry) visible at a glance.>
+<MERMAID diagram of the data/control flow. Show: single source of truth → call sites → component(s) → rendered surface(s). Mark who reads vs. writes. Use it to make the symmetry (or asymmetry) visible at a glance.>
 
 ```
               <singleSourceOfTruth()>
@@ -156,6 +156,10 @@ Approaches that were on the table and got ruled out. Logging these here stops th
 ```
 
 <1–2 sentences describing the shape — why it's small, what stays simple, and which boundary is the irreducible complexity.>
+
+## Lifecycle Diagram 
+
+Mermaid diagram of changes that will be made to existing lifecycle based on this plan.
 
 ## Tasks (in implementation order)
 

@@ -30,26 +30,35 @@ internal struct NoReplyCommand: AsyncParsableCommand {
     internal var minReciprocity: Int = 1
 
     internal func run() async throws {
+        guard unansweredDays <= days else {
+            stowerStandardError(
+                "--unanswered-days (\(unansweredDays)) must not exceed --days (\(days))."
+            )
+            throw ExitCode.failure
+        }
         stowerWarnIfContactsDenied()
-        let candidates = try await fetch()
-        if candidates.isEmpty {
+        let items = try await fetch()
+        if items.isEmpty {
             print("no-reply: no conversations match.")
             return
         }
-        print("no-reply: \(candidates.count) conversation(s) awaiting your reply.")
-        for candidate in candidates {
-            print(line(for: candidate))
+        print("no-reply: \(items.count) conversation(s) awaiting your reply.")
+        for item in items {
+            print(line(for: item))
         }
     }
 
-    private func fetch() async throws -> [StowerNoReplyCandidate] {
+    private func fetch() async throws -> [StowerDebtItem] {
         do {
-            let reader = try StowerChatDatabaseReader()
-            return try await reader.noReplyCandidates(
+            // The CLI is a structural + heuristic measurement vehicle: no cache,
+            // no on-device model, deterministic output.
+            let provider = StowerDebtBoardProvider(cacheURL: nil, windowDays: days)
+            let config = StowerDebtConfig(
                 unansweredForDays: unansweredDays,
                 minimumReciprocity: minReciprocity,
-                windowDays: days
+                judgeMode: .heuristic
             )
+            return try await provider.loadDebtBoard(config: config, now: Date()).neglected
         } catch let error as StowerMessagesError {
             if case .fullDiskAccessMissing(let path) = error {
                 stowerReportFullDiskAccess(path: path)
@@ -60,17 +69,17 @@ internal struct NoReplyCommand: AsyncParsableCommand {
         }
     }
 
-    private func line(for candidate: StowerNoReplyCandidate) -> String {
-        let name = stowerSanitizedForTerminal(candidate.counterpart)
-        let age = ageDescription(since: candidate.lastMessageTimestamp)
-        return "  \(name) · \(age) · \(snippet(for: candidate))"
+    private func line(for item: StowerDebtItem) -> String {
+        let name = stowerSanitizedForTerminal(item.counterpart)
+        let age = ageDescription(since: item.lastMessageTimestamp)
+        return "  \(name) · \(age) · \(snippet(for: item))"
     }
 
-    private func snippet(for candidate: StowerNoReplyCandidate) -> String {
-        if let text = candidate.lastMessageText {
+    private func snippet(for item: StowerDebtItem) -> String {
+        if let text = item.lastMessageText {
             return stowerSanitizedForTerminal(String(text.prefix(60)))
         }
-        switch candidate.lastMessageKind {
+        switch item.lastMessageKind {
         case .text, .link:
             return "(no preview)"
         case .attachment:
