@@ -207,6 +207,28 @@ internal struct StowerDebtBoardProviderTests {
         #expect(spy.callCount > 0)
     }
 
+    @Test("a corrupt cache file is rebuilt, not left permanently disabling verdicts (M9)")
+    internal func openCacheRebuildsCorruptStore() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stower-verdict-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent(StowerReplyVerdictCache.fileName)
+        try Data("this is not a sqlite database".utf8).write(to: url)
+
+        // openCache must drop the unusable file and return a working cache — not
+        // nil, which would dead-disable model verdicts for the provider's life.
+        let cache = try #require(StowerDebtBoardProvider.openCache(at: url))
+        let verdict = StowerReplyExpectation(
+            expectsReply: true,
+            replyExpectationConfidence: 0.7,
+            verdictSource: .languageModel
+        )
+        try await cache.upsert(judgeVersion: "v1", guid: "g1", inputHash: "h1", verdict: verdict)
+        let fetched = try await cache.existing(judgeVersion: "v1", guid: "g1", inputHash: "h1")
+        #expect(fetched?.expectsReply == true)
+    }
+
     // MARK: - Helpers
 
     private func makeProvider(

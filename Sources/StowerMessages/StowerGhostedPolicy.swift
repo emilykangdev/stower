@@ -23,7 +23,13 @@ internal enum StowerGhostedPolicy {
         ghostGateThreshold: Double,
         now: Date
     ) -> [StowerDebtItem] {
-        guard unansweredForDays >= 0, minimumReciprocity >= 0 else {
+        // A negative threshold would make `confidence >= threshold` always true,
+        // collapsing the M1 confidence gate so confident non-asks leak in; a
+        // non-finite one corrupts the comparison. Fail closed rather than invert
+        // the gate. (A threshold above 1 just yields an empty board — also safe.)
+        guard unansweredForDays >= 0, minimumReciprocity >= 0,
+            ghostGateThreshold.isFinite, ghostGateThreshold >= 0
+        else {
             return []
         }
         let threshold = Double(unansweredForDays) * 86_400

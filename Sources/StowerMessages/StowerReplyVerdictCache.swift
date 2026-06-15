@@ -38,7 +38,11 @@ internal actor StowerReplyVerdictCache {
     /// Tests pass a bumped version to exercise the cache-drop path.
     internal init(path: String, schemaVersion: Int) throws {
         var configuration = Configuration()
-        configuration.busyMode = .timeout(5)
+        // The board must feel instant (M8: load p50 < 300ms) and never block on
+        // the disposable cache (M9). A long busy wait would let a locked store
+        // stall first paint, so cap it well under the budget: on contention a read
+        // fails fast → heuristic for that row, and a write retries next refresh.
+        configuration.busyMode = .timeout(0.1)
         try self.init(
             databaseQueue: DatabaseQueue(path: path, configuration: configuration),
             schemaVersion: schemaVersion

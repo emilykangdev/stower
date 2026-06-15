@@ -3,109 +3,142 @@
 The product-level "why" and job-to-be-done for Stower. Subsystem docs
 (`StowerCore.md`, `StowerMessages.md`, …) describe *how*; this describes *what
 we are building and for whom*, so scope decisions trace back to a goal instead
-of drifting. Last clarified 2026-06-09.
+of drifting. Last clarified 2026-06-15.
+
+> **Reframed 2026-06-15.** v0 is the **relationship-debt board** — who you owe,
+> who ghosted you. Fast search + an in-app thread read are the **capability** you
+> act through, not the product. (Through 2026-06-09 this doc had it inverted —
+> search/read as the product, triage explicitly cut. Every commit since built the
+> debt board; the doc now follows the code.)
 
 ## What Stower is (one line)
 
-A paid **consumer** Mac app that gives you a faster way to **get to and read
-your iMessage conversations** than Apple's Messages app.
+Stower will help you reason and take action based on your Photos and especially your iMessages. In the initial V0 release, it'll just focus on nailing iMessages. 
+
+A paid **consumer** Mac app that shows you which iMessage relationships you're
+letting slip — who you owe a reply, who ghosted you — and drops you straight into
+the thread to act.
 
 ## The core problem
 
-Apple Messages is one long, recency-sorted list. To reach a specific person or
-group you scroll — and its search is slow, exact-match, and badly ranked across
-threads. There's no fast "jump straight to that conversation." For someone who
-texts a lot, navigation and recall are a daily papercut.
+Apple Messages is one recency-sorted list with **no memory of intent.** The asks
+you meant to answer scroll off the top and you forget them; the people you texted
+who never wrote back disappear just the same. A thread leaving the top of the
+list isn't "handled" — it's just *out of sight*. Relationships decay not because
+you stopped caring but because the inbox forgets, and there's no surface that
+says "you still owe this person." (And when you *do* remember someone, reaching
+their thread still means scrolling or fighting a slow, exact-match search.)
 
 ## Job to be done (v1)
 
-> "Get me to the right conversation and let me read it — fast — without
-> scrolling Apple's endless list."
+> "Show me who I'm dropping the ball on, and get me into that conversation to
+> fix it."
 
-- **Entry:** type a name or a snippet → land directly in the 1:1 or group
-  thread.
-- **Payoff:** read the conversation *inside Stower*.
-- **Recall** ("what's the address Sarah sent? what did the contractor quote?")
-  falls out of the same machinery — it's a side effect, not a separate product.
+Two lenses over your 1:1 conversations:
 
-Search is the *entry mechanism*, not the product. The product is fast
-navigation + a readable thread view.
+- **Neglected** — the other person acted last; you owe at least an
+  acknowledgment. Ranked, never hidden (a real question floats above chit-chat).
+- **Ghosted** — you acted last on a *real ask* and got no reply. Gated to the
+  genuine asks (an on-device model decides "this expected an answer" vs small
+  talk), so it surfaces signal, not every "I texted last."
+
+The **act**: tap a row → read the thread *inside Stower* → (until v2) jump to
+Messages.app to reply. The **capability that serves it**: fast search +
+jump-to-conversation, so you can also reach any thread directly and so recall
+("what address did Sarah send?") falls out of the same machinery. Search is a
+power tool *within* the product; the product is the debt board.
 
 ## Who it's for — and not for
 
-- **For:** individual consumers who text a lot and find Messages.app's
-  navigation and search frustrating.
+- **For:** individual consumers who text a lot and quietly worry they're letting
+  people slip — the dropped reply, the friend they ghosted without meaning to.
 - **Not for:** businesses / high-volume customer comms. Owners have different
-  needs and already use email + dedicated B2B services to manage customer and
-  supply-chain interactions. Different audience, different technology — not our
-  target.
+  needs and already use email + dedicated B2B services. Different audience,
+  different technology — not our target.
 
 ## Success bar for v1
 
-**Craft and visible speed**, not AI depth. It must feel instant and rank
-obviously-right, clearly beating Messages.app's built-in search. The reason to
-leave the free built-in app is that ours is *noticeably* faster and saner — so
-the 6 days go into execution, not capability surface.
+Two bars, both required:
+
+1. **The judgment is trustworthy.** The debt board is only worth opening if it
+   understands intent — "wondering if you're free Saturday" with no `?` is a real
+   ask; "lol" is not. Apple's on-device **FoundationModels** judge supplies that
+   (heuristic fallback on machines that can't run it). The judgment *is* the
+   product; a `?`-matcher behind a paywall fails the value test.
+2. **It feels instant.** On-device inference can't sit on the hot path. The
+   load/refresh split + a persistent verdict cache exist precisely so the board
+   paints immediately (heuristic/cached) and upgrades to model verdicts in the
+   background. "Real judgment" and "felt speed" are not a tradeoff here — the
+   architecture buys both.
+
+(The pre-2026-06-15 bar said "craft and visible speed, *not* AI depth." Retired:
+the on-device judgment is the depth — kept invisible-fast, not cut.)
 
 ## Why people pay (consumer-utility levers)
 
-Simple, well-executed consumer Mac utilities get paid for (clipboard managers,
-window tilers, HoudahSpot). What decides paid success here is not capability
-depth but:
-
-1. **Felt frequency** — "jump to and read a conversation" is a many-times-daily
-   need (stronger than occasional message-hunting).
-2. **Visibly better than the free thing** — Apple's search is bad enough to
-   leave daylight.
-3. **Craft / polish.**
-4. **Distribution** — the local-first / privacy story is the launch angle.
+1. **Felt value** — "am I dropping the ball on someone who matters" is a real,
+   recurring anxiety; a tool that quietly tracks it and is *right* earns trust.
+   **Honest caveat to validate:** this is a lower-frequency surface than
+   many-times-daily search — likely a daily/weekly "who am I forgetting" glance,
+   higher value-per-use but fewer uses. The original doc cut triage on a
+   felt-frequency argument; that risk didn't vanish when we decided to build it.
+   Confirm the felt pain with real users early.
+2. **Visibly does what Apple can't** — Messages has *no* concept of relationship
+   debt at all. Bigger daylight than "our search is faster."
+3. **Privacy / local-first** — all judgment is on-device, no plaintext leaves the
+   machine. The launch angle.
+4. **Craft / polish.**
 
 ## Roadmap horizon
 
-- **v1 (ship Jun 15 2026):** keyword search (FTS5 bm25 + stemming +
-  contact-name folding) → fast jump → in-app thread read. Paid consumer
-  utility, Messages-only, recall-only.
-- **v1.1 — the "now it's smart" upgrade:** semantic / natural-language search
-  via embeddings, which widens matching to paraphrase ("the thing at Sarah's
-  place" → finds "come over Saturday"). Embedding a 40-day personal corpus is
-  cheap; this was likely *over-cut* from v1 by being lumped with the heavy LLM
-  summary. An on-device Apple `NaturalLanguage` embedding path (no model
-  download) is the de-risked candidate — verify the API at v1.1 planning.
-- **v2 — north star: send & edit from Stower.** Make Stower the client you
-  *act* in — compose, send, edit/unsend — so it's where you live, not a pointer
-  back into a bad app. **Maintenance-gated, not a commitment:** worth doing only
-  if the write path proves sustainable against Apple's churn. macOS 26 Tahoe
-  already broke AppleScript group-send (the `any;-;` GUID change) and IMCore
-  injection is increasingly fragile, so every macOS release is a potential break
-  to chase. We commit to v2 only after judging the upkeep is worth it —
-  read-only ships first precisely because it carries none of this risk.
+- **v1 (ship target):** the debt board — **Neglected** (ranked) + **Ghosted**
+  (gated) over on-device conversation facts + FoundationModels reply-expectation
+  judgment, backed by a disposable verdict cache. Fast keyword search (FTS5 bm25
+  + stemming + contact-name folding) and in-app thread read are the **capability**
+  you act through. 1:1 only, Messages-only, read-only (reply via Messages.app).
+- **v1.1:** semantic / natural-language search (embeddings widen matching to
+  paraphrase); **live board re-gating** (`ghostedBorderline` + an
+  `AsyncStream<StowerDebtBoard>` that refines under the user's eyes) — reserved
+  out of v1 by the engine plan. An on-device Apple `NaturalLanguage` embedding
+  path is the de-risked search candidate.
+- **v2 — north star: send & edit from Stower.** Make Stower the client you *act*
+  in — compose, send, edit/unsend — so it's where you live. **Maintenance-gated,
+  not a commitment:** macOS 26 Tahoe already broke AppleScript group-send (the
+  `any;-;` GUID change) and IMCore injection is fragile, so every release is a
+  potential break to chase. Read-only ships first precisely because it carries
+  none of that risk.
 
 ## Explicitly out of scope (and why)
 
-- **Triage / "who did I leave on read"** — the dogfood user is on top of her
-  messages, so it isn't a felt pain. Don't build a job the primary user
-  doesn't have. (Reconsider only if real users ask.)
+- **Group conversations** — 1:1 only in v1; the facts extractor already filters to
+  `isOneToOne`. Group debt is a later widening, not a v1 cut corner.
 - **Business / CRM inbox** — wrong audience (see above).
 - **Photos, voice, LLM summaries** — heavier toolchain (MLX / Whisper); quality-
-  gated v1.1+ per the release-scope brief, not date-gated.
+  gated v1.1+, not date-gated.
+- **Reply-sending (any AppleScript / IMCore path)** — v2 territory; v1 is
+  recall-and-read only.
 
 ## How this constrains the build
 
-- **Conversation-first UX.** Results group by conversation; the fast *jump* is
-  the primary action; the **readable thread view is the hero** — not a flat
-  search-results list.
-- **Dual read paths in `StowerMessages`.** (a) 40-day windowed *bulk* ingest
-  for the search index; (b) a targeted *single-chat recent-history* read for
-  the thread view, unbounded by the 40-day window. Cheap to design in now,
-  annoying to retrofit.
-- **"Open in Messages.app" is a secondary escape hatch** (used to reply, until
-  v2 sending exists), not the core action. This de-risks the unreliable
-  group-chat deep-link URL scheme — reading happens in-app, so the deep link
-  only matters when the user wants to reply.
+- **The debt board is the home surface.** The app opens onto Neglected + Ghosted;
+  search and the thread view exist to *act on* a row, not as the front door.
+- **The board must never block on the model.** `loadDebtBoard` is structural-speed
+  and model-free; `refreshJudgments` backfills in the background and reports what
+  changed. This two-phase loop is the "feels instant" guarantee — see
+  [`MacAppContract.md`](MacAppContract.md) §5.
+- **Dual read paths in `StowerMessages`.** (a) windowed *bulk* read for facts +
+  the search index; (b) a targeted *single-chat recent-history* read for the
+  thread view, unbounded by the bulk window. Both already exist.
+- **Conversation-first UX.** Both lenses and search results group by conversation;
+  the **readable thread view is the hero of the act**, not a flat results list.
+- **"Open in Messages.app" is a secondary escape hatch** (used to reply, until v2
+  sending exists), not the core action — which de-risks the unreliable group-chat
+  deep-link URL scheme.
 
 ## See also
 
+- The engine that backs the board: `Docs/StowerMessages.md`, and the app-facing
+  seam in [`MacAppContract.md`](MacAppContract.md).
 - Strategic scope + day-by-day: `tmp/briefs/2026-06-09-v1-release-scope.md`,
   `tmp/briefs/2026-06-09-june15-daily-outline.md`
-- Days 1–2 design detail: `tmp/briefs/2026-06-09-core-index-messages-ingestion.md`
 - `Docs/Roadmap.md`, `Docs/StowerCore.md`, `Docs/StowerMessages.md`

@@ -63,6 +63,19 @@ internal struct StowerGhostedPolicyTests {
         #expect(ghosted(for: input).isEmpty)
         #expect(ghosted(for: input, ghostGateThreshold: 0.3).map(\.chatID) == ["bare-q"])
     }
+
+    @Test("a negative or non-finite threshold fails closed, never bypassing the gate")
+    internal func invalidThresholdFailsClosed() {
+        // A confident non-ask would leak in if a negative threshold collapsed the
+        // confidence gate to always-true; it must instead yield an empty board.
+        let input = [judged(state(chatID: "non-ask"), expectsReply: false, confidence: 0.95)]
+        #expect(ghosted(for: input, ghostGateThreshold: -1).isEmpty)
+        #expect(ghosted(for: input, ghostGateThreshold: .nan).isEmpty)
+        #expect(ghosted(for: input, ghostGateThreshold: -.infinity).isEmpty)
+        // And a real ask is dropped too — fail closed beats inverting the gate.
+        let ask = [judged(state(chatID: "ask"), expectsReply: true, confidence: 0.95)]
+        #expect(ghosted(for: ask, ghostGateThreshold: -0.5).isEmpty)
+    }
 }
 
 // MARK: - Synthetic builders

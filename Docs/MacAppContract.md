@@ -12,18 +12,22 @@ branch and the library branches can move in parallel without colliding.
 
 ---
 
-## 1. The two surfaces the app consumes
+## 1. The product surface and the capability beneath it
 
-Stower's v1 is two jobs sharing one data source (`chat.db`, read-only):
+v1 is **one product** — the relationship-debt board — with search/read as a
+**capability** the user acts through. Both sit on one data source (`chat.db`,
+read-only). Don't read this as "two co-equal features"; the board is the front
+door, search is a power tool inside it. (See [product vision](productvision.md).)
 
-| Surface | Job-to-be-done | Library entry point | Status |
-|---|---|---|---|
-| **A — Search & Read** | "Get me to the right conversation and let me read it, fast" (the [product vision](productvision.md)) | `StowerIndex` (Core) + `StowerChatDatabaseReader` (Messages) | built |
-| **B — Relationship-debt board** | "Who do I owe / who ghosted me" | `StowerDebtBoardProviding` (Messages) | built (this branch) |
+| | Role | Job-to-be-done | Library entry point | Status |
+|---|---|---|---|---|
+| **The product** | home surface | "Who am I dropping the ball on — and get me into that thread to fix it" | `StowerDebtBoardProviding` (Messages) | built (this branch) |
+| **The capability** | act / reach | "Jump to any conversation and read it fast" (and recall falls out) | `StowerIndex` (Core) + `StowerChatDatabaseReader` (Messages) | built |
 
-The app composes both. They share the same `chat.db` snapshot machinery and the
-same permission gates, but they are independent reads — neither depends on the
-other.
+They share the same `chat.db` snapshot machinery and the same permission gates,
+but they are independent reads — neither depends on the other. The app opens onto
+the board; search and the thread view exist to act on a row, not as the front
+door.
 
 ---
 
@@ -49,32 +53,7 @@ StowerMac (app)  ──►  StowerMessages  ──►  StowerCore
 
 ---
 
-## 3. Surface A — Search & Read
-
-The original v1 product: type a name/snippet → land in the thread → read it
-inside Stower.
-
-**Index lifecycle (`StowerCore.StowerIndex`, actor):**
-- `init(path:)` — opens/creates the persistent FTS5 search DB (app picks the
-  path, e.g. Application Support).
-- `replaceAll(with:)` — the app's **ingest pass**: read messages via the adapter
-  (below), hand `StowerIndexedItem`s in, one rebuild transaction. The app owns
-  *when* to re-ingest (launch, periodic, on-demand).
-- `search(_:limit:) -> [StowerSearchResult]` — the entry mechanism. Pre-ranked
-  (`bm25(1.0, 0.25)`, timestamp tiebreak). The app does not re-rank.
-- `StowerSearchResult.groupedByGroupID(...)` — bucket hits by thread/album while
-  keeping rank, for a per-conversation result list.
-
-**Read lifecycle (`StowerMessages.StowerChatDatabaseReader`):**
-- `recentMessages(...)` / `threadMessages(chatID:limit:)` — the thread view. The
-  app renders these; it never queries `chat.db` itself.
-
-**App owns:** the search box, debounce, result UI, the in-app thread reader,
-deep-link-out to Messages.app, and the ingest schedule.
-
----
-
-## 4. Surface B — The relationship-debt board
+## 3. The product — the relationship-debt board
 
 The whole consumable surface is one protocol. Concrete type:
 `StowerDebtBoardProvider` (an `actor` conforming to `StowerDebtBoardProviding`).
@@ -139,6 +118,34 @@ App-side rules baked into the contract:
 (`unansweredForDays`, `ghostGateThreshold`) re-runs only the gate+rank over
 already-cached verdicts — **it never re-invokes the model.** So a settings slider
 is instant; wire it straight to a reload.
+
+---
+
+## 4. The capability — Search & Read
+
+Not the front door — the tool the user acts *through*: jump to any conversation,
+read it in-app, and recall ("what address did Sarah send?") falls out for free.
+A board row's tap-through thread read uses the same `recentMessages` /
+`threadMessages` path.
+
+**Index lifecycle (`StowerCore.StowerIndex`, actor):**
+- `init(path:)` — opens/creates the persistent FTS5 search DB (app picks the
+  path, e.g. Application Support).
+- `replaceAll(with:)` — the app's **ingest pass**: read messages via the adapter
+  (below), hand `StowerIndexedItem`s in, one rebuild transaction. The app owns
+  *when* to re-ingest (launch, periodic, on-demand).
+- `search(_:limit:) -> [StowerSearchResult]` — pre-ranked (`bm25(1.0, 0.25)`,
+  timestamp tiebreak). The app does not re-rank.
+- `StowerSearchResult.groupedByGroupID(...)` — bucket hits by thread/album while
+  keeping rank, for a per-conversation result list.
+
+**Read lifecycle (`StowerMessages.StowerChatDatabaseReader`):**
+- `recentMessages(...)` / `threadMessages(chatID:limit:)` — the thread view, used
+  both by search results and by a debt-board row tap-through. The app renders
+  these; it never queries `chat.db` itself.
+
+**App owns:** the search box, debounce, result UI, the in-app thread reader,
+deep-link-out to Messages.app, and the ingest schedule.
 
 ---
 
@@ -239,19 +246,22 @@ Frame each as one-way (lock now) vs two-way (decide fast, iterate):
   judged this" vs heuristic is a design call; try one and iterate.
 - **Two-way — default `StowerDebtConfig` values** (`unansweredForDays`,
   `ghostGateThreshold`). Ship the defaults, watch, adjust.
-- **One-way-ish — whether the app ships Surface A, Surface B, or both in v1.**
-  The product vision frames v1 as search+read (Surface A); the debt board
-  (Surface B) is the newer, higher-judgment surface. That's a positioning /
-  scope decision worth an explicit call before the app plan is written —
-  not a thing to discover mid-build.
+
+**Settled (2026-06-15) — the debt board is the product; search + thread-read is a
+capability within it, and the board is the front door.** Not an open decision;
+the app's home surface is the board. The one thing left to *validate* (not
+decide) is the felt-frequency risk the vision doc flags — the board is a
+daily/weekly "who am I forgetting" glance, not a many-times-daily tool. Watch
+that with real users; it's a learn-by-shipping question, not a blocker.
 
 ---
 
 ## 8. The 60-second version for an app planner
 
 1. Link `StowerCore` + `StowerMessages`. Import nothing else from the engine.
-2. Two reads: `StowerIndex.search` (navigate) and `StowerDebtBoardProvider`
-   (debt board). Both pre-ranked — never re-sort.
+2. The **home surface is the debt board** (`StowerDebtBoardProvider`); search
+   (`StowerIndex.search`) + thread-read are the capability you act *through*, not
+   the front door. Both reads are pre-ranked — never re-sort.
 3. Debt board loop: **`loadDebtBoard` (instant) → `refreshJudgments` (bg) →
    reload if the summary changed.** Never block paint on the model.
 4. Full Disk Access is a hard, typed gate — build the onboarding for it.

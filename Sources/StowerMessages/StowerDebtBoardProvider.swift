@@ -11,7 +11,6 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     private let readerFactory: @Sendable () throws -> StowerConversationFactsReading
     private let heuristicJudge: StowerReplyExpectationJudge
     private let resolveLanguageModelJudge: @Sendable () -> StowerReplyExpectationJudge?
-    private var cachedLanguageModelJudge: StowerReplyExpectationJudge?
     private let cache: StowerReplyVerdictCaching?
     private let windowDays: Int
     private var inFlightRefreshKeys: Set<String> = []
@@ -53,11 +52,10 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
             try StowerChatDatabaseReader(sourceURL: sourceURL, contactsResolver: contactsResolver)
         }
         heuristicJudge = StowerHeuristicReplyJudge()
-        // Resolve the system judge lazily, not once at init: a provider built
-        // while Apple Intelligence is still downloading must pick the model up on
-        // a later load/refresh instead of staying frozen on the heuristic.
+        // Resolve the system judge per call, not once at init: a provider built
+        // while Apple Intelligence is still downloading picks the model up when it
+        // comes online, and stops using it if availability later goes away.
         resolveLanguageModelJudge = { Self.makeSystemLanguageModelJudge() }
-        cachedLanguageModelJudge = nil
         cache = cacheURL.flatMap(Self.openCache)
         self.windowDays = windowDays
     }
@@ -79,7 +77,6 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         self.readerFactory = readerFactory
         self.heuristicJudge = heuristicJudge
         resolveLanguageModelJudge = languageModelJudgeResolver ?? { languageModelJudge }
-        cachedLanguageModelJudge = languageModelJudge
         self.cache = cache
         self.windowDays = windowDays
     }
@@ -249,16 +246,11 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         case .heuristic:
             return nil
         case .languageModel, .automatic:
-            if let cachedLanguageModelJudge {
-                return cachedLanguageModelJudge
-            }
-            // Re-resolve while still unavailable; cache the first real judge so
-            // availability is checked at most until the model comes online.
-            let resolved = resolveLanguageModelJudge()
-            if let resolved {
-                cachedLanguageModelJudge = resolved
-            }
-            return resolved
+            // Re-resolve every time so the judge tracks CURRENT availability — it
+            // appears when Apple Intelligence comes online and disappears if it
+            // goes away again. Availability check + judge construction are cheap
+            // and never call the model, so the load path stays structural.
+            return resolveLanguageModelJudge()
         }
     }
 
@@ -282,11 +274,23 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         return nil
     }
 
-    private static func openCache(at url: URL) -> StowerReplyVerdictCache? {
+    /// Opens the verdict cache, rebuilding it once if the file is unusable.
+    ///
+    /// Disposable (M9): a corrupt or unreadable store must be REBUILT, not kept as
+    /// a permanently dead cache that silently disables every model verdict for the
+    /// provider's lifetime. Drop the file (and its WAL sidecars) and retry once;
+    /// fall back to a heuristic-only board only if recreation also fails.
+    internal static func openCache(at url: URL) -> StowerReplyVerdictCaching? {
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        if let cache = try? StowerReplyVerdictCache(path: url.path) {
+            return cache
+        }
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(atPath: url.path + suffix)
+        }
         return try? StowerReplyVerdictCache(path: url.path)
     }
 }
