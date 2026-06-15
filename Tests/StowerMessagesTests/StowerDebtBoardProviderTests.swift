@@ -229,6 +229,45 @@ internal struct StowerDebtBoardProviderTests {
         #expect(fetched?.expectsReply == true)
     }
 
+    @Test("refresh judges the most-recently-active threads first")
+    internal func refreshPrioritizesRecentThreads() async throws {
+        let records = [
+            stowerTestRecord(
+                chatID: "old",
+                guid: "g-old",
+                lastMessageText: "you free?",
+                daysAgo: 40,
+                now: now
+            ),
+            stowerTestRecord(
+                chatID: "new",
+                guid: "g-new",
+                lastMessageText: "you free?",
+                daysAgo: 2,
+                now: now
+            ),
+            stowerTestRecord(
+                chatID: "mid",
+                guid: "g-mid",
+                lastMessageText: "you free?",
+                daysAgo: 20,
+                now: now
+            )
+        ]
+        let cache = try StowerReplyVerdictCache.inMemory()
+        let provider = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: records) },
+            languageModelJudge: StowerSpyReplyJudge(),
+            cache: cache
+        )
+
+        let summary = await provider.refreshJudgments(config: config(), now: now)
+
+        // Verdicts are upserted in processing order, so the newest thread is
+        // judged first and its smart verdict is available to the next load soonest.
+        #expect(summary.changedChatIDs == ["new", "mid", "old"])
+    }
+
     // MARK: - Helpers
 
     private func makeProvider(

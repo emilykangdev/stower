@@ -131,8 +131,18 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         else {
             return StowerRefreshSummary(changedChatIDs: [])
         }
+        // Background, off-hot-path work (the load already painted via cache +
+        // heuristic). On-device inference is serial by design — the system model
+        // is a single shared resource, and live streaming of partial boards is a
+        // v1.1 non-goal. Judge most-recently-active threads FIRST, though, so the
+        // conversations the user is most likely looking at get a smart verdict
+        // soonest: each verdict is upserted as it lands, so the next load reflects
+        // whatever has been judged so far.
+        let ordered = records.sorted {
+            $0.state.lastMessageTimestamp > $1.state.lastMessageTimestamp
+        }
         var changed: [String] = []
-        for record in records {
+        for record in ordered {
             if Task.isCancelled { break }
             if let chatID = await refreshOne(record: record, judge: judge, cache: cache) {
                 changed.append(chatID)
