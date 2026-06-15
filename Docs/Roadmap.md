@@ -38,6 +38,15 @@ when the strategy changes, not when code lands.
 8. (v2) `StowerServer` Hummingbird HTTP API + PWA.
 9. (v3) `StowerPhotosIOS` standalone MAS app.
 
+## Demand-gated candidates (not committed)
+
+- **Message-drafts surface (v1.1 QoL).** Capture *what you want to say* next to
+  *who you owe* — the missing middle between the debt board (WHO) and v2 send
+  (SEND). Draft-on-the-row, not a separate tab; pure app-side state keyed by
+  `chatID`, so zero engine/facade change. Desktop-native (drafting wants a
+  keyboard), Mac-only until sync. Two-way door, gated on a Notes-app friction
+  experiment. Brief: `tmp/briefs/2026-06-15-message-drafts-surface.md`.
+
 ## Decisions deferred
 
 - Local LLM choice (Llama 3.1 8B vs Qwen 2.5 7B vs MLX-served): defer until
