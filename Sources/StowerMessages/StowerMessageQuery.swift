@@ -36,6 +36,32 @@ internal enum StowerMessageQuery {
         )
     }
 
+    /// Reads one chat's newest real messages of ANY content type for the thread.
+    ///
+    /// Unlike `recentRows` (text-only, built for the search index), this keeps
+    /// photos, files, and app payloads so the tap-through thread is complete; it
+    /// still excludes reactions (`associated_message_type = 0`) and system rows
+    /// (`item_type = 0`). Newest-first with a `LIMIT`; the reader reverses it for
+    /// chronological display and labels each row's kind.
+    internal static func threadRows(
+        database: Database,
+        chatID: String,
+        limit: Int
+    ) throws -> [StowerSourceMessageRow] {
+        try StowerSourceMessageRow.fetchAll(
+            database,
+            sql: baseSelect + """
+                WHERE m.date != 0
+                  AND m.associated_message_type = 0
+                  AND m.item_type = 0
+                  AND (c.guid = ? OR c.chat_identifier = ?)
+                ORDER BY m.date DESC, m.ROWID DESC
+                LIMIT ?
+                """,
+            arguments: [chatID, chatID, limit]
+        )
+    }
+
     /// Reads the full chronology of real messages in the window — any content type.
     ///
     /// Keeps text, photos, files, app payloads, and link previews, but excludes

@@ -115,9 +115,9 @@ public actor StowerChatDatabaseReader {
         guard limit > 0 else {
             return []
         }
-        let source = try snapshot.recentRows(chatID: chatID, limit: limit)
+        let sourceRows = try snapshot.threadRows(chatID: chatID, limit: limit)
         var seenGUIDs: Set<String> = []
-        let rows = source.rows.compactMap { row -> StowerThreadMessage? in
+        let rows = sourceRows.compactMap { row -> StowerThreadMessage? in
             guard seenGUIDs.insert(row.guid).inserted,
                 let timestamp = StowerMessageDate.date(from: row.rawDate)
             else {

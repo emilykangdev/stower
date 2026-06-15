@@ -10,8 +10,9 @@ import Foundation
 public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     private let readerFactory: @Sendable () throws -> StowerConversationFactsReading
     private let heuristicJudge: StowerReplyExpectationJudge
-    private let languageModelJudge: StowerReplyExpectationJudge?
-    private let cache: StowerReplyVerdictCache?
+    private let resolveLanguageModelJudge: @Sendable () -> StowerReplyExpectationJudge?
+    private var cachedLanguageModelJudge: StowerReplyExpectationJudge?
+    private let cache: StowerReplyVerdictCaching?
     private let windowDays: Int
     private var inFlightRefreshKeys: Set<String> = []
 
@@ -52,7 +53,11 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
             try StowerChatDatabaseReader(sourceURL: sourceURL, contactsResolver: contactsResolver)
         }
         heuristicJudge = StowerHeuristicReplyJudge()
-        languageModelJudge = Self.makeSystemLanguageModelJudge()
+        // Resolve the system judge lazily, not once at init: a provider built
+        // while Apple Intelligence is still downloading must pick the model up on
+        // a later load/refresh instead of staying frozen on the heuristic.
+        resolveLanguageModelJudge = { Self.makeSystemLanguageModelJudge() }
+        cachedLanguageModelJudge = nil
         cache = cacheURL.flatMap(Self.openCache)
         self.windowDays = windowDays
     }
@@ -60,17 +65,21 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     /// Creates a provider from injected dependencies, for tests.
     ///
     /// A `nil` `languageModelJudge` models an unavailable system model (all rows
-    /// fall to the heuristic); a spy judge models availability.
+    /// fall to the heuristic); a spy judge models availability. A
+    /// `languageModelJudgeResolver` models availability changing over time — it
+    /// is consulted until it first yields a judge, then that judge is cached.
     internal init(
         readerFactory: @escaping @Sendable () throws -> StowerConversationFactsReading,
         heuristicJudge: StowerReplyExpectationJudge = StowerHeuristicReplyJudge(),
         languageModelJudge: StowerReplyExpectationJudge?,
-        cache: StowerReplyVerdictCache?,
-        windowDays: Int = 180
+        cache: StowerReplyVerdictCaching?,
+        windowDays: Int = 180,
+        languageModelJudgeResolver: (@Sendable () -> StowerReplyExpectationJudge?)? = nil
     ) {
         self.readerFactory = readerFactory
         self.heuristicJudge = heuristicJudge
-        self.languageModelJudge = languageModelJudge
+        resolveLanguageModelJudge = languageModelJudgeResolver ?? { languageModelJudge }
+        cachedLanguageModelJudge = languageModelJudge
         self.cache = cache
         self.windowDays = windowDays
     }
@@ -143,28 +152,32 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     ) async -> [StowerJudgedConversation] {
         var result: [StowerJudgedConversation] = []
         result.reserveCapacity(records.count)
+        // The cache is disposable (M9): the first read fault disables it for the
+        // rest of this load, so a locked or corrupt store can never block the
+        // board past a single failed lookup.
+        var cacheReadable = languageModelJudge != nil && cache != nil
         for record in records {
-            let verdict = await loadVerdict(for: record, languageModelJudge: languageModelJudge)
-            result.append(StowerJudgedConversation(state: record.state, verdict: verdict))
+            var verdict: StowerReplyExpectation?
+            if cacheReadable, let languageModelJudge, let cache {
+                do {
+                    verdict = try await cache.existing(
+                        judgeVersion: languageModelJudge.judgeVersion,
+                        guid: record.lastMessageGUID,
+                        inputHash: inputHash(for: record.state)
+                    )
+                } catch {
+                    cacheReadable = false
+                }
+            }
+            let resolved: StowerReplyExpectation
+            if let verdict {
+                resolved = verdict
+            } else {
+                resolved = await heuristicVerdict(for: record.state)
+            }
+            result.append(StowerJudgedConversation(state: record.state, verdict: resolved))
         }
         return result
-    }
-
-    private func loadVerdict(
-        for record: StowerConversationStateRecord,
-        languageModelJudge: StowerReplyExpectationJudge?
-    ) async -> StowerReplyExpectation {
-        if let languageModelJudge, let cache {
-            let hash = inputHash(for: record.state)
-            if let cached = try? await cache.existing(
-                judgeVersion: languageModelJudge.judgeVersion,
-                guid: record.lastMessageGUID,
-                inputHash: hash
-            ) {
-                return cached
-            }
-        }
-        return await heuristicVerdict(for: record.state)
     }
 
     private func heuristicVerdict(
@@ -187,7 +200,7 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     private func refreshOne(
         record: StowerConversationStateRecord,
         judge: StowerReplyExpectationJudge,
-        cache: StowerReplyVerdictCache
+        cache: StowerReplyVerdictCaching
     ) async -> String? {
         let hash = inputHash(for: record.state)
         let key = "\(judge.judgeVersion)\u{1}\(record.lastMessageGUID)\u{1}\(hash)"
@@ -212,12 +225,18 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         guard let verdict, verdict.verdictSource == .languageModel else {
             return nil
         }
-        try? await cache.upsert(
-            judgeVersion: judge.judgeVersion,
-            guid: record.lastMessageGUID,
-            inputHash: hash,
-            verdict: verdict
-        )
+        do {
+            try await cache.upsert(
+                judgeVersion: judge.judgeVersion,
+                guid: record.lastMessageGUID,
+                inputHash: hash,
+                verdict: verdict
+            )
+        } catch {
+            // The disposable cache (M9) refused the write: don't report a change
+            // we didn't persist, or the app reloads to the same heuristic verdict.
+            return nil
+        }
         return record.state.chatID
     }
 
@@ -227,8 +246,19 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         for mode: StowerReplyJudgeMode
     ) -> StowerReplyExpectationJudge? {
         switch mode {
-        case .heuristic: return nil
-        case .languageModel, .automatic: return languageModelJudge
+        case .heuristic:
+            return nil
+        case .languageModel, .automatic:
+            if let cachedLanguageModelJudge {
+                return cachedLanguageModelJudge
+            }
+            // Re-resolve while still unavailable; cache the first real judge so
+            // availability is checked at most until the model comes online.
+            let resolved = resolveLanguageModelJudge()
+            if let resolved {
+                cachedLanguageModelJudge = resolved
+            }
+            return resolved
         }
     }
 
@@ -246,7 +276,7 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         guard StowerLanguageModelAvailability.isAvailable() else {
             return nil
         }
-        if #available(macOS 26, *) {
+        if #available(macOS 26, iOS 26, *) {
             return StowerFoundationModelReplyJudge()
         }
         return nil

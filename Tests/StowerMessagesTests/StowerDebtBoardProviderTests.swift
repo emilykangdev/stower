@@ -146,6 +146,67 @@ internal struct StowerDebtBoardProviderTests {
         #expect(!board.neglected.isEmpty)
     }
 
+    @Test("a cache read fault degrades the load to heuristic without blocking (M9)")
+    internal func loadSurvivesCacheReadFault() async throws {
+        let records = sampleRecords()
+        let spy = StowerSpyReplyJudge()
+        let provider = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: records) },
+            languageModelJudge: spy,
+            cache: StowerFaultyVerdictCache(failReads: true)
+        )
+
+        let board = try await provider.loadDebtBoard(config: config(), now: now)
+
+        // The cache threw, but the board still built on heuristic verdicts and the
+        // load never reached the model.
+        #expect(spy.callCount == 0)
+        #expect(!board.neglected.isEmpty)
+        #expect(board.neglected.allSatisfy { $0.verdictSource == .heuristic })
+    }
+
+    @Test("a failed cache write is not reported as a changed chat")
+    internal func refreshDoesNotReportUnpersistedChange() async throws {
+        let records = sampleRecords()
+        let spy = StowerSpyReplyJudge()
+        let provider = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: records) },
+            languageModelJudge: spy,
+            cache: StowerFaultyVerdictCache(failWrites: true)
+        )
+
+        let summary = await provider.refreshJudgments(config: config(), now: now)
+
+        // The model ran, but nothing persisted, so no chat is reported changed —
+        // the app must not reload to the same heuristic verdict.
+        #expect(spy.callCount == records.count)
+        #expect(summary.changedCount == 0)
+    }
+
+    @Test("the provider recovers the model judge when availability turns on later")
+    internal func resolvesLanguageModelJudgeLazily() async throws {
+        let records = sampleRecords()
+        let cache = try StowerReplyVerdictCache.inMemory()
+        let spy = StowerSpyReplyJudge()
+        let counter = StowerCallCounter()
+        // Availability is off at construction, then comes online: the resolver
+        // yields nil the first time and the judge thereafter.
+        let provider = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: records) },
+            languageModelJudge: nil,
+            cache: cache,
+            languageModelJudgeResolver: { counter.next() > 1 ? spy : nil }
+        )
+
+        let first = await provider.refreshJudgments(config: config(), now: now)
+        #expect(first.changedCount == 0)
+        #expect(spy.callCount == 0)
+
+        let second = await provider.refreshJudgments(config: config(), now: now)
+        #expect(second.changedCount > 0)
+        #expect(spy.callCount > 0)
+    }
+
     // MARK: - Helpers
 
     private func makeProvider(

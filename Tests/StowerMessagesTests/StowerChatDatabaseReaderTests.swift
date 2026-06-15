@@ -65,6 +65,31 @@ internal struct StowerChatDatabaseReaderTests {
         #expect(full.first(where: { $0.id == "outgoing" })?.sender == "Me")
     }
 
+    @Test("the thread view keeps attachments and app messages, not just text")
+    internal func threadMessagesIncludeNonText() async throws {
+        let fixture = try StowerFixtureDatabase()
+        defer { fixture.remove() }
+        let reader = try StowerChatDatabaseReader(
+            sourceURL: fixture.databaseURL,
+            contactsResolver: contacts
+        )
+
+        let thread = try await reader.threadMessages(chatID: "chat-alex", limit: 100)
+        let byID = Dictionary(uniqueKeysWithValues: thread.map { ($0.id, $0) })
+
+        // The text-only index query dropped these; the thread view must keep them
+        // so a photo or app message you exchanged never vanishes from the thread.
+        #expect(byID["attachment"]?.kind == .attachment)
+        #expect(byID["attachment"]?.text == nil)
+        #expect(byID["balloon"]?.kind == .app)
+        // Reactions and system rows still never appear as thread messages.
+        #expect(byID["tapback"] == nil)
+        #expect(byID["system"] == nil)
+        // Text rows still decode and the thread stays chronological.
+        #expect(byID["outgoing"]?.text == "outgoing text")
+        #expect(thread.map(\.timestamp) == thread.map(\.timestamp).sorted())
+    }
+
     @Test("isOneToOne reflects chat style on the item")
     internal func isOneToOneSurfaced() async throws {
         let fixture = try StowerFixtureDatabase()

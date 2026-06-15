@@ -3,14 +3,16 @@ import FoundationModels
 
 /// The v1 real judge: Apple's on-device FoundationModels via guided generation.
 ///
-/// `@available(macOS 26, *)` — the provider only constructs it after a runtime
-/// `SystemLanguageModel.availability` check, and routes to the heuristic
-/// otherwise. It judges by MEANING, not punctuation: "wondering if you're free
-/// Saturday" expects a reply with no `?`. Guided generation yields a typed
+/// `@available(macOS 26, iOS 26, *)` — the provider only constructs it after a
+/// runtime `SystemLanguageModel.availability` check, and routes to the heuristic
+/// otherwise. iOS is gated alongside macOS because the package declares an iOS
+/// floor for the photos app, where these symbols don't exist below iOS 26. It
+/// judges by MEANING, not punctuation: "wondering if you're free Saturday"
+/// expects a reply with no `?`. Guided generation yields a typed
 /// `{ expectsReply, confidence }` directly — no text parsing, no malformed
 /// output. The prompt carries real message text and is never logged (AGENTS.md).
 /// Internal: the judge seam is module-private.
-@available(macOS 26, *)
+@available(macOS 26, iOS 26, *)
 internal struct StowerFoundationModelReplyJudge: StowerReplyExpectationJudge {
     /// The model's role and decision rule.
     ///

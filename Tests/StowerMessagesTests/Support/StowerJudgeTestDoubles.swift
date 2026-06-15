@@ -50,6 +50,52 @@ internal enum StowerSpyJudgeError: Error {
     case forced
 }
 
+/// A verdict cache double that fails on demand, modeling a locked/corrupt store.
+///
+/// Lets a test prove the disposable-cache invariants (M9): a read fault degrades
+/// a load to heuristic without blocking, and a write fault is never reported as a
+/// persisted change.
+internal struct StowerFaultyVerdictCache: StowerReplyVerdictCaching {
+    internal var failReads = false
+    internal var failWrites = false
+
+    internal func existing(
+        judgeVersion: String,
+        guid: String,
+        inputHash: String
+    ) async throws -> StowerReplyExpectation? {
+        if failReads {
+            throw StowerSpyJudgeError.forced
+        }
+        return nil
+    }
+
+    internal func upsert(
+        judgeVersion: String,
+        guid: String,
+        inputHash: String,
+        verdict: StowerReplyExpectation
+    ) async throws {
+        if failWrites {
+            throw StowerSpyJudgeError.forced
+        }
+    }
+}
+
+/// A thread-safe call counter for scripting an availability-resolver closure.
+internal final class StowerCallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    /// Increments and returns the new running count.
+    internal func next() -> Int {
+        lock.withLock {
+            count += 1
+            return count
+        }
+    }
+}
+
 /// A synthetic facts source so the provider runs without a real `chat.db`.
 internal struct StowerStubFactsReader: StowerConversationFactsReading {
     internal let records: [StowerConversationStateRecord]
