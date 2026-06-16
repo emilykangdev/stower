@@ -201,8 +201,8 @@ the facade; the app's job is to drive them correctly, not re-implement them.
 
 ### 5a. The cold-start → warm → reload loop (loading screen, never instant board)
 
-`loadDebtBoard` **never runs a model.** It reads a fresh snapshot + any *trusted*
-cached language-model verdicts, excludes everything unjudged, and returns at
+`loadDebtBoard` **never runs a model.** It reads the shared snapshot + any
+*trusted* cached verdicts, excludes everything unjudged, and returns at
 structural speed. At cold start nothing is judged yet, so it returns **empty
 lists** — the app shows a **loading screen, never a raw empty board.** The real
 model runs only in `refreshJudgments`, in the background.
@@ -257,11 +257,14 @@ is already a trusted on-device verdict, so there is no per-row trust flag to rea
 
 ### 5d. The snapshot & the cache (engine-owned, app-aware)
 
-- **Snapshot:** every `loadDebtBoard` takes a *fresh* read-only copy of `chat.db`
-  (temporary, swept). The app gets current data on every load for free — no
-  manual invalidation. Cost: a load does real I/O, so don't call it on every
-  keystroke; call it on view-appear, pull-to-refresh, and after a refresh
-  summary.
+- **Snapshot:** the engine takes one read-only copy of `chat.db` (temporary,
+  swept) and **reuses it** across loads and thread opens; `refreshJudgments`
+  rebuilds it. So the board reflects messages **as of the last refresh**, not the
+  instant of each load — new messages appear after the next `refreshJudgments`,
+  not on a bare `loadDebtBoard`. The first load (and the first load after a
+  refresh) does real snapshot I/O; repeat loads are cheap. Still prefer
+  view-appear, pull-to-refresh, and after-a-refresh-summary over per-keystroke
+  calls.
 - **Cache:** the verdict cache (`reply-verdicts.sqlite` under Application Support)
   is **disposable** and the trust boundary — it rejects malformed payloads on
   write and resolves an unknown source token to a miss on read. Corruption/lock/
