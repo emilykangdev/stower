@@ -30,7 +30,7 @@ Deferred work with context, written by the 2026-06-12 /autoplan review of
 - [ ] **Non-destructive eval window switching (`eval --days` / named index profiles)** —
   today, comparing 180d vs 365d means destructive re-index each way. Fine for tonight;
   annoying for repeated experiments. (Codex DX finding 2.) Effort: S-M.
-- [ ] **Precise attachment kind via the `attachment`-table UTI (no-reply engine, v1.1)** —
+- [ ] **Precise attachment kind via the `attachment`-table UTI (relationship-debt engine, v1.1)** —
   v1 `lastMessageKind` labels any media as a generic `attachment` (read from the
   `message.cache_has_attachments` flag alone). To say "photo" / "voice note" / "video" /
   "file" / "sticker" instead, join the `attachment` table via `message_attachment_join`
@@ -39,11 +39,44 @@ Deferred work with context, written by the 2026-06-12 /autoplan review of
   attachment-table schema with `Scripts/inspect-chatdb-shapes.sh` before relying on column
   names (same verify-first lesson as the `associated_message_guid` prefix). Also splits
   sticker-vs-photo. Decided coarse for v1 on 2026-06-13. Effort: S-M.
-  Depends on: no-reply engine landed.
+  Depends on: relationship-debt engine landed.
 - [ ] **`conversationStates` should decode only last-act bodies, not the whole window** —
   it reuses `ingestWindow`, which `attributedBody`-decodes every message in the window just
-  to recover the last-act text per chat (cost ≈ one `stower index` ingest). Fine while the
-  only caller is the local `stower no-reply` measurement CLI; becomes a hot path once the Mac
-  app consumes the engine. Fix: read `activityRows` first, then fetch+decode only the
+  to recover the last-act text per chat (cost ≈ one `stower index` ingest). Tolerable for a
+  one-off load, but it is on the hot path now that the Mac app consumes the relationship-debt
+  engine. Fix: read `activityRows` first, then fetch+decode only the
   last-act message body per chat (and the title) instead of the full window. (Codex
   ship-with-codex P2→P3, 2026-06-14.) Effort: M.
+
+- [ ] **MLX / other-SLM judge experiments + eval harness (future)** — FM is the v0 judge;
+  the `StowerReplyExpectationJudge` protocol is the swap seam. Experiment with MLX
+  (Qwen3-0.6B / Llama-3.2-1B) or other small models behind the seam as separate conformers,
+  each measured by its own eval harness. Build a purpose-built baseline/eval type at that
+  point — do NOT resurrect the deleted `StowerHeuristicReplyJudge` (bad name; the regex
+  baseline was nuked on purpose). Different prompts/models are cache-isolated automatically via
+  `judgeVersion` (prompt+model hash). Surface future CLI measurement under a dedicated
+  `experiment` command namespace, not the production engine API. (2026-06-15 /autoplan.) Effort: M.
+- [ ] **Retry cap / permanent give-up marker for terminally-failed verdicts (future)** — v1
+  counts a record it can't judge in `failedCount` (so loading still clears via
+  `judged + failed == total`), but it writes no verdict for that record, so the next refresh
+  pass re-attempts it — a record that always fails FM is re-judged forever. Honest and fine for
+  v1. Later: cap retries (e.g. N attempts) or persist a permanent un-judgeable marker so refresh
+  stops re-attempting it. (2026-06-15 /quizme follow-up.) Effort: S-M.
+- [ ] **StowerMac loading / unsupported / "all caught up" UI + retry scheduling (StowerMac)** —
+  the engine is FM-only and judged-only, so the app owns the surrounding states: a cold-start
+  loading screen that fills as `refreshJudgments` reports `judged`/`failed`/`total` (cleared at
+  `judged + failed == total`), an unsupported/onboarding screen routed off
+  `modelAvailability()` / `StowerModelUnavailableReason`, and an empty-but-done "all caught up"
+  state distinct from "still judging". Plus retry scheduling with backoff for a transient
+  `.modelNotReady` and for failed records. These live in a separate StowerMac app branch.
+  (2026-06-15 /autoplan CEO finding #4 / Eng perf.) Effort: M.
+- [ ] **Cold-start FM warm-up: workload cap / cancellation / progress estimate (StowerMac)** —
+  on a cold cache, both lists stay empty while serial on-device FM inference warms verdicts
+  across potentially thousands of threads. The engine refreshes most-recently-active threads
+  first; the app-side controls (cap per pass, cancellation policy, time estimate) belong in
+  StowerMac. (2026-06-15 /autoplan CEO finding #4 / Eng perf.) Effort: M.
+- [ ] **Enable the repo-wide `no_magic_numbers` swiftlint gate (own follow-up)** — AGENTS.md
+  bans magic numbers/literals as a convention, but `no_magic_numbers` is not in
+  `.swiftlint.yml`'s `opt_in_rules`, so nothing mechanically enforces it. Route it through
+  `harden-guardrail` as its own plan: turn it on, sweep existing violations, and decide the
+  exemptions (test fixtures, etc.). Out of scope for this branch. Effort: M.

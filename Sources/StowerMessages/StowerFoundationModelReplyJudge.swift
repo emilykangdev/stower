@@ -4,37 +4,33 @@ import FoundationModels
 /// The v1 real judge: Apple's on-device FoundationModels via guided generation.
 ///
 /// `@available(macOS 26, iOS 26, *)` — the provider only constructs it after a
-/// runtime `SystemLanguageModel.availability` check, and routes to the heuristic
-/// otherwise. iOS is gated alongside macOS because the package declares an iOS
-/// floor for the photos app, where these symbols don't exist below iOS 26. It
-/// judges by MEANING, not punctuation: "wondering if you're free Saturday"
-/// expects a reply with no `?`. Guided generation yields a typed
-/// `{ expectsReply, confidence }` directly — no text parsing, no malformed
-/// output. The prompt carries real message text and is never logged (AGENTS.md).
-/// Internal: the judge seam is module-private.
+/// runtime `SystemLanguageModel.availability` check. iOS is gated alongside macOS
+/// because the package declares an iOS floor for the photos app, where these
+/// symbols don't exist below iOS 26. It judges by MEANING, not punctuation:
+/// "wondering if you're free Saturday" merits a reply with no `?`, and so does an
+/// emotional bid or an intimate statement — the relationships that matter most.
+/// Guided generation yields a typed `{ shouldRespond, confidence }` directly — no
+/// text parsing, no malformed output. The prompt carries real message text and is
+/// never logged (AGENTS.md). Internal: the judge seam is module-private.
 @available(macOS 26, iOS 26, *)
 internal struct StowerFoundationModelReplyJudge: StowerReplyExpectationJudge {
     /// The model's role and decision rule.
     ///
-    /// Fingerprinted into `judgeVersion` (M12), so editing it invalidates cached
-    /// verdicts instead of serving them stale.
+    /// Fingerprinted into `judgeVersion(modelIdentity:)` (M12), so editing it
+    /// invalidates cached verdicts instead of serving them stale.
     private static let instructions = """
-        You decide whether a single text message expects a reply from its \
-        recipient. Judge by meaning, not punctuation: a question, a request, a \
-        plan that needs confirmation, or anything awaiting a response expects a \
-        reply, even without a question mark. A statement, an acknowledgment, a \
-        reaction, or a sign-off does not. Report your confidence honestly.
+        You decide whether the recipient of a single text message should \
+        reasonably respond to it. Judge by meaning, not punctuation: a question, \
+        a request, a plan that needs confirmation, an emotional bid, or an \
+        intimate or personal statement that invites a response all merit a reply, \
+        even without a question mark. A bare acknowledgment, a reaction, or a \
+        sign-off does not. Report your confidence honestly.
         """
 
-    /// A coarse identity for the on-device model, folded into `judgeVersion`.
-    private static let modelIdentity = "foundationmodels-system-default"
-
-    /// The derived cache-key fingerprint of the prompt + model identity (M12).
-    internal let judgeVersion: String
-
-    /// Creates a FoundationModels reply judge.
-    internal init() {
-        judgeVersion = stowerShortHash(Self.instructions + "|model=" + Self.modelIdentity)
+    /// The cache-key version for an app-owned `modelIdentity`, folding in the
+    /// judge's own private prompt (M12).
+    internal func judgeVersion(modelIdentity: String) -> String {
+        stowerJudgeVersion(instructions: Self.instructions, modelIdentity: modelIdentity)
     }
 
     /// Judges `messageText` with the on-device model via guided generation.
@@ -55,14 +51,14 @@ internal struct StowerFoundationModelReplyJudge: StowerReplyExpectationJudge {
         )
         let generated = response.content
         return Self.verdict(
-            expectsReply: generated.expectsReply,
+            expectsReply: generated.shouldRespond,
             confidence: min(max(generated.confidence, 0), 1)
         )
     }
 
     private static func prompt(for text: String) -> String {
         """
-        Does this message expect a reply?
+        Should the recipient respond to this message?
 
         \"\"\"
         \(text)
@@ -82,10 +78,10 @@ internal struct StowerFoundationModelReplyJudge: StowerReplyExpectationJudge {
     /// The typed shape guided generation fills — no manual parsing.
     @Generable
     fileprivate struct Verdict {
-        @Guide(description: "True if the message expects a reply or response from its recipient.")
-        let expectsReply: Bool
+        @Guide(description: "True if the recipient should reasonably respond to the message.")
+        let shouldRespond: Bool
 
-        @Guide(description: "Confidence from 0.0 to 1.0 that the expectsReply decision is correct.")
+        @Guide(description: "Confidence from 0.0 to 1.0 that shouldRespond is correct.")
         let confidence: Double
     }
 }

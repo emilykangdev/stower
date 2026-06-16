@@ -5,8 +5,10 @@ import Foundation
 /// Abstracts `StowerReplyVerdictCache` to the two hot-path operations the
 /// provider actually uses, so the provider can be exercised against a
 /// fault-injecting double (a locked or corrupt store) without a real database.
-/// Pruning stays on the concrete cache. Disposable (M9): a throwing call must
-/// degrade the board to a heuristic verdict, never block it.
+/// Pruning stays on the concrete cache. Disposable (M9): a throwing call resolves
+/// to an unjudged row (excluded from the board) and a retried write, never a
+/// block. The conforming cache is the trust boundary — `upsert` rejects malformed
+/// payloads and `existing` resolves an unknown source token to a miss.
 internal protocol StowerReplyVerdictCaching: Sendable {
     /// Returns the cached verdict only when version, guid, AND input hash match.
     func existing(

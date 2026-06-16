@@ -11,7 +11,7 @@ internal final class StowerSpyReplyJudge: StowerReplyExpectationJudge, @unchecke
     private var invocations = 0
     private let shouldThrow: Bool
     private let verdictFor: @Sendable (String?) -> StowerReplyExpectation
-    internal let judgeVersion: String
+    private let version: String
 
     internal init(
         judgeVersion: String = "spy-v1",
@@ -24,7 +24,7 @@ internal final class StowerSpyReplyJudge: StowerReplyExpectationJudge, @unchecke
             )
         }
     ) {
-        self.judgeVersion = judgeVersion
+        version = judgeVersion
         self.shouldThrow = shouldThrow
         verdictFor = verdict
     }
@@ -44,17 +44,51 @@ internal final class StowerSpyReplyJudge: StowerReplyExpectationJudge, @unchecke
         }
         return verdictFor(messageText)
     }
+
+    /// The spy's fixed version, independent of `modelIdentity` so tests can pin a
+    /// known cache key.
+    internal func judgeVersion(modelIdentity: String) -> String { version }
 }
 
 internal enum StowerSpyJudgeError: Error {
     case forced
 }
 
+/// A judge that hangs cooperatively until cancelled, for timeout/cancel tests.
+///
+/// Its `judge` awaits an effectively unbounded `Task.sleep` that throws on
+/// cancellation, so the per-record timeout (or a parent cancel) deterministically
+/// resolves the call instead of hanging CI. Counts invocations like the spy.
+internal final class StowerHangingReplyJudge: StowerReplyExpectationJudge, @unchecked Sendable {
+    private let lock = NSLock()
+    private var invocations = 0
+
+    /// How many times `judge` has been invoked.
+    internal var callCount: Int {
+        lock.withLock { invocations }
+    }
+
+    internal func judge(
+        messageText: String?,
+        context: [String]
+    ) async throws -> StowerReplyExpectation {
+        lock.withLock { invocations += 1 }
+        try await Task.sleep(for: .seconds(3_600))
+        return StowerReplyExpectation(
+            expectsReply: true,
+            replyExpectationConfidence: 0.9,
+            verdictSource: .languageModel
+        )
+    }
+
+    internal func judgeVersion(modelIdentity: String) -> String { "hang-v1" }
+}
+
 /// A verdict cache double that fails on demand, modeling a locked/corrupt store.
 ///
-/// Lets a test prove the disposable-cache invariants (M9): a read fault degrades
-/// a load to heuristic without blocking, and a write fault is never reported as a
-/// persisted change.
+/// Lets a test prove the disposable-cache invariants (M9): a read fault excludes
+/// a row without blocking, and a write fault is counted failed and never reported
+/// as a persisted change.
 internal struct StowerFaultyVerdictCache: StowerReplyVerdictCaching {
     internal var failReads = false
     internal var failWrites = false
@@ -121,6 +155,7 @@ internal func stowerTestRecord(
     lastMessageText: String? = "hi",
     lastMessageKind: StowerConversationLastMessageKind = .text,
     recentExchangeCount: Int = 2,
+    userReactedToLastMessage: Bool = false,
     counterpartReactedToLastMessage: Bool = false,
     daysAgo: Double = 30,
     now: Date
@@ -139,7 +174,7 @@ internal func stowerTestRecord(
         lastMessageText: lastMessageText,
         lastMessageTimestamp: timestamp,
         recentExchangeCount: recentExchangeCount,
-        userReactedToLastMessage: false,
+        userReactedToLastMessage: userReactedToLastMessage,
         counterpartReactedToLastMessage: counterpartReactedToLastMessage,
         deepLink: nil
     )

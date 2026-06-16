@@ -3,8 +3,10 @@ import Foundation
 /// One row of the relationship-debt board — a conversation you owe attention to.
 ///
 /// The same shape backs both lenses: the Neglected list (the counterpart acted
-/// last) and the Ghosted list (you acted last on a real ask with no reply). A
-/// non-text last act is surfaced with its `lastMessageKind` set and
+/// last) and the Ghosted list (you acted last on a statement worth responding
+/// to). Every served row is already a trusted model verdict, so the row carries
+/// no judge-mechanics discriminator — just display facts plus the model's
+/// confidence. A non-text last act is surfaced with its `lastMessageKind` set and
 /// `lastMessageText == nil`, never suppressed. The app derives "unanswered for N
 /// days" from `lastMessageTimestamp` and maps this into its own view model.
 public struct StowerDebtItem: Sendable, Equatable {
@@ -32,14 +34,8 @@ public struct StowerDebtItem: Sendable, Equatable {
     /// A best-effort Messages deep link, or `nil` when none can be formed.
     public let deepLink: URL?
 
-    /// Whether the judged last message reads as expecting a reply.
-    public let expectsReply: Bool
-
-    /// Soft `0...1` confidence; trust only when `verdictSource == .languageModel`.
+    /// The on-device model's soft `0...1` confidence in this row's verdict.
     public let replyExpectationConfidence: Double
-
-    /// Which judge produced the reply-expectation verdict for this row.
-    public let verdictSource: StowerReplyJudgeSource
 
     /// Creates a debt-board row.
     public init(
@@ -51,9 +47,7 @@ public struct StowerDebtItem: Sendable, Equatable {
         lastMessageText: String?,
         lastMessageTimestamp: Date,
         deepLink: URL?,
-        expectsReply: Bool,
-        replyExpectationConfidence: Double,
-        verdictSource: StowerReplyJudgeSource
+        replyExpectationConfidence: Double
     ) {
         self.chatID = chatID
         self.chatTitle = chatTitle
@@ -63,15 +57,14 @@ public struct StowerDebtItem: Sendable, Equatable {
         self.lastMessageText = lastMessageText
         self.lastMessageTimestamp = lastMessageTimestamp
         self.deepLink = deepLink
-        self.expectsReply = expectsReply
         self.replyExpectationConfidence = replyExpectationConfidence
-        self.verdictSource = verdictSource
     }
 }
 
 extension StowerDebtItem {
-    /// Builds a board row from a judged conversation, copying the verdict fields.
-    internal init(state: StowerConversationState, verdict: StowerReplyExpectation) {
+    /// Builds a board row from a judged conversation, carrying only the model's
+    /// confidence — every served row is already a trusted verdict.
+    internal init(state: StowerConversationState, replyExpectationConfidence: Double) {
         self.init(
             chatID: state.chatID,
             chatTitle: state.chatTitle,
@@ -81,9 +74,7 @@ extension StowerDebtItem {
             lastMessageText: state.lastMessageText,
             lastMessageTimestamp: state.lastMessageTimestamp,
             deepLink: state.deepLink,
-            expectsReply: verdict.expectsReply,
-            replyExpectationConfidence: verdict.replyExpectationConfidence,
-            verdictSource: verdict.verdictSource
+            replyExpectationConfidence: replyExpectationConfidence
         )
     }
 }

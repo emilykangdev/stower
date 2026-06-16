@@ -6,7 +6,7 @@ internal struct StowerCLI: AsyncParsableCommand {
     internal static let configuration = CommandConfiguration(
         commandName: "stower",
         abstract: "Always-local recall over your Messages: index, search, and eval.",
-        subcommands: [IndexCommand.self, SearchCommand.self, EvalCommand.self, NoReplyCommand.self]
+        subcommands: [IndexCommand.self, SearchCommand.self, EvalCommand.self]
     )
 }
 

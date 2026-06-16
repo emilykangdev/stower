@@ -2,18 +2,18 @@ import Foundation
 
 /// The two-lens relationship-debt board the app renders.
 ///
-/// Both lenses arrive pre-ordered; the app re-sorts neither. `neglected` (the
-/// counterpart acted last) is RANKED and never filtered — you owe at least an
-/// acknowledgment regardless, and `expectsReply` only floats real questions
-/// above the chit-chat. `ghosted` (you acted last) is GATED on
-/// `expectsReply && replyExpectationConfidence >= ghostGateThreshold` and then
-/// ranked by recency, because "you sent last, no reply" is mostly benign and
-/// would flood without a gate.
+/// Both lenses arrive pre-ordered and judged-only; the app re-sorts neither. Each
+/// gates on the model's should-respond verdict, differing only by direction:
+/// `neglected` (the counterpart acted last) gates on the should-respond boolean
+/// and ranks by recency; `ghosted` (you acted last) additionally gates on
+/// `replyExpectationConfidence >= ghostGateThreshold` because "you sent last, no
+/// reply" is noisier and would flood without it. A conversation the model has not
+/// judged appears in neither list.
 public struct StowerDebtBoard: Sendable, Equatable {
-    /// Conversations the counterpart left with you, ranked, never filtered.
+    /// Conversations the counterpart left with you, judged then ranked.
     public let neglected: [StowerDebtItem]
 
-    /// Conversations you left on a real ask with no reply, gated then ranked.
+    /// Conversations you left on a statement worth a reply, judged then ranked.
     public let ghosted: [StowerDebtItem]
 
     /// Creates a debt board from its two pre-ordered lenses.

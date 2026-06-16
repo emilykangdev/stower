@@ -39,7 +39,7 @@ flowchart TD
     model[("Core ML model dir<br/>mlpackage · tokenizer · manifest.json")]
     convert -->|"one-time, offline"| model
 
-    cli["stower CLI<br/>index · search · eval · no-reply"]
+    cli["stower CLI<br/>index · search · eval"]
     mac["StowerMac<br/>branch 2 · planned"]
     msgs["StowerMessages<br/>chat.db reader + Contacts"]
 
@@ -109,10 +109,6 @@ swift build -c release
 .build/release/stower index --days 180
 .build/release/stower search "the pizza place Sam mentioned"
 .build/release/stower search "quarterly numbers" --arm fts   # keyword-only, no model needed
-
-# 4. See the 1:1 conversations you haven't replied to (reads raw messages, not
-#    the index; needs no model). Local-only — do NOT paste its output anywhere.
-.build/release/stower no-reply --unanswered-days 14
 ```
 
 The model and index default to `~/Library/Application Support/Stower/` so

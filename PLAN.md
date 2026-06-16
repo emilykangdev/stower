@@ -6,18 +6,43 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
-- 2026-06-14: Relationship "no-reply" engine in `StowerMessages` (feature 5).
+- 2026-06-15: Relationship-debt engine went **FM-only and judged-only**
+  (remove-heuristic-reply-judge). The heuristic judge
+  (`StowerHeuristicReplyJudge`), the judge-mode concept (`StowerReplyJudgeMode` /
+  `StowerDebtConfig.judgeMode`), the `.heuristic` verdict-source token, and the
+  standalone reply-debt measurement CLI subcommand are deleted — there is **no
+  heuristic fallback**;
+  on an unsupported Mac the engine throws rather than degrading. The board is
+  judged-only: a conversation reaches Neglected or Ghosted only once the on-device
+  model has judged it and a trusted verdict is cached (no pending row). Both lists
+  gate on the model's should-respond verdict, differing only by direction —
+  `StowerNoReplyPolicy` (Neglected, counterpart-last) gates on the boolean;
+  `StowerGhostedPolicy` (Ghosted, you-last) keeps an additional `ghostGateThreshold`
+  confidence gate. The public row `StowerDebtItem` collapsed to display fields +
+  `replyExpectationConfidence` (dropped `verdictSource`, `expectsReply`, `reason`).
+  Availability is typed: `modelAvailability() async -> StowerModelAvailability`
+  routes at startup, and `loadDebtBoard` throws
+  `StowerMessagesError.languageModelUnavailable(reason)`
+  (`StowerModelUnavailableReason`) BEFORE opening `chat.db` on an unavailable
+  device. `refreshJudgments` is `async throws -> StowerRefreshSummary?` (`nil` =
+  coalesced; throws `languageModelUnavailable` when unavailable); the summary
+  carries `changedChatIDs`, `judgedCount`, `failedCount`, `totalCount`, and the app
+  clears its cold-start loading screen at `judged + failed == total` and reloads
+  when `changedChatIDs` is non-empty. Each record is judged under a per-record FM
+  timeout; an app-owned `modelIdentity` epoch folds into the judge version and the
+  input hash fingerprints the raw message text. `Scripts/precheck.sh` green.
+- 2026-06-14: Relationship-debt engine groundwork in `StowerMessages` (feature 5).
   Two-layer, pure, reads only the local 180-day window on the existing read-only
   snapshot — index path untouched. Layer 1 is a neutral facts extractor
   (`StowerConversationState` / `StowerConversationStateExtractor`): true last act
   + `lastMessageKind` from a chronology read over all content types, recent
   reciprocity, and tapback-clearing via chat-provenance reactions with
-  prefix-normalized (`p:N/`, `bp:`) target GUIDs. Layer 2 is the first policy over
-  those facts (`StowerNoReplyPolicy` / `noReplyCandidates`): 1:1 → recency-gated
-  mutuality → counterpart-last → not tapback-cleared → ≥ threshold, ranked
-  most-recently-unanswered first. `stower no-reply` CLI is the local measurement
-  vehicle. 21 new tests; `Scripts/precheck.sh` green. Deferred to v1.1: precise
-  attachment kind via the `attachment`-table UTI, per-contact dedupe.
+  prefix-normalized (`p:N/`, `bp:`) target GUIDs. Layer 2 is the Neglected policy
+  over those facts (`StowerNoReplyPolicy`): 1:1 → recency-gated mutuality →
+  counterpart-last → not tapback-cleared → ≥ threshold, ranked
+  most-recently-unanswered first. 21 new tests; `Scripts/precheck.sh` green.
+  Deferred to v1.1: precise attachment kind via the `attachment`-table UTI,
+  per-contact dedupe.
 
 - 2026-06-13: Hybrid retrieval substrate + permanent `stower` CLI (feature 4).
   `StowerCore` gained: `StowerEmbeddingStore` on its own `embeddings.sqlite`

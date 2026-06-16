@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Testing
 
 @testable import StowerMessages
@@ -111,5 +112,67 @@ internal struct StowerReplyVerdictCacheTests {
 
         let bumped = try StowerReplyVerdictCache(path: path, schemaVersion: 2)
         #expect(try await bumped.existing(judgeVersion: "v1", guid: "g1", inputHash: "h1") == nil)
+    }
+
+    @Test("a row with an unrecognized source token resolves to a miss (trust on read)")
+    internal func unknownSourceTokenIsMiss() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stower-verdict-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent(StowerReplyVerdictCache.fileName).path
+
+        // Create the cache (and its schema), then inject a row whose verdict_source
+        // is a now-unknown/garbled token directly — the only way to express a
+        // non-trusted source, since the typed API exposes only `.languageModel`.
+        let cache = try StowerReplyVerdictCache(path: path)
+        let raw = try DatabaseQueue(path: path)
+        try await raw.write { database in
+            try database.execute(
+                sql: """
+                    INSERT INTO verdict (
+                      judge_version, message_guid, input_hash,
+                      expects_reply, confidence, verdict_source
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: ["v1", "g1", "h1", true, 0.9, "heuristic"]
+            )
+        }
+
+        // The trusted-only read resolves the unknown token to a miss → re-judge.
+        #expect(try await cache.existing(judgeVersion: "v1", guid: "g1", inputHash: "h1") == nil)
+    }
+
+    @Test("upsert rejects a non-finite or out-of-range confidence (trust on write)")
+    internal func upsertRejectsBadPayload() async throws {
+        let cache = try StowerReplyVerdictCache.inMemory()
+        let outOfRange = StowerReplyExpectation(
+            expectsReply: true,
+            replyExpectationConfidence: 2.0,
+            verdictSource: .languageModel
+        )
+        await #expect(throws: StowerReplyVerdictCacheError.self) {
+            try await cache.upsert(
+                judgeVersion: "v1",
+                guid: "g1",
+                inputHash: "h1",
+                verdict: outOfRange
+            )
+        }
+        let nonFinite = StowerReplyExpectation(
+            expectsReply: true,
+            replyExpectationConfidence: .nan,
+            verdictSource: .languageModel
+        )
+        await #expect(throws: StowerReplyVerdictCacheError.self) {
+            try await cache.upsert(
+                judgeVersion: "v1",
+                guid: "g2",
+                inputHash: "h2",
+                verdict: nonFinite
+            )
+        }
+        // Neither bad write persisted anything.
+        #expect(try await cache.existing(judgeVersion: "v1", guid: "g1", inputHash: "h1") == nil)
     }
 }

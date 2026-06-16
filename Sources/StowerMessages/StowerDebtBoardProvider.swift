@@ -1,19 +1,40 @@
 import Foundation
+import os
 
 /// The production `StowerDebtBoardProviding` actor.
 ///
-/// Orchestrates: a fresh reader per load (M3) → states with last-act GUIDs →
-/// cached language-model or inline heuristic verdicts → the two policies → the
-/// board. The load path never reaches a model; only `refreshJudgments` does. The
-/// judge is chosen by `judgeMode` and runtime availability, and the cache is
-/// disposable — any cache fault degrades to a heuristic board (M9).
+/// Orchestrates: a startup availability gate → a fresh reader per load → states
+/// with last-act GUIDs → trusted cached language-model verdicts → the two
+/// policies → a judged-only board. The load path never reaches a model and serves
+/// only conversations a trusted verdict is cached for; the background
+/// `refreshJudgments` is the only model caller and the only cache writer. The
+/// cache is the trust boundary and is disposable — any cache fault is a miss,
+/// re-judged later (M9). The judging + timeout mechanics live in the matching
+/// `extension` file.
 public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
-    private let readerFactory: @Sendable () throws -> StowerConversationFactsReading
-    private let heuristicJudge: StowerReplyExpectationJudge
-    private let resolveLanguageModelJudge: @Sendable () -> StowerReplyExpectationJudge?
-    private let cache: StowerReplyVerdictCaching?
-    private let windowDays: Int
-    private var inFlightRefreshKeys: Set<String> = []
+    internal let readerFactory: @Sendable () throws -> StowerConversationFactsReading
+    internal let resolveLanguageModelJudge: @Sendable () -> StowerReplyExpectationJudge?
+    internal let modelAvailabilityResolver: @Sendable () async -> StowerModelAvailability
+    internal let cache: StowerReplyVerdictCaching?
+    internal let windowDays: Int
+
+    /// The app-owned cache-invalidation epoch this provider keys verdicts under.
+    ///
+    /// Set from the initializer's `modelIdentity:` argument and exposed back so the
+    /// app can read the epoch it supplied. There is no engine-provided default —
+    /// the app bumps it only on a validated judge-behavior change.
+    public let modelIdentity: String
+    private var refreshInFlight = false
+
+    /// Per-record cap on one judge call so a hung model can't stall refresh.
+    ///
+    /// On timeout the record is counted `failed` and retried next pass. Lives on
+    /// the provider (its refresh enforces the cap) — not on the `@available`
+    /// judge, which the non-gated provider couldn't reference without an
+    /// availability dance. Tune to real on-device FM latency.
+    internal static let perRecordTimeout: Duration = .seconds(20)
+
+    internal static let logger = Logger(subsystem: "com.stower.messages", category: "reply-refresh")
 
     /// The default verdict-cache location under Application Support.
     public static var defaultCacheURL: URL? {
@@ -39,49 +60,64 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     ///   - sourceURL: The Messages `chat.db` to read.
     ///   - contactsResolver: The handle-to-name resolver; denial degrades to raw
     ///     handles (M4), never an error.
-    ///   - cacheURL: Where to persist language-model verdicts; a fault here
-    ///     leaves the cache absent and the board heuristic (M9).
+    ///   - cacheURL: Where to persist trusted verdicts; a fault here leaves the
+    ///     cache absent and the board empty until refresh can rebuild it (M9).
     ///   - windowDays: How far back to read facts.
+    ///   - modelIdentity: The app-owned cache-invalidation epoch, folded into the
+    ///     judge version. No default — the app supplies and bumps it on a
+    ///     validated model behavior change so a silent OS model revision can't
+    ///     keep stale verdicts.
     public init(
         sourceURL: URL = StowerChatDatabaseReader.defaultSourceURL,
         contactsResolver: StowerContactsResolver = .live(),
         cacheURL: URL? = StowerDebtBoardProvider.defaultCacheURL,
-        windowDays: Int = 180
+        windowDays: Int = 180,
+        modelIdentity: String
     ) {
         readerFactory = {
             try StowerChatDatabaseReader(sourceURL: sourceURL, contactsResolver: contactsResolver)
         }
-        heuristicJudge = StowerHeuristicReplyJudge()
         // Resolve the system judge per call, not once at init: a provider built
         // while Apple Intelligence is still downloading picks the model up when it
-        // comes online, and stops using it if availability later goes away.
+        // comes online.
         resolveLanguageModelJudge = { Self.makeSystemLanguageModelJudge() }
+        modelAvailabilityResolver = { StowerLanguageModelAvailability.current() }
         cache = cacheURL.flatMap(Self.openCache)
         self.windowDays = windowDays
+        self.modelIdentity = modelIdentity
     }
 
     /// Creates a provider from injected dependencies, for tests.
     ///
-    /// A `nil` `languageModelJudge` models an unavailable system model (all rows
-    /// fall to the heuristic); a spy judge models availability. A
-    /// `languageModelJudgeResolver` models availability changing over time — it
-    /// is consulted until it first yields a judge, then that judge is cached.
+    /// A `languageModelJudgeResolver` models availability changing over time — it
+    /// is consulted on each pass. `modelAvailabilityResolver` injects each typed
+    /// availability state so tests assert load/refresh route before touching the
+    /// reader. Availability is no longer inferred from a nil judge.
     internal init(
         readerFactory: @escaping @Sendable () throws -> StowerConversationFactsReading,
-        heuristicJudge: StowerReplyExpectationJudge = StowerHeuristicReplyJudge(),
         languageModelJudge: StowerReplyExpectationJudge?,
         cache: StowerReplyVerdictCaching?,
         windowDays: Int = 180,
-        languageModelJudgeResolver: (@Sendable () -> StowerReplyExpectationJudge?)? = nil
+        modelIdentity: String = "test-model-identity",
+        languageModelJudgeResolver: (@Sendable () -> StowerReplyExpectationJudge?)? = nil,
+        modelAvailabilityResolver: @escaping @Sendable () async -> StowerModelAvailability = {
+            .available
+        }
     ) {
         self.readerFactory = readerFactory
-        self.heuristicJudge = heuristicJudge
         resolveLanguageModelJudge = languageModelJudgeResolver ?? { languageModelJudge }
+        self.modelAvailabilityResolver = modelAvailabilityResolver
         self.cache = cache
         self.windowDays = windowDays
+        self.modelIdentity = modelIdentity
     }
 
-    /// Builds the board from a fresh snapshot plus cached/heuristic verdicts.
+    /// Whether the on-device language model can serve verdicts right now.
+    public func modelAvailability() async -> StowerModelAvailability {
+        await modelAvailabilityResolver()
+    }
+
+    /// Builds the judged-only board from a fresh snapshot plus trusted verdicts.
     public func loadDebtBoard(config: StowerDebtConfig, now: Date) async throws -> StowerDebtBoard {
         // A threshold past the read window could only ever match unread history,
         // so it would silently return an empty board. Fail loud: widen windowDays.
@@ -91,10 +127,20 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
                     + "windowDays (\(windowDays)); widen the read window to cover the threshold."
             )
         }
+        // Availability is checked AFTER config bounds but BEFORE the reader, so an
+        // unsupported device never opens the private database. A supported device
+        // still surfaces FDA / source errors normally.
+        if case .unavailable(let reason) = await modelAvailabilityResolver() {
+            throw StowerMessagesError.languageModelUnavailable(reason)
+        }
         let reader = try readerFactory()
         let records = try await reader.conversationStateRecords(windowDays: windowDays, now: now)
-        let judge = activeLanguageModelJudge(for: config.judgeMode)
-        let judged = await judgedConversations(records: records, languageModelJudge: judge)
+        let judged: [StowerJudgedConversation]
+        if let judge = resolveLanguageModelJudge() {
+            judged = await judgedConversations(records: records, judge: judge)
+        } else {
+            judged = []
+        }
         let neglected = StowerNoReplyPolicy.neglected(
             from: judged,
             unansweredForDays: config.unansweredForDays,
@@ -121,163 +167,43 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     public func refreshJudgments(
         config: StowerDebtConfig,
         now: Date
-    ) async -> StowerRefreshSummary {
-        guard let judge = activeLanguageModelJudge(for: config.judgeMode), let cache,
-            let reader = try? readerFactory(),
-            let records = try? await reader.conversationStateRecords(
-                windowDays: windowDays,
-                now: now
+    ) async throws -> StowerRefreshSummary? {
+        // Single-flight FIRST, before availability: a coalesced caller always gets
+        // `nil`, even if availability changed while a pass was in flight. `nil`
+        // means exactly "coalesced" — never a `0/0/0` that would clear loading.
+        guard !refreshInFlight else { return nil }
+        refreshInFlight = true
+        defer { refreshInFlight = false }
+
+        // Re-resolved each (non-coalesced) pass so a mid-session change (AI turned
+        // off, model downloading) throws and the app re-routes — never a silent
+        // no-op. Symmetric with `loadDebtBoard`.
+        if case .unavailable(let reason) = await modelAvailabilityResolver() {
+            throw StowerMessagesError.languageModelUnavailable(reason)
+        }
+        // Pre-loop cancellation (before `totalCount` exists) has no meaningful
+        // partial summary, so it propagates via `throws`.
+        try Task.checkCancellation()
+
+        let reader = try readerFactory()
+        let records = try await reader.conversationStateRecords(windowDays: windowDays, now: now)
+
+        // First-run ABSENCE is created at init (the file is made on open); only a
+        // create/open FAILURE — or a `cacheURL: nil` no-cache config — leaves
+        // `cache == nil`, in which case no trusted verdict can ever persist. Report
+        // all-failed so loading clears and the next pass may rebuild the cache.
+        guard let cache, let judge = resolveLanguageModelJudge() else {
+            return StowerRefreshSummary(
+                changedChatIDs: [],
+                judgedCount: 0,
+                failedCount: records.count,
+                totalCount: records.count
             )
-        else {
-            return StowerRefreshSummary(changedChatIDs: [])
         }
-        // Background, off-hot-path work (the load already painted via cache +
-        // heuristic). On-device inference is serial by design — the system model
-        // is a single shared resource, and live streaming of partial boards is a
-        // v1.1 non-goal. Judge most-recently-active threads FIRST, though, so the
-        // conversations the user is most likely looking at get a smart verdict
-        // soonest: each verdict is upserted as it lands, so the next load reflects
-        // whatever has been judged so far.
-        let ordered = records.sorted {
-            $0.state.lastMessageTimestamp > $1.state.lastMessageTimestamp
-        }
-        var changed: [String] = []
-        for record in ordered {
-            if Task.isCancelled { break }
-            if let chatID = await refreshOne(record: record, judge: judge, cache: cache) {
-                changed.append(chatID)
-            }
-        }
-        return StowerRefreshSummary(changedChatIDs: changed)
+        return await runRefreshPass(records: records, judge: judge, cache: cache)
     }
 
-    // MARK: - Load path (never calls the model)
-
-    private func judgedConversations(
-        records: [StowerConversationStateRecord],
-        languageModelJudge: StowerReplyExpectationJudge?
-    ) async -> [StowerJudgedConversation] {
-        var result: [StowerJudgedConversation] = []
-        result.reserveCapacity(records.count)
-        // The cache is disposable (M9): the first read fault disables it for the
-        // rest of this load, so a locked or corrupt store can never block the
-        // board past a single failed lookup.
-        var cacheReadable = languageModelJudge != nil && cache != nil
-        for record in records {
-            var verdict: StowerReplyExpectation?
-            if cacheReadable, let languageModelJudge, let cache {
-                do {
-                    verdict = try await cache.existing(
-                        judgeVersion: languageModelJudge.judgeVersion,
-                        guid: record.lastMessageGUID,
-                        inputHash: inputHash(for: record.state)
-                    )
-                } catch {
-                    cacheReadable = false
-                }
-            }
-            let resolved: StowerReplyExpectation
-            if let verdict {
-                resolved = verdict
-            } else {
-                resolved = await heuristicVerdict(for: record.state)
-            }
-            result.append(StowerJudgedConversation(state: record.state, verdict: resolved))
-        }
-        return result
-    }
-
-    private func heuristicVerdict(
-        for state: StowerConversationState
-    ) async -> StowerReplyExpectation {
-        let verdict = try? await heuristicJudge.judge(
-            messageText: state.lastMessageText,
-            context: []
-        )
-        return verdict
-            ?? StowerReplyExpectation(
-                expectsReply: false,
-                replyExpectationConfidence: 0,
-                verdictSource: .heuristic
-            )
-    }
-
-    // MARK: - Refresh path (the only model caller)
-
-    private func refreshOne(
-        record: StowerConversationStateRecord,
-        judge: StowerReplyExpectationJudge,
-        cache: StowerReplyVerdictCaching
-    ) async -> String? {
-        let hash = inputHash(for: record.state)
-        let key = "\(judge.judgeVersion)\u{1}\(record.lastMessageGUID)\u{1}\(hash)"
-        // Claim the key synchronously, before any await, so an overlapping
-        // refresh for the same message can't slip past the check (M16).
-        guard !inFlightRefreshKeys.contains(key) else { return nil }
-        inFlightRefreshKeys.insert(key)
-        defer { inFlightRefreshKeys.remove(key) }
-        if let existing = try? await cache.existing(
-            judgeVersion: judge.judgeVersion,
-            guid: record.lastMessageGUID,
-            inputHash: hash
-        ), existing.verdictSource == .languageModel {
-            return nil
-        }
-        // A model error or cancellation must NOT cache a heuristic verdict under
-        // the model's judge version (M13); skip and retry next refresh.
-        let verdict = try? await judge.judge(
-            messageText: record.state.lastMessageText,
-            context: []
-        )
-        guard let verdict, verdict.verdictSource == .languageModel else {
-            return nil
-        }
-        do {
-            try await cache.upsert(
-                judgeVersion: judge.judgeVersion,
-                guid: record.lastMessageGUID,
-                inputHash: hash,
-                verdict: verdict
-            )
-        } catch {
-            // The disposable cache (M9) refused the write: don't report a change
-            // we didn't persist, or the app reloads to the same heuristic verdict.
-            return nil
-        }
-        return record.state.chatID
-    }
-
-    // MARK: - Judge selection + hashing
-
-    private func activeLanguageModelJudge(
-        for mode: StowerReplyJudgeMode
-    ) -> StowerReplyExpectationJudge? {
-        switch mode {
-        case .heuristic:
-            return nil
-        case .languageModel, .automatic:
-            // Re-resolve every time so the judge tracks CURRENT availability — it
-            // appears when Apple Intelligence comes online and disappears if it
-            // goes away again. Availability check + judge construction are cheap
-            // and never call the model, so the load path stays structural.
-            return resolveLanguageModelJudge()
-        }
-    }
-
-    /// Hashes the cache-validity inputs (M11): normalized text plus the kind.
-    ///
-    /// Context is empty in v1, so it adds no component.
-    private func inputHash(for state: StowerConversationState) -> String {
-        let normalized = (state.lastMessageText ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        return stowerShortHash(normalized + "\u{1}" + String(describing: state.lastMessageKind))
-    }
-
-    private static func makeSystemLanguageModelJudge() -> StowerReplyExpectationJudge? {
-        guard StowerLanguageModelAvailability.isAvailable() else {
-            return nil
-        }
+    internal static func makeSystemLanguageModelJudge() -> StowerReplyExpectationJudge? {
         if #available(macOS 26, iOS 26, *) {
             return StowerFoundationModelReplyJudge()
         }
@@ -289,7 +215,8 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     /// Disposable (M9): a corrupt or unreadable store must be REBUILT, not kept as
     /// a permanently dead cache that silently disables every model verdict for the
     /// provider's lifetime. Drop the file (and its WAL sidecars) and retry once;
-    /// fall back to a heuristic-only board only if recreation also fails.
+    /// return `nil` only if recreation also fails (then refresh reports all-failed
+    /// and the next provider may rebuild it).
     internal static func openCache(at url: URL) -> StowerReplyVerdictCaching? {
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),

@@ -20,6 +20,10 @@ public enum StowerMessagesError: Error, LocalizedError, Sendable {
     /// A caller-supplied argument was out of range.
     case invalidArgument(String)
 
+    /// The on-device language model can't serve verdicts; the reason routes the
+    /// app to the right onboarding / unsupported screen.
+    case languageModelUnavailable(StowerModelUnavailableReason)
+
     /// A user-facing description of the failure.
     public var errorDescription: String? {
         switch self {
@@ -35,6 +39,22 @@ public enum StowerMessagesError: Error, LocalizedError, Sendable {
             return "Messages contains an invalid row: \(reason)"
         case .invalidArgument(let reason):
             return "Invalid argument: \(reason)"
+        case .languageModelUnavailable(let reason):
+            return Self.unavailableDescription(reason)
+        }
+    }
+
+    private static func unavailableDescription(_ reason: StowerModelUnavailableReason) -> String {
+        switch reason {
+        case .deviceNotEligible:
+            return "This Mac can't run Apple Intelligence. Stower requires a supported Mac "
+                + "on macOS 26 or later."
+        case .appleIntelligenceNotEnabled:
+            return "Turn on Apple Intelligence in System Settings to use Stower."
+        case .modelNotReady:
+            return "Apple Intelligence is still downloading — Stower will work once it finishes."
+        case .unknown:
+            return "On-device language model unavailable."
         }
     }
 }

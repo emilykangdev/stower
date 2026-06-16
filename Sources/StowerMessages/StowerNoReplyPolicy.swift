@@ -1,18 +1,21 @@
 import Foundation
 
-/// The Neglected lens: the counterpart acted last and you haven't replied.
+/// The Neglected lens: the counterpart sent a statement worth responding to and
+/// you have neither replied nor reacted.
 ///
-/// Pure and stateless. RANKS, never filters on the verdict — they messaged you
-/// and you owe at least an acknowledgment regardless, so every qualifying row
-/// stays; `expectsReply` only floats real questions above the chit-chat. The
-/// structural gate is unchanged from the original no-reply pass (1:1,
-/// mutuality, counterpart-last, not tapped back, unanswered long enough).
+/// Pure and stateless, and judged-only: a row qualifies only when the model
+/// judged the counterpart's last act as one the user should respond to
+/// (`expectsReply`). Surfacing unjudged or "okay-to-ignore" rows would train
+/// compulsive replying, so the gate is the product's value. The structural gate
+/// is the original no-reply pass (1:1, mutuality, counterpart-last, not tapped
+/// back, unanswered long enough); unlike Ghosted, Neglected gates on the
+/// should-respond boolean only, not a confidence threshold.
 internal enum StowerNoReplyPolicy {
     /// Selects and ranks the conversations you owe a reply to.
     ///
-    /// Ranks two-tier: `expectsReply` first, then most-recently-unanswered, with
-    /// deterministic ties (older timestamp loses, then `chatID`). A negative
-    /// threshold or floor fails closed (no rows) rather than inverting the gate.
+    /// Ranked by most-recently-unanswered with deterministic ties (older
+    /// timestamp loses, then `chatID`). A negative threshold or floor fails closed
+    /// (no rows) rather than inverting the gate.
     internal static func neglected(
         from judged: [StowerJudgedConversation],
         unansweredForDays: Int,
@@ -27,37 +30,34 @@ internal enum StowerNoReplyPolicy {
             judged
             .filter {
                 qualifies(
-                    $0.state,
+                    $0,
                     minimumReciprocity: minimumReciprocity,
                     threshold: threshold,
                     now: now
                 )
             }
-            .sorted(by: neglectedRank)
-            .map { StowerDebtItem(state: $0.state, verdict: $0.verdict) }
+            .sorted { rank($0.state, $1.state) }
+            .map {
+                StowerDebtItem(
+                    state: $0.state,
+                    replyExpectationConfidence: $0.verdict.replyExpectationConfidence
+                )
+            }
     }
 
     private static func qualifies(
-        _ state: StowerConversationState,
+        _ judged: StowerJudgedConversation,
         minimumReciprocity: Int,
         threshold: Double,
         now: Date
     ) -> Bool {
-        state.isOneToOne
+        let state = judged.state
+        return state.isOneToOne
             && state.recentExchangeCount >= minimumReciprocity
             && state.lastActor == .counterpart
             && !state.userReactedToLastMessage
             && now.timeIntervalSince(state.lastMessageTimestamp) >= threshold
-    }
-
-    private static func neglectedRank(
-        _ lhs: StowerJudgedConversation,
-        _ rhs: StowerJudgedConversation
-    ) -> Bool {
-        if lhs.verdict.expectsReply != rhs.verdict.expectsReply {
-            return lhs.verdict.expectsReply
-        }
-        return rank(lhs.state, rhs.state)
+            && judged.verdict.expectsReply
     }
 
     /// The total recency order shared with `StowerGhostedPolicy` (M-E2): newer

@@ -5,7 +5,7 @@ import Testing
 
 @Suite("StowerNoReplyPolicy")
 internal struct StowerNoReplyPolicyTests {
-    @Test("a recent two-way thread the user owes becomes a row")
+    @Test("a recent two-way thread the model says to respond to becomes a row")
     internal func qualifyingThreadSurfaces() {
         let result = neglected(for: [judged(state(chatID: "a"))])
         #expect(result.map(\.chatID) == ["a"])
@@ -40,12 +40,22 @@ internal struct StowerNoReplyPolicyTests {
         #expect(neglected(for: [cleared]).isEmpty)
     }
 
-    @Test("a non-text last act is surfaced with its kind and nil text, not suppressed")
-    internal func nonTextSurfaced() throws {
+    @Test("a judged not-should-respond thread is gated out, not just ranked lower")
+    internal func notShouldRespondGatedOut() {
+        let input = [
+            judged(state(chatID: "ask"), expectsReply: true),
+            judged(state(chatID: "chitchat"), expectsReply: false)
+        ]
+        // The gate is the product's value: only should-respond statements surface.
+        #expect(neglected(for: input).map(\.chatID) == ["ask"])
+    }
+
+    @Test("a should-respond non-text last act surfaces with its kind and nil text")
+    internal func nonTextShouldRespondSurfaced() throws {
         let input = [
             judged(
                 state(chatID: "photo", lastMessageKind: .attachment, lastMessageText: nil),
-                expectsReply: false
+                expectsReply: true
             )
         ]
         let row = try #require(neglected(for: input).first)
@@ -69,15 +79,15 @@ internal struct StowerNoReplyPolicyTests {
         #expect(neglected(for: qualifying, unansweredForDays: 14, minimumReciprocity: -1).isEmpty)
     }
 
-    @Test("ranks expectsReply-true first, then most-recently-unanswered, ties by chatID")
-    internal func rankingTwoTier() {
+    @Test("ranks most-recently-unanswered first, ties broken by chatID")
+    internal func ranksByRecencyThenChatID() {
         let input = [
-            judged(state(chatID: "chitchat", daysAgo: 15), expectsReply: false),
-            judged(state(chatID: "older-ask", daysAgo: 30), expectsReply: true),
-            judged(state(chatID: "newer-ask", daysAgo: 16), expectsReply: true)
+            judged(state(chatID: "older", daysAgo: 30)),
+            judged(state(chatID: "newer", daysAgo: 16)),
+            judged(state(chatID: "tie-b", daysAgo: 20)),
+            judged(state(chatID: "tie-a", daysAgo: 20))
         ]
-        // Both asks rank above the (even newer) chit-chat; never drops a row.
-        #expect(neglected(for: input).map(\.chatID) == ["newer-ask", "older-ask", "chitchat"])
+        #expect(neglected(for: input).map(\.chatID) == ["newer", "tie-a", "tie-b", "older"])
     }
 }
 
@@ -109,7 +119,7 @@ extension StowerNoReplyPolicyTests {
             verdict: StowerReplyExpectation(
                 expectsReply: expectsReply,
                 replyExpectationConfidence: confidence,
-                verdictSource: .heuristic
+                verdictSource: .languageModel
             )
         )
     }

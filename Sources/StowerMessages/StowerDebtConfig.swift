@@ -13,26 +13,21 @@ public struct StowerDebtConfig: Sendable {
     /// Minimum recent reciprocal exchanges for a thread to count as two-way.
     public var minimumReciprocity: Int
 
-    /// How to pick the reply-expectation judge for this call.
-    public var judgeMode: StowerReplyJudgeMode
-
     /// Ghosted gate floor: a row needs `expectsReply && confidence >= this`.
     ///
-    /// The default reproduces the binary gate on the model path (a confident ask
-    /// passes, a confident non-ask gates out) and admits graded-confident
-    /// heuristic asks while excluding the weakest bare-`?` signal.
+    /// The default reproduces the binary gate on the model path (a confident
+    /// should-respond passes, a confident non-ask gates out) and tunes how
+    /// aggressively the noisier "you sent last" lens admits graded asks.
     public var ghostGateThreshold: Double
 
     /// Creates a debt-board configuration.
     public init(
         unansweredForDays: Int,
         minimumReciprocity: Int = 1,
-        judgeMode: StowerReplyJudgeMode = .automatic,
         ghostGateThreshold: Double = 0.5
     ) {
         self.unansweredForDays = unansweredForDays
         self.minimumReciprocity = minimumReciprocity
-        self.judgeMode = judgeMode
         self.ghostGateThreshold = ghostGateThreshold
     }
 }

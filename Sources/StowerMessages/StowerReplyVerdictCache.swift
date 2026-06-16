@@ -1,19 +1,28 @@
 import Foundation
 import GRDB
 
+/// A rejected verdict-cache write.
+internal enum StowerReplyVerdictCacheError: Error, Equatable {
+    /// The verdict's confidence was non-finite or outside `0...1`.
+    case invalidConfidence
+}
+
 /// Persistent, judge-keyed cache of reply-expectation verdicts.
 ///
 /// Mirrors `StowerEmbeddingStore`: its own `reply-verdicts.sqlite`, keyed by
 /// `(judge_version, message_guid)` with an `input_hash` so an edited message or
 /// a changed judge re-judges instead of serving a stale verdict. It lets
-/// `loadDebtBoard` use a smart language-model verdict without ever blocking on
+/// `loadDebtBoard` read a trusted language-model verdict without ever blocking on
 /// inference — `refreshJudgments` fills it in the background.
 ///
-/// Stores no plaintext and no long-form content (M10): only hashes, the boolean,
-/// the confidence, and the source token. Disposable (M9): a corruption, lock, or
-/// migration fault must degrade the provider to a heuristic board, never block
-/// it — so every call site wraps cache access in `try?`. Internal: it is an
-/// implementation detail of `StowerDebtBoardProvider`, not a public seam.
+/// The trust boundary: writes reject a malformed payload, and reads resolve an
+/// unknown/garbled source token to a miss, so the cache itself — not just a
+/// provider check — enforces what may reach the board. Stores no plaintext and no
+/// long-form content (M10): only hashes, the boolean, the confidence, and the
+/// source token. Disposable (M9): a corruption, lock, or migration fault is a
+/// miss, re-judged later, never a block — so every call site wraps cache access
+/// in `try?`. Internal: it is an implementation detail of
+/// `StowerDebtBoardProvider`, not a public seam.
 internal actor StowerReplyVerdictCache {
     /// The cache schema version; a mismatch drops the cache, nothing else.
     internal static let currentVersion = 1
@@ -93,15 +102,22 @@ internal actor StowerReplyVerdictCache {
 
     /// Inserts or replaces the verdict for `(judgeVersion, guid)`.
     ///
-    /// Idempotent (M16): a second upsert of the same key updates the one row in
-    /// place rather than duplicating it, so an overlapping refresh wastes no
-    /// storage and never double-counts.
+    /// The cache is the trust boundary: it rejects a malformed payload (a
+    /// non-finite or out-of-`0...1` confidence) so a future caller can't poison
+    /// the cache by bypassing a provider check. Idempotent (M16): a second upsert
+    /// of the same key updates the one row in place rather than duplicating it, so
+    /// an overlapping refresh wastes no storage and never double-counts.
     internal func upsert(
         judgeVersion: String,
         guid: String,
         inputHash: String,
         verdict: StowerReplyExpectation
     ) throws {
+        guard verdict.replyExpectationConfidence.isFinite,
+            (0...1).contains(verdict.replyExpectationConfidence)
+        else {
+            throw StowerReplyVerdictCacheError.invalidConfidence
+        }
         try databaseQueue.write { database in
             try database.execute(
                 sql: """

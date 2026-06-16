@@ -1,5 +1,29 @@
 # Stower — The Mac App Contract
 
+> **Breaking contract delta (2026-06-15, FM-only judged-only engine — landed).** The app branch
+> must absorb all of this. Most are compile-loud; the silent one is behavioral — there is no
+> instant board, so the app must show a loading screen at cold start.
+>
+> | Change | Old | New |
+> |---|---|---|
+> | Judge mode | `StowerDebtConfig.judgeMode` / `StowerReplyJudgeMode` | **removed** (one judge) |
+> | Verdict source | `verdictSource` on the public row; `.heuristic`/`.languageModel` | **removed from the public row** |
+> | Row verdict fields | `expectsReply` + `verdictSource` on the row | **removed**; `isAuthoritative` / a pending placeholder / `reason` not added; keep `replyExpectationConfidence` |
+> | Unjudged rows | a cache miss became a heuristic row | **never served** — judged-only board |
+> | Neglected | ranked, never filtered ("you owe an ack regardless") | **gates** on the model's should-respond verdict |
+> | Unavailable model | (n/a — degraded to heuristic) | `loadDebtBoard` / `refreshJudgments` throw `languageModelUnavailable(StowerModelUnavailableReason)` |
+> | Availability check | (none) | public `modelAvailability() async -> StowerModelAvailability` |
+> | Refresh summary | `init(changedChatIDs:)` + `changedCount` | `init(changedChatIDs:judgedCount:failedCount:totalCount:)` + public `judgedCount`/`failedCount`/`totalCount`; `changedCount` retained |
+> | Refresh return | `async -> StowerRefreshSummary` | `async throws -> StowerRefreshSummary?` (`nil` = coalesced; throws when unavailable) |
+> | Model identity | (n/a — implicit) | **required** `modelIdentity:` on the `StowerDebtBoardProvider` init (cache-invalidation epoch; no default — the app supplies and bumps it) |
+> | Cold start | paint immediately | **loading screen** until `judged + failed == total`, then board / "all caught up" |
+>
+> `StowerReplyExpectation` and `StowerReplyJudgeSource` are now `internal` — no public API returns
+> them; the app uses `StowerDebtItem` only. The heuristic judge, the `judgeMode` knob, the
+> `.heuristic` source token, and the legacy reply-listing CLI subcommand are deleted. There is
+> **no heuristic fallback** — an unsupported Mac is routed to an onboarding/unsupported screen,
+> never given a fake board.
+
 What the StowerMac app links, what it must understand, and where the boundary
 sits between engine and UI. This is the seam the app plans against so the app
 branch and the library branches can move in parallel without colliding.
@@ -64,8 +88,9 @@ The whole consumable surface is one protocol. Concrete type:
 let provider = StowerDebtBoardProvider(
     sourceURL: .defaultSourceURL,         // the chat.db to read
     contactsResolver: .live,              // name enrichment; degrades on denial
-    cacheURL: .defaultCacheURL,           // verdict cache; nil/fault → heuristic board
-    windowDays: 180                       // how far back facts are read (NOT per-call)
+    cacheURL: .defaultCacheURL,           // verdict cache; nil/fault → empty board until refresh rebuilds
+    windowDays: 180,                      // how far back facts are read (NOT per-call)
+    modelIdentity: "stower-fm-reply-v1"   // REQUIRED, no default — app-owned cache epoch
 )
 ```
 
@@ -73,35 +98,55 @@ let provider = StowerDebtBoardProvider(
 `unansweredForDays` the app will ask for, or `loadDebtBoard` throws
 `invalidArgument` (fail-loud, by design — widen the window).
 
-### The three methods
+`modelIdentity` is a **required** parameter with **no default and no
+engine-provided epoch constant** — each caller supplies its own. It is exposed
+back as a readable `public let modelIdentity: String`. Bump it only when Stower
+intentionally changes the validated judge behavior/prompt/model; a bump
+invalidates every cache hit, so rows disappear until re-judged — treat the first
+load after a bump like a cold start / re-warm (loading screen, not "all caught
+up"). Never derive it from the OS version.
+
+### The four methods
 
 ```swift
+func modelAvailability() async -> StowerModelAvailability
 func loadDebtBoard(config: StowerDebtConfig, now: Date) async throws -> StowerDebtBoard
 func recentMessages(chatID: String, limit: Int) async throws -> [StowerThreadMessage]
-func refreshJudgments(config: StowerDebtConfig, now: Date) async -> StowerRefreshSummary
+func refreshJudgments(config: StowerDebtConfig, now: Date) async throws -> StowerRefreshSummary?
 ```
 
-### `StowerDebtBoard` — the two lenses, pre-ordered
+`modelAvailability()` is the cheap startup preflight the app calls BEFORE any
+board work. `refreshJudgments` returns `nil` only when coalesced (a pass is
+already running) and *throws* `languageModelUnavailable` when the model is
+unavailable.
+
+### `StowerDebtBoard` — the two lenses, pre-ordered and judged-only
 
 ```
 StowerDebtBoard
- ├─ neglected: [StowerDebtItem]   // counterpart acted last — RANKED, never filtered
- └─ ghosted:   [StowerDebtItem]   // you acted last on a real ask — GATED then ranked
+ ├─ neglected: [StowerDebtItem]   // counterpart acted last — GATED by direction, ranked
+ └─ ghosted:   [StowerDebtItem]   // you acted last on a statement worth a reply — GATED then ranked
 ```
 
-- **Neglected** = you owe at least an ack; never dropped. `expectsReply` floats
-  real questions above chit-chat.
-- **Ghosted** = you sent last on a real ask and got no reply. Gated on
-  `expectsReply && replyExpectationConfidence >= ghostGateThreshold`, then ranked
-  by recency. (Ungated it would flood with benign "I sent last" threads.)
+- **Judged-only.** A conversation appears only once the on-device model has judged
+  it and a trusted verdict is cached. An unjudged or cache-miss conversation is
+  invisible — never a placeholder row.
+- **Both lenses gate on the model's should-respond verdict, differing only by
+  direction.** Neglected (they sent last) gates on the should-respond boolean and
+  ranks by recency. Ghosted (you sent last) additionally gates on
+  `replyExpectationConfidence >= ghostGateThreshold`, because "I sent last" is
+  noisier and would flood without it.
 - **The app re-sorts neither lens and re-filters neither.** That logic is the
   product; duplicating it in the UI is how the two drift.
 
-### `StowerDebtItem` — one row (same shape for both lenses)
+### `StowerDebtItem` — one collapsed row (same shape for both lenses)
 
 Carries: `chatID`, `chatTitle`, `counterpart`, `counterpartHandle`,
 `lastMessageKind`, `lastMessageText?`, `lastMessageTimestamp`, `deepLink?`,
-`expectsReply`, `replyExpectationConfidence`, `verdictSource`.
+`replyExpectationConfidence`. **No `expectsReply`, `verdictSource`,
+`isAuthoritative`, a pending discriminator, or `reason`** — every served row is
+already a trusted verdict, so `replyExpectationConfidence` is display metadata,
+not a gate the app re-applies.
 
 App-side rules baked into the contract:
 - A **non-text last act** comes through with `lastMessageText == nil` and
@@ -113,8 +158,8 @@ App-side rules baked into the contract:
 
 ### `StowerDebtConfig` — per-call knobs (cheap to flip)
 
-`unansweredForDays`, `minimumReciprocity` (default 1), `judgeMode` (default
-`.automatic`), `ghostGateThreshold` (default 0.5). Flipping a runtime filter
+`unansweredForDays`, `minimumReciprocity` (default 1), `ghostGateThreshold`
+(default 0.5). There is **no `judgeMode`** — one judge. Flipping a runtime filter
 (`unansweredForDays`, `ghostGateThreshold`) re-runs only the gate+rank over
 already-cached verdicts — **it never re-invokes the model.** So a settings slider
 is instant; wire it straight to a reload.
@@ -154,37 +199,50 @@ deep-link-out to Messages.app, and the ingest schedule.
 This is the part that makes or breaks planning. Four lifecycles run underneath
 the facade; the app's job is to drive them correctly, not re-implement them.
 
-### 5a. The load → refresh → reload loop (the "feels instant" pattern)
+### 5a. The cold-start → warm → reload loop (loading screen, never instant board)
 
-`loadDebtBoard` **never runs a model.** It reads a fresh snapshot + the inline
-heuristic + any *cached* language-model verdicts, and returns at structural
-speed (target p50 < 300ms). The real model only runs in `refreshJudgments`, in
-the background.
+`loadDebtBoard` **never runs a model.** It reads a fresh snapshot + any *trusted*
+cached language-model verdicts, excludes everything unjudged, and returns at
+structural speed. At cold start nothing is judged yet, so it returns **empty
+lists** — the app shows a **loading screen, never a raw empty board.** The real
+model runs only in `refreshJudgments`, in the background.
 
-The app's loop is therefore **two-phase**:
+The app's loop is therefore:
 
 ```
-1. loadDebtBoard(config, now)      → paint immediately (heuristic / cached verdicts)
-2. refreshJudgments(config, now)   → background; returns StowerRefreshSummary
-3. if summary.changedCount > 0     → loadDebtBoard again → rows upgrade to .languageModel
+1. modelAvailability()             → route to board / onboarding / unsupported
+2. loadDebtBoard(config, now)      → cold: empty → show loading screen (not empty board)
+3. refreshJudgments(config, now)   → background; returns StowerRefreshSummary? (nil = coalesced)
+4. for every non-nil summary       → clear loading when judgedCount + failedCount == totalCount
+5. if summary.changedChatIDs != [] → loadDebtBoard again → judged rows now appear
 ```
 
-`StowerRefreshSummary.changedChatIDs` tells the app *whether a reload is worth
-it.* Empty summary (heuristic mode, model unavailable, or no cache) → don't
-reload. **The app must never block first paint on `refreshJudgments`.** This is
-the core UX invariant; building a single synchronous "load everything" path
-defeats the whole design.
+Treat **completion** and **reload** as two separate signals off the same summary:
+clear loading on `judgedCount + failedCount == totalCount` (**never**
+`judgedCount == totalCount` — one permanently-failing record would hang the
+spinner), and reload only when `changedChatIDs` is non-empty. A failures-only
+complete pass clears loading without a reload; its failed records carry no verdict
+and are re-judged on the next refresh the app schedules (bounded backoff, no busy
+loop). **Never block first paint on `refreshJudgments`.**
 
-### 5b. Model availability (verdict trust)
+### 5b. Model availability (typed, startup-first)
 
-`verdictSource` on each row is either `.heuristic` or `.languageModel`. Both
-Apple's on-device FoundationModels *and* a future MLX judge report
-`.languageModel`. **Trust `replyExpectationConfidence` only when
-`verdictSource == .languageModel`.** Under `.automatic`, the engine uses the
-model when the machine supports it (macOS 26 + Apple Intelligence on), else the
-heuristic — transparently. The app shouldn't gate its own UI on OS version;
-it reads `verdictSource` per row and trusts accordingly. (A subtle confidence
-cue in the row UI — "AI-judged" vs not — is an app design call, see §7.)
+The app calls `modelAvailability() async -> StowerModelAvailability` at startup,
+BEFORE any board work, and routes by the typed reason:
+
+- `.available` → proceed to `loadDebtBoard`.
+- `.unavailable(.deviceNotEligible)` → terminal unsupported screen.
+- `.unavailable(.appleIntelligenceNotEnabled)` → enable-Apple-Intelligence screen.
+- `.unavailable(.modelNotReady)` → downloading/preparing screen; retry later.
+- `.unavailable(.unknown)` → generic on-device-model-unavailable screen.
+
+The check is cheap and public — no entitlement, Info.plist string, prompt, FDA
+prompt, or network call. **Availability is also enforced inside the engine:**
+`loadDebtBoard` re-resolves availability on every call and throws
+`languageModelUnavailable(reason)` BEFORE opening `chat.db`, so an unsupported or
+AI-off machine never touches private Messages data — and a mid-session change
+(AI turned off) surfaces on the next load/refresh as that throw. Every served row
+is already a trusted on-device verdict, so there is no per-row trust flag to read.
 
 ### 5c. Permissions (one hard gate, one soft degrade)
 
@@ -204,12 +262,13 @@ cue in the row UI — "AI-judged" vs not — is an app design call, see §7.)
   manual invalidation. Cost: a load does real I/O, so don't call it on every
   keystroke; call it on view-appear, pull-to-refresh, and after a refresh
   summary.
-- **Cache:** the language-model verdict cache (`reply-verdicts.sqlite` under
-  Application Support) is **disposable**. Corruption/lock/migration failure
-  degrades to a heuristic board — it never crashes or blanks. The app treats the
-  cache as invisible; it only observes its *effect* (`.languageModel` rows
-  appearing after a refresh). No plaintext is stored, but the app should still
-  state "all on-device" honestly in its privacy copy.
+- **Cache:** the verdict cache (`reply-verdicts.sqlite` under Application Support)
+  is **disposable** and the trust boundary — it rejects malformed payloads on
+  write and resolves an unknown source token to a miss on read. Corruption/lock/
+  migration failure is a miss, re-judged on the next refresh — it never crashes or
+  blanks. The app treats the cache as invisible; it only observes its *effect*
+  (judged rows appearing after a refresh). No plaintext is stored, but the app
+  should still state "all on-device" honestly in its privacy copy.
 
 ---
 
@@ -218,13 +277,13 @@ cue in the row UI — "AI-judged" vs not — is an app design call, see §7.)
 | The engine owns (don't reimplement) | The app owns (don't push down) |
 |---|---|
 | Facts extraction from `chat.db` | View models / SwiftUI state |
-| Reply-expectation judgment (heuristic + model) | "Unanswered for N days" copy |
-| Ranking of Neglected | Navigation, the in-app thread reader |
-| Gating + ranking of Ghosted | Opening `deepLink` / Messages.app fallback |
-| The verdict cache + snapshot lifecycle | The refresh **schedule** (when to call) |
+| Reply-expectation judgment (on-device model) | "Unanswered for N days" copy |
+| Gating + ranking of both lenses (judged-only) | Navigation, the in-app thread reader |
+| Typed model-availability resolution | Opening `deepLink` / Messages.app fallback |
+| The verdict cache + snapshot lifecycle | The refresh **schedule** + retry backoff |
 | Contacts enrichment | Permission UI / onboarding flow |
 | Pre-ordering both lenses | Settings → `StowerDebtConfig` knobs |
-| Picking the judge by mode + availability | Empty / error / loading states |
+| Returning honest judged/failed/total counts | Empty / error / loading / "all caught up" states |
 
 The cut: **the engine decides *what's true and in what order*; the app decides
 *how it looks, when it refreshes, and how the user navigates*.**
@@ -242,8 +301,8 @@ Frame each as one-way (lock now) vs two-way (decide fast, iterate):
   release the app must wait on.
 - **Two-way — the refresh schedule.** On-appear? Timer? On-focus? Pick one,
   ship, tune. Cheap to change; don't over-deliberate.
-- **Two-way — surfacing `verdictSource` in the UI.** Whether/how to signal "AI
-  judged this" vs heuristic is a design call; try one and iterate.
+- **Two-way — the cold-start loading / "all caught up" UI.** Progressive reveal
+  vs a %-threshold spinner is app-owned; try one and iterate.
 - **Two-way — default `StowerDebtConfig` values** (`unansweredForDays`,
   `ghostGateThreshold`). Ship the defaults, watch, adjust.
 
@@ -262,10 +321,19 @@ that with real users; it's a learn-by-shipping question, not a blocker.
 2. The **home surface is the debt board** (`StowerDebtBoardProvider`); search
    (`StowerIndex.search`) + thread-read are the capability you act *through*, not
    the front door. Both reads are pre-ranked — never re-sort.
-3. Debt board loop: **`loadDebtBoard` (instant) → `refreshJudgments` (bg) →
-   reload if the summary changed.** Never block paint on the model.
-4. Full Disk Access is a hard, typed gate — build the onboarding for it.
-   Contacts is soft. The cache and snapshot manage themselves.
+3. Debt board loop: **`modelAvailability()` → `loadDebtBoard` (cold = empty →
+   loading screen) → `refreshJudgments` (bg) → clear loading at
+   `judged+failed==total`, reload when `changedChatIDs` is non-empty.** Never
+   block paint on the model; never show a raw empty board at cold start.
+4. Model availability is a typed, public startup check; an unavailable model
+   throws `languageModelUnavailable` before `chat.db` opens. Full Disk Access is a
+   hard, typed gate — build the onboarding for it. Contacts is soft. The cache and
+   snapshot manage themselves.
 5. Engine decides truth + order; app decides looks + timing + navigation.
    Anything the facade doesn't expose is a library change — raise it before you
    plan around it.
+
+> **App-side shapes:** the precise dummy-provider shapes (provider protocol, value
+> types, the `StowerStartupState` machine, per-reason routing, and dummy-data
+> scenarios) the app builds against live in `tmp/briefs/macapp-frozen-contract.md`.
+> This doc and that frozen contract describe the same as-built engine.

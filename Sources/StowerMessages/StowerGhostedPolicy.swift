@@ -1,15 +1,17 @@
 import Foundation
 
-/// The Ghosted lens: you acted last on a real ask and got no reply.
+/// The Ghosted lens: you sent a statement worth responding to and got no reply.
 ///
-/// Pure and stateless. Unlike Neglected, this GATES list membership — "you sent
-/// last, no reply" is mostly benign (most chats just end on "👍 sounds good"),
-/// so without a gate the list floods with false ghosts and stops being trusted.
-/// A row qualifies only when you acted last, the counterpart did not even tap
-/// back (T1), the thread is a real two-way relationship, it has been unanswered
-/// long enough, and the judge says the message expects a reply with confidence
-/// at or above the threshold (M1 — confidence alone is not enough; a confident
-/// non-ask must gate out). Ranked by recency, reusing `StowerNoReplyPolicy.rank`.
+/// Pure and stateless, and judged-only. Both lenses gate on the model's verdict;
+/// Ghosted is the "you sent last" mirror of Neglected and additionally keeps a
+/// confidence threshold because "you sent last, no reply" is noisier (most chats
+/// just end on "👍 sounds good"), so without it the list floods with false ghosts
+/// and stops being trusted. A row qualifies only when you acted last, the
+/// counterpart did not even tap back (T1), the thread is a real two-way
+/// relationship, it has been unanswered long enough, and the model judged the
+/// message as one the recipient should respond to with confidence at or above the
+/// threshold (M1 — confidence alone is not enough; a confident non-ask must gate
+/// out). Ranked by recency, reusing `StowerNoReplyPolicy.rank`.
 internal enum StowerGhostedPolicy {
     /// Selects and ranks the conversations where you ghosted nobody but were
     /// ghosted — your real ask left hanging.
@@ -45,7 +47,12 @@ internal enum StowerGhostedPolicy {
                 )
             }
             .sorted { StowerNoReplyPolicy.rank($0.state, $1.state) }
-            .map { StowerDebtItem(state: $0.state, verdict: $0.verdict) }
+            .map {
+                StowerDebtItem(
+                    state: $0.state,
+                    replyExpectationConfidence: $0.verdict.replyExpectationConfidence
+                )
+            }
     }
 
     private static func gate(

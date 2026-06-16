@@ -7,29 +7,48 @@ import Testing
 internal struct StowerDebtBoardProviderTests {
     private let now = Date(timeIntervalSinceReferenceDate: 800_000_000)
 
+    // MARK: - Judged-only load
+
     @Test("loadDebtBoard issues zero model calls — judgments happen only in refresh")
     internal func loadNeverCallsModel() async throws {
         let spy = StowerSpyReplyJudge()
         let cache = try StowerReplyVerdictCache.inMemory()
-        let provider = makeProvider(languageModelJudge: spy, cache: cache)
+        let provider = makeProvider(judge: spy, cache: cache)
 
         _ = try await provider.loadDebtBoard(config: config(), now: now)
 
         #expect(spy.callCount == 0)
     }
 
-    @Test("availability off ⇒ every row is heuristic; no cached model verdict exists")
-    internal func availabilityOffYieldsHeuristic() async throws {
-        let provider = makeProvider(languageModelJudge: nil, cache: nil)
+    @Test("a cold cache serves no rows — unjudged conversations are excluded")
+    internal func coldCacheServesNoRows() async throws {
+        let cache = try StowerReplyVerdictCache.inMemory()
+        let provider = makeProvider(judge: StowerSpyReplyJudge(), cache: cache)
 
         let board = try await provider.loadDebtBoard(config: config(), now: now)
 
-        #expect(!board.neglected.isEmpty)
-        #expect(board.neglected.allSatisfy { $0.verdictSource == .heuristic })
+        #expect(board.neglected.isEmpty)
+        #expect(board.ghosted.isEmpty)
     }
 
-    @Test("refresh fills the cache; a later load reflects model verdicts, no re-invoke")
-    internal func refreshThenLoadUsesCachedModelVerdicts() async throws {
+    @Test("a faulty cache read serves no rows and never calls the model (M9)")
+    internal func faultyCacheServesNoRows() async throws {
+        let spy = StowerSpyReplyJudge()
+        let provider = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: sampleRecords()) },
+            languageModelJudge: spy,
+            cache: StowerFaultyVerdictCache(failReads: true)
+        )
+
+        let board = try await provider.loadDebtBoard(config: config(), now: now)
+
+        #expect(board.neglected.isEmpty)
+        #expect(board.ghosted.isEmpty)
+        #expect(spy.callCount == 0)
+    }
+
+    @Test("refresh fills the cache; a later load serves the judged rows, no model on load")
+    internal func refreshThenLoadServesJudgedRows() async throws {
         let spy = StowerSpyReplyJudge(verdict: { _ in
             StowerReplyExpectation(
                 expectsReply: true,
@@ -38,63 +57,118 @@ internal struct StowerDebtBoardProviderTests {
             )
         })
         let cache = try StowerReplyVerdictCache.inMemory()
-        let provider = makeProvider(languageModelJudge: spy, cache: cache)
+        let provider = makeProvider(judge: spy, cache: cache)
 
-        let firstLoad = try await provider.loadDebtBoard(config: config(), now: now)
-        #expect(firstLoad.neglected.allSatisfy { $0.verdictSource == .heuristic })
+        let cold = try await provider.loadDebtBoard(config: config(), now: now)
+        #expect(cold.neglected.isEmpty)
 
-        let summary = await provider.refreshJudgments(config: config(), now: now)
-        #expect(summary.changedCount > 0)
+        let summary = try await provider.refreshJudgments(config: config(), now: now)
+        #expect((summary?.judgedCount ?? 0) > 0)
         let afterRefresh = spy.callCount
         #expect(afterRefresh > 0)
 
-        let secondLoad = try await provider.loadDebtBoard(config: config(), now: now)
-        #expect(secondLoad.neglected.contains { $0.verdictSource == .languageModel })
+        let warm = try await provider.loadDebtBoard(config: config(), now: now)
+        #expect(!warm.neglected.isEmpty)
 
         // Flipping a runtime filter re-runs gate+rank only — never the model.
         _ = try await provider.loadDebtBoard(config: config(unansweredForDays: 1), now: now)
         #expect(spy.callCount == afterRefresh)
     }
 
-    @Test("a changed judge version misses the cache, so the load falls back to heuristic")
-    internal func judgeVersionChangeMissesCache() async throws {
+    @Test("a changed judge version misses the cache, excluding the row (no fallback verdict)")
+    internal func judgeVersionChangeExcludesRow() async throws {
         let cache = try StowerReplyVerdictCache.inMemory()
-        let writer = makeProvider(
+        let records = sampleRecords()
+        let writer = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: records) },
             languageModelJudge: StowerSpyReplyJudge(judgeVersion: "v1"),
             cache: cache
         )
-        _ = await writer.refreshJudgments(config: config(), now: now)
+        _ = try await writer.refreshJudgments(config: config(), now: now)
 
-        let reader = makeProvider(
+        let reader = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: records) },
             languageModelJudge: StowerSpyReplyJudge(judgeVersion: "v2"),
             cache: cache
         )
         let board = try await reader.loadDebtBoard(config: config(), now: now)
-        #expect(board.neglected.allSatisfy { $0.verdictSource == .heuristic })
+        #expect(board.neglected.isEmpty)
+        #expect(board.ghosted.isEmpty)
     }
 
-    @Test("a model error during refresh caches nothing as .languageModel (M13)")
-    internal func modelErrorNotCached() async throws {
-        let throwing = StowerSpyReplyJudge(shouldThrow: true)
+    @Test("a case-only edit changes the input hash, forcing a re-judge (M11)")
+    internal func caseOnlyEditMissesCache() async throws {
         let cache = try StowerReplyVerdictCache.inMemory()
-        let provider = makeProvider(languageModelJudge: throwing, cache: cache)
+        let spy = StowerSpyReplyJudge()
+        let mixed = [
+            stowerTestRecord(chatID: "c", guid: "g", lastMessageText: "Are We On?", now: now)
+        ]
+        let lower = [
+            stowerTestRecord(chatID: "c", guid: "g", lastMessageText: "are we on?", now: now)
+        ]
 
-        let summary = await provider.refreshJudgments(config: config(), now: now)
-        #expect(summary.changedCount == 0)
+        let first = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: mixed) },
+            languageModelJudge: spy,
+            cache: cache
+        )
+        _ = try await first.refreshJudgments(config: config(), now: now)
+        #expect(spy.callCount == 1)
 
-        let board = try await provider.loadDebtBoard(config: config(), now: now)
-        #expect(board.neglected.allSatisfy { $0.verdictSource == .heuristic })
+        let second = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: lower) },
+            languageModelJudge: spy,
+            cache: cache
+        )
+        _ = try await second.refreshJudgments(config: config(), now: now)
+        // Same guid, case-only text change ⇒ different input hash ⇒ re-judged.
+        #expect(spy.callCount == 2)
     }
 
-    @Test("a missing-Full-Disk-Access reader surfaces a typed error")
-    internal func fullDiskAccessErrorPropagates() async {
+    // MARK: - Availability ordering
+
+    @Test("an unavailable model throws before the reader opens chat.db, for every reason")
+    internal func unavailableThrowsBeforeReader() async throws {
+        let reasons: [StowerModelUnavailableReason] = [
+            .deviceNotEligible, .appleIntelligenceNotEnabled, .modelNotReady, .unknown
+        ]
+        for reason in reasons {
+            let provider = StowerDebtBoardProvider(
+                readerFactory: {
+                    throw StowerMessagesError.fullDiskAccessMissing("/should-not-open")
+                },
+                languageModelJudge: StowerSpyReplyJudge(),
+                cache: nil,
+                modelAvailabilityResolver: { .unavailable(reason) }
+            )
+            do {
+                _ = try await provider.loadDebtBoard(config: config(), now: now)
+                Issue.record("expected loadDebtBoard to throw for \(reason)")
+            } catch let error as StowerMessagesError {
+                guard case .languageModelUnavailable(let got) = error else {
+                    Issue.record("expected languageModelUnavailable, got \(error)")
+                    continue
+                }
+                #expect(got == reason)
+            }
+        }
+    }
+
+    @Test("a supported model still surfaces a Full Disk Access error from the reader")
+    internal func supportedSurfacesFDA() async throws {
         let provider = StowerDebtBoardProvider(
             readerFactory: { throw StowerMessagesError.fullDiskAccessMissing("/x") },
-            languageModelJudge: nil,
+            languageModelJudge: StowerSpyReplyJudge(),
             cache: nil
         )
-        await #expect(throws: StowerMessagesError.self) {
+        do {
             _ = try await provider.loadDebtBoard(config: config(), now: now)
+            Issue.record("expected loadDebtBoard to throw")
+        } catch let error as StowerMessagesError {
+            guard case .fullDiskAccessMissing = error else {
+                Issue.record("expected fullDiskAccessMissing, got \(error)")
+                return
+            }
         }
     }
 
@@ -114,176 +188,21 @@ internal struct StowerDebtBoardProviderTests {
         }
     }
 
-    @Test("two overlapping refreshes judge each guid at most once (M16)")
-    internal func concurrentRefreshDoesNotDoubleCall() async throws {
-        let records = sampleRecords()
-        let spy = StowerSpyReplyJudge()
-        let cache = try StowerReplyVerdictCache.inMemory()
-        let provider = StowerDebtBoardProvider(
-            readerFactory: { StowerStubFactsReader(records: records) },
-            languageModelJudge: spy,
-            cache: cache
-        )
-
-        async let first = provider.refreshJudgments(config: config(), now: now)
-        async let second = provider.refreshJudgments(config: config(), now: now)
-        _ = await (first, second)
-
-        // Every reply-expecting guid judged once total, never twice.
-        #expect(spy.callCount == records.count)
-    }
-
-    @Test("a load issued during an in-flight refresh still returns a board")
-    internal func loadDuringRefreshStaysStructural() async throws {
-        let spy = StowerSpyReplyJudge()
-        let cache = try StowerReplyVerdictCache.inMemory()
-        let provider = makeProvider(languageModelJudge: spy, cache: cache)
-
-        async let refresh = provider.refreshJudgments(config: config(), now: now)
-        async let load = provider.loadDebtBoard(config: config(), now: now)
-        let (_, board) = try await (refresh, load)
-
-        #expect(!board.neglected.isEmpty)
-    }
-
-    @Test("a cache read fault degrades the load to heuristic without blocking (M9)")
-    internal func loadSurvivesCacheReadFault() async throws {
-        let records = sampleRecords()
-        let spy = StowerSpyReplyJudge()
-        let provider = StowerDebtBoardProvider(
-            readerFactory: { StowerStubFactsReader(records: records) },
-            languageModelJudge: spy,
-            cache: StowerFaultyVerdictCache(failReads: true)
-        )
-
-        let board = try await provider.loadDebtBoard(config: config(), now: now)
-
-        // The cache threw, but the board still built on heuristic verdicts and the
-        // load never reached the model.
-        #expect(spy.callCount == 0)
-        #expect(!board.neglected.isEmpty)
-        #expect(board.neglected.allSatisfy { $0.verdictSource == .heuristic })
-    }
-
-    @Test("a failed cache write is not reported as a changed chat")
-    internal func refreshDoesNotReportUnpersistedChange() async throws {
-        let records = sampleRecords()
-        let spy = StowerSpyReplyJudge()
-        let provider = StowerDebtBoardProvider(
-            readerFactory: { StowerStubFactsReader(records: records) },
-            languageModelJudge: spy,
-            cache: StowerFaultyVerdictCache(failWrites: true)
-        )
-
-        let summary = await provider.refreshJudgments(config: config(), now: now)
-
-        // The model ran, but nothing persisted, so no chat is reported changed —
-        // the app must not reload to the same heuristic verdict.
-        #expect(spy.callCount == records.count)
-        #expect(summary.changedCount == 0)
-    }
-
-    @Test("the provider recovers the model judge when availability turns on later")
-    internal func resolvesLanguageModelJudgeLazily() async throws {
-        let records = sampleRecords()
-        let cache = try StowerReplyVerdictCache.inMemory()
-        let spy = StowerSpyReplyJudge()
-        let counter = StowerCallCounter()
-        // Availability is off at construction, then comes online: the resolver
-        // yields nil the first time and the judge thereafter.
-        let provider = StowerDebtBoardProvider(
-            readerFactory: { StowerStubFactsReader(records: records) },
-            languageModelJudge: nil,
-            cache: cache,
-            languageModelJudgeResolver: { counter.next() > 1 ? spy : nil }
-        )
-
-        let first = await provider.refreshJudgments(config: config(), now: now)
-        #expect(first.changedCount == 0)
-        #expect(spy.callCount == 0)
-
-        let second = await provider.refreshJudgments(config: config(), now: now)
-        #expect(second.changedCount > 0)
-        #expect(spy.callCount > 0)
-    }
-
-    @Test("a corrupt cache file is rebuilt, not left permanently disabling verdicts (M9)")
-    internal func openCacheRebuildsCorruptStore() async throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("stower-verdict-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let url = directory.appendingPathComponent(StowerReplyVerdictCache.fileName)
-        try Data("this is not a sqlite database".utf8).write(to: url)
-
-        // openCache must drop the unusable file and return a working cache — not
-        // nil, which would dead-disable model verdicts for the provider's life.
-        let cache = try #require(StowerDebtBoardProvider.openCache(at: url))
-        let verdict = StowerReplyExpectation(
-            expectsReply: true,
-            replyExpectationConfidence: 0.7,
-            verdictSource: .languageModel
-        )
-        try await cache.upsert(judgeVersion: "v1", guid: "g1", inputHash: "h1", verdict: verdict)
-        let fetched = try await cache.existing(judgeVersion: "v1", guid: "g1", inputHash: "h1")
-        #expect(fetched?.expectsReply == true)
-    }
-
-    @Test("refresh judges the most-recently-active threads first")
-    internal func refreshPrioritizesRecentThreads() async throws {
-        let records = [
-            stowerTestRecord(
-                chatID: "old",
-                guid: "g-old",
-                lastMessageText: "you free?",
-                daysAgo: 40,
-                now: now
-            ),
-            stowerTestRecord(
-                chatID: "new",
-                guid: "g-new",
-                lastMessageText: "you free?",
-                daysAgo: 2,
-                now: now
-            ),
-            stowerTestRecord(
-                chatID: "mid",
-                guid: "g-mid",
-                lastMessageText: "you free?",
-                daysAgo: 20,
-                now: now
-            )
-        ]
-        let cache = try StowerReplyVerdictCache.inMemory()
-        let provider = StowerDebtBoardProvider(
-            readerFactory: { StowerStubFactsReader(records: records) },
-            languageModelJudge: StowerSpyReplyJudge(),
-            cache: cache
-        )
-
-        let summary = await provider.refreshJudgments(config: config(), now: now)
-
-        // Verdicts are upserted in processing order, so the newest thread is
-        // judged first and its smart verdict is available to the next load soonest.
-        #expect(summary.changedChatIDs == ["new", "mid", "old"])
-    }
-
     // MARK: - Helpers
 
     private func makeProvider(
-        languageModelJudge: StowerReplyExpectationJudge?,
-        cache: StowerReplyVerdictCache?
+        judge: StowerReplyExpectationJudge?,
+        cache: StowerReplyVerdictCaching?
     ) -> StowerDebtBoardProvider {
-        let records = sampleRecords()
-        return StowerDebtBoardProvider(
-            readerFactory: { StowerStubFactsReader(records: records) },
-            languageModelJudge: languageModelJudge,
+        StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: sampleRecords()) },
+            languageModelJudge: judge,
             cache: cache
         )
     }
 
     private func config(unansweredForDays: Int = 7) -> StowerDebtConfig {
-        StowerDebtConfig(unansweredForDays: unansweredForDays, judgeMode: .automatic)
+        StowerDebtConfig(unansweredForDays: unansweredForDays)
     }
 
     private func sampleRecords() -> [StowerConversationStateRecord] {

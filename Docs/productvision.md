@@ -62,13 +62,16 @@ Two bars, both required:
 
 1. **The judgment is trustworthy.** The debt board is only worth opening if it
    understands intent — "wondering if you're free Saturday" with no `?` is a real
-   ask; "lol" is not. Apple's on-device **FoundationModels** judge supplies that
-   (heuristic fallback on machines that can't run it). The judgment *is* the
-   product; a `?`-matcher behind a paywall fails the value test.
+   ask; "lol" is not. Apple's on-device **FoundationModels** judge supplies that.
+   The engine is FM-only: a Mac that can't run the model is routed to an
+   unsupported / onboarding screen, not given a heuristic board. The judgment *is*
+   the product; a `?`-matcher behind a paywall fails the value test.
 2. **It feels instant.** On-device inference can't sit on the hot path. The
-   load/refresh split + a persistent verdict cache exist precisely so the board
-   paints immediately (heuristic/cached) and upgrades to model verdicts in the
-   background. "Real judgment" and "felt speed" are not a tradeoff here — the
+   load/refresh split + a persistent verdict cache exist precisely so the load
+   path never blocks on the model: it serves trusted cached verdicts at structural
+   speed while a background pass judges and upgrades the cache. Cold start shows a
+   loading screen that fills in as the model judges — never a blank or stale
+   board. "Real judgment" and "felt speed" are not a tradeoff here — the
    architecture buys both.
 
 (The pre-2026-06-15 bar said "craft and visible speed, *not* AI depth." Retired:
@@ -91,9 +94,10 @@ the on-device judgment is the depth — kept invisible-fast, not cut.)
 
 ## Roadmap horizon
 
-- **v1 (ship target):** the debt board — **Neglected** (ranked) + **Ghosted**
-  (gated) over on-device conversation facts + FoundationModels reply-expectation
-  judgment, backed by a disposable verdict cache. Fast keyword search (FTS5 bm25
+- **v1 (ship target):** the debt board — **Neglected** + **Ghosted**, both gated
+  on FoundationModels reply-expectation judgment over on-device conversation facts
+  (judged-only: a conversation appears only once the model has judged it), backed
+  by a disposable verdict cache. Fast keyword search (FTS5 bm25
   + stemming + contact-name folding) and in-app thread read are the **capability**
   you act through. 1:1 only, Messages-only, read-only (reply via Messages.app).
 - **v1.1:** semantic / natural-language search (embeddings widen matching to
