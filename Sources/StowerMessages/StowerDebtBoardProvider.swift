@@ -246,6 +246,10 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     /// provider's lifetime. Drop the file (and its WAL sidecars) and retry once;
     /// return `nil` only if recreation also fails (then refresh reports all-failed
     /// and the next provider may rebuild it).
+    ///
+    /// The rebuild deletes the file and its WAL/shm sidecars, so it runs only for a
+    /// path named like our own cache. A caller-supplied `cacheURL` pointing at
+    /// unrelated SQLite data must never be clobbered on open failure.
     internal static func openCache(at url: URL) -> StowerReplyVerdictCaching? {
         try? FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
@@ -253,6 +257,9 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         )
         if let cache = try? StowerReplyVerdictCache(path: url.path) {
             return cache
+        }
+        guard url.lastPathComponent == StowerReplyVerdictCache.fileName else {
+            return nil
         }
         for suffix in ["", "-wal", "-shm"] {
             try? FileManager.default.removeItem(atPath: url.path + suffix)
