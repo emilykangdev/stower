@@ -47,6 +47,21 @@ Deferred work with context, written by the 2026-06-12 /autoplan review of
   engine. Fix: read `activityRows` first, then fetch+decode only the
   last-act message body per chat (and the title) instead of the full window. (Codex
   ship-with-codex P2→P3, 2026-06-14.) Effort: M.
+- [ ] **Move the snapshot `chat.db` copy off the cooperative thread pool (relationship-debt engine, own plan)** —
+  `readerFactory()` (in `StowerDebtBoardProvider.sharedReader`/`refreshedReader`) constructs
+  `StowerChatDatabaseReader`, whose `init` synchronously copies the entire `chat.db` (+ `-wal`/
+  `-shm`) via `StowerChatSnapshot.copyDatabaseFiles` (`FileManager.copyItem`). That runs inside
+  the actor's async methods (`loadDebtBoard`, `refreshJudgments`, `recentMessages`), so a copy
+  of a multi-hundred-MB–GB database blocks the actor executor AND occupies a Swift-concurrency
+  cooperative-pool thread for the whole copy — concurrent calls like `modelAvailability()` queue
+  behind it. Warrants its own plan, not a surgical patch: run the copy off the cooperative pool
+  (e.g. `withCheckedThrowingContinuation` + `DispatchQueue.global`), make `sharedReader`/
+  `refreshedReader` `async`, `await` at the three call sites, and decide the first-open
+  reentrancy the new suspension point introduces (two concurrent first-loads could each build a
+  reader — benign double-copy, last writer wins, but consider coalescing). The seam is already
+  safe: `StowerConversationFactsReading` is `Sendable` and `StowerChatDatabaseReader` is an
+  `actor`, so the reader crosses isolation cleanly. (Fusion audit P2, qwen judge, 2026-06-16,
+  conf 9.) Effort: M.
 
 - [ ] **MLX / other-SLM judge experiments + eval harness (future)** — FM is the v0 judge;
   the `StowerReplyExpectationJudge` protocol is the swap seam. Experiment with MLX
