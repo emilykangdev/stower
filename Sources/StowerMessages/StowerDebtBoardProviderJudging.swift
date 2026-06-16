@@ -198,10 +198,12 @@ extension StowerDebtBoardProvider {
     ///
     /// Hashing the same text the judge sees (not a trimmed/lowercased copy) is
     /// what makes a case-only edit miss the cache and re-judge. Context is empty
-    /// in v1, so it adds no component.
+    /// in v1, so it adds no component. The kind uses `rawValue`, a stable
+    /// serialization token, so the persisted key can't silently drift the way
+    /// `String(describing:)` could across a case rename or compiler change.
     internal func inputHash(for state: StowerConversationState) -> String {
         stowerShortHash(
-            (state.lastMessageText ?? "") + "\u{1}" + String(describing: state.lastMessageKind)
+            (state.lastMessageText ?? "") + "\u{1}" + state.lastMessageKind.rawValue
         )
     }
 

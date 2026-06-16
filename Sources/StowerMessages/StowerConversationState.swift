@@ -13,7 +13,14 @@ public enum StowerConversationLastActor: Sendable, Equatable {
 ///
 /// Populated from the message row alone (no `attachment`-table join), so
 /// `attachment` is generic — it is not split into photo/voice/video/file in v1.
-public enum StowerConversationLastMessageKind: Sendable, Equatable {
+///
+/// Backed by an explicit `String` raw value because the case token is folded into
+/// the persisted verdict-cache key (`inputHash`). `rawValue` is a stable
+/// serialization contract; `String(describing:)` is not (Apple documents it as
+/// debug-only), so keying on it would silently re-hash the on-disk cache on a case
+/// rename or compiler change. The raw values equal the old `String(describing:)`
+/// output, so existing cache entries stay valid.
+public enum StowerConversationLastMessageKind: String, Sendable, Equatable {
     /// A text message (its body is available in `lastMessageText`).
     case text
 
