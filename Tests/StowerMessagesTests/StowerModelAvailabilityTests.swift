@@ -49,4 +49,31 @@ internal struct StowerModelAvailabilityTests {
             #expect(await provider.modelAvailability() == state)
         }
     }
+
+    @Test("availability passes but a nil judge throws .modelNotReady, never a silent empty board")
+    internal func availableNilJudgeThrowsNotEmptyBoard() async {
+        // Availability resolves .available (the default) but the judge resolves to nil
+        // — a model evicted between the two resolves, or a construction fault.
+        // loadDebtBoard must fail loud, never return an empty board the user would read
+        // as "all caught up" when judging actually failed.
+        let provider = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: []) },
+            languageModelJudge: nil,
+            cache: nil
+        )
+        do {
+            _ = try await provider.loadDebtBoard(
+                config: StowerDebtConfig(unansweredForDays: 7),
+                now: now
+            )
+            Issue.record("expected loadDebtBoard to throw, not return an empty board")
+        } catch let error as StowerMessagesError {
+            guard case .languageModelUnavailable(.modelNotReady) = error else {
+                Issue.record("expected languageModelUnavailable(.modelNotReady), got \(error)")
+                return
+            }
+        } catch {
+            Issue.record("unexpected error type: \(error)")
+        }
+    }
 }
