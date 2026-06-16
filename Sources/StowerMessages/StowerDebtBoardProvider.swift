@@ -3,9 +3,10 @@ import os
 
 /// The production `StowerDebtBoardProviding` actor.
 ///
-/// Orchestrates: a startup availability gate → a fresh reader per load → states
-/// with last-act GUIDs → trusted cached language-model verdicts → the two
-/// policies → a judged-only board. The load path never reaches a model and serves
+/// Orchestrates: a startup availability gate → a shared snapshot reader (rebuilt
+/// each refresh) → states with last-act GUIDs → trusted cached language-model
+/// verdicts → the two policies → a judged-only board. The load path never reaches
+/// a model and serves
 /// only conversations a trusted verdict is cached for; the background
 /// `refreshJudgments` is the only model caller and the only cache writer. The
 /// cache is the trust boundary and is disposable — any cache fault is a miss,
@@ -25,6 +26,17 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     /// the app bumps it only on a validated judge-behavior change.
     public let modelIdentity: String
     private var refreshInFlight = false
+
+    /// The shared snapshot reader, reused across loads and thread taps.
+    ///
+    /// Opening a reader copies `chat.db` and runs a full integrity check — too
+    /// expensive to repeat on every board load and every thread tap-through. One
+    /// reader is opened lazily and reused; `refreshJudgments` rebuilds it so each
+    /// background pass reads current messages. Between refreshes the board is
+    /// served from cached verdicts anyway, so reuse adds no staleness the cache
+    /// did not already have. The actor serializes access; a failed rebuild keeps
+    /// the last good reader.
+    private var activeReader: StowerConversationFactsReading?
 
     /// Per-record cap on one judge call so a hung model can't stall refresh.
     ///
@@ -117,7 +129,24 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         await modelAvailabilityResolver()
     }
 
-    /// Builds the judged-only board from a fresh snapshot plus trusted verdicts.
+    /// The shared reader, opening one on first use (load / thread-tap path).
+    private func sharedReader() throws -> StowerConversationFactsReading {
+        if let activeReader {
+            return activeReader
+        }
+        let reader = try readerFactory()
+        activeReader = reader
+        return reader
+    }
+
+    /// Rebuilds the shared reader so a refresh pass reads current messages.
+    private func refreshedReader() throws -> StowerConversationFactsReading {
+        let reader = try readerFactory()
+        activeReader = reader
+        return reader
+    }
+
+    /// Builds the judged-only board from the shared snapshot plus trusted verdicts.
     public func loadDebtBoard(config: StowerDebtConfig, now: Date) async throws -> StowerDebtBoard {
         // A threshold past the read window could only ever match unread history,
         // so it would silently return an empty board. Fail loud: widen windowDays.
@@ -133,7 +162,7 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         if case .unavailable(let reason) = await modelAvailabilityResolver() {
             throw StowerMessagesError.languageModelUnavailable(reason)
         }
-        let reader = try readerFactory()
+        let reader = try sharedReader()
         let records = try await reader.conversationStateRecords(windowDays: windowDays, now: now)
         let judged: [StowerJudgedConversation]
         if let judge = resolveLanguageModelJudge() {
@@ -159,7 +188,7 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
 
     /// Returns the newest messages of one chat for a tap-through thread view.
     public func recentMessages(chatID: String, limit: Int) async throws -> [StowerThreadMessage] {
-        let reader = try readerFactory()
+        let reader = try sharedReader()
         return try await reader.threadMessages(chatID: chatID, limit: limit)
     }
 
@@ -185,7 +214,7 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         // partial summary, so it propagates via `throws`.
         try Task.checkCancellation()
 
-        let reader = try readerFactory()
+        let reader = try refreshedReader()
         let records = try await reader.conversationStateRecords(windowDays: windowDays, now: now)
 
         // First-run ABSENCE is created at init (the file is made on open); only a
