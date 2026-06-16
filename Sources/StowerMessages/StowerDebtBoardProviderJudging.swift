@@ -108,8 +108,13 @@ extension StowerDebtBoardProvider {
         cache: StowerReplyVerdictCaching,
         version: String
     ) async -> StowerRefreshRecordOutcome {
+        // A counterpart attachment carries no text the model can read, but a sent
+        // photo/file plainly invites a reply — so a deterministic rule, not the
+        // model, supplies the should-respond signal (and skips a wasted model call).
+        if let deterministic = Self.deterministicVerdict(for: record.state) {
+            return await persist(deterministic, for: record, cache: cache, version: version)
+        }
         let input = record.state.lastMessageText
-        let hash = inputHash(for: record.state)
         switch await stowerJudgeWithTimeout(
             Self.perRecordTimeout,
             { try await judge.judge(messageText: input, context: []) }
@@ -124,28 +129,66 @@ extension StowerDebtBoardProvider {
             guard isTrustedVerdict(verdict) else {
                 return .failed  // produced a result, but non-trusted / invalid → failed
             }
-            do {
-                try await cache.upsert(
-                    judgeVersion: version,
-                    guid: record.lastMessageGUID,
-                    inputHash: hash,
-                    verdict: verdict
-                )
-                return .judged(record.state.chatID)
-            } catch {
-                return .writeFailed
-            }
+            return await persist(verdict, for: record, cache: cache, version: version)
+        }
+    }
+
+    /// Persists a trusted verdict to the cache, mapping a write fault to an outcome.
+    private func persist(
+        _ verdict: StowerReplyExpectation,
+        for record: StowerConversationStateRecord,
+        cache: StowerReplyVerdictCaching,
+        version: String
+    ) async -> StowerRefreshRecordOutcome {
+        do {
+            try await cache.upsert(
+                judgeVersion: version,
+                guid: record.lastMessageGUID,
+                inputHash: inputHash(for: record.state),
+                verdict: verdict
+            )
+            return .judged(record.state.chatID)
+        } catch {
+            return .writeFailed
         }
     }
 
     // MARK: - Trust + hashing
+
+    /// Confidence assigned to a deterministic non-text-content verdict.
+    ///
+    /// The rule is certain the attachment invites a reply, so `1.0`. Only the
+    /// counterpart's last act gets this verdict, which the Neglected lens reads by
+    /// boolean alone (it ignores confidence), so the value never tips the
+    /// confidence-gated Ghosted lens; it is set honestly rather than left magic.
+    internal static let nonTextContentConfidence = 1.0
+
+    /// A trusted verdict for a last act the text model can't read, or `nil`.
+    ///
+    /// Scoped to a counterpart-sent attachment (photo, file, voice note, video,
+    /// sticker): it has no text for the model, but plainly invites a reply, so it
+    /// must be eligible for the Neglected lens rather than silently dropped. User
+    /// -sent attachments are left to the model path (they stay out of the noisier
+    /// Ghosted lens); the policies still gate by reciprocity, recency, and tapback.
+    internal static func deterministicVerdict(
+        for state: StowerConversationState
+    ) -> StowerReplyExpectation? {
+        guard state.lastActor == .counterpart, state.lastMessageKind == .attachment else {
+            return nil
+        }
+        return StowerReplyExpectation(
+            expectsReply: true,
+            replyExpectationConfidence: nonTextContentConfidence,
+            verdictSource: .nonTextContent
+        )
+    }
 
     /// Whether a cached verdict is trusted to reach the board.
     ///
     /// A trusted source with finite `0...1` confidence — one definition, load and
     /// refresh.
     internal func isTrustedVerdict(_ verdict: StowerReplyExpectation) -> Bool {
-        verdict.verdictSource.isTrustedModelVerdict
+        verdict.verdictSource.isTrustedVerdictSource
             && verdict.replyExpectationConfidence.isFinite
             && (0...1).contains(verdict.replyExpectationConfidence)
     }

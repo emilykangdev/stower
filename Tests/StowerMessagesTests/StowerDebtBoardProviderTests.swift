@@ -75,6 +75,74 @@ internal struct StowerDebtBoardProviderTests {
         #expect(spy.callCount == afterRefresh)
     }
 
+    @Test("a counterpart attachment becomes a Neglected debt without a model call (F1)")
+    internal func counterpartAttachmentNeglectedWithoutModel() async throws {
+        // The spy would judge any text as NOT expecting a reply; the attachment
+        // must still surface, proving it took the deterministic path, not the model.
+        let spy = StowerSpyReplyJudge(verdict: { _ in
+            StowerReplyExpectation(
+                expectsReply: false,
+                replyExpectationConfidence: 0,
+                verdictSource: .languageModel
+            )
+        })
+        let cache = try StowerReplyVerdictCache.inMemory()
+        let records = [
+            stowerTestRecord(
+                chatID: "photo",
+                guid: "g-photo",
+                lastActor: .counterpart,
+                lastMessageText: nil,
+                lastMessageKind: .attachment,
+                now: now
+            )
+        ]
+        let provider = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: records) },
+            languageModelJudge: spy,
+            cache: cache
+        )
+
+        let summary = try await provider.refreshJudgments(config: config(), now: now)
+        #expect((summary?.judgedCount ?? 0) == 1)
+        #expect(spy.callCount == 0)  // the attachment short-circuits the model
+
+        let board = try await provider.loadDebtBoard(config: config(), now: now)
+        #expect(board.neglected.contains { $0.chatID == "photo" })
+    }
+
+    @Test("a user-sent attachment stays off the board (deterministic verdict is counterpart-only)")
+    internal func userAttachmentNotSurfaced() async throws {
+        let spy = StowerSpyReplyJudge(verdict: { _ in
+            StowerReplyExpectation(
+                expectsReply: false,
+                replyExpectationConfidence: 0,
+                verdictSource: .languageModel
+            )
+        })
+        let cache = try StowerReplyVerdictCache.inMemory()
+        let records = [
+            stowerTestRecord(
+                chatID: "mine",
+                guid: "g-mine",
+                lastActor: .user,
+                lastMessageText: nil,
+                lastMessageKind: .attachment,
+                now: now
+            )
+        ]
+        let provider = StowerDebtBoardProvider(
+            readerFactory: { StowerStubFactsReader(records: records) },
+            languageModelJudge: spy,
+            cache: cache
+        )
+
+        _ = try await provider.refreshJudgments(config: config(), now: now)
+        let board = try await provider.loadDebtBoard(config: config(), now: now)
+        #expect(board.neglected.isEmpty)
+        #expect(board.ghosted.isEmpty)
+    }
+
     @Test("a changed judge version misses the cache, excluding the row (no fallback verdict)")
     internal func judgeVersionChangeExcludesRow() async throws {
         let cache = try StowerReplyVerdictCache.inMemory()

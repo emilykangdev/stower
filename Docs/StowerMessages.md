@@ -55,10 +55,16 @@ untouched.
 
 ### Reply-expectation lifecycle (FM-only, judged-only)
 
-The reply-expectation engine is **FoundationModels-only** and **judged-only**.
-There is no heuristic judge and no heuristic fallback: a conversation appears in
-Neglected or Ghosted only after the on-device model has judged it and a trusted
-verdict is cached. Unjudged conversations are invisible — there is no pending row.
+The reply-expectation engine is **FoundationModels-only** and **judged-only** for
+text. There is no heuristic *text* judge and no heuristic fallback: a text
+conversation appears in Neglected or Ghosted only after the on-device model has
+judged it and a trusted verdict is cached. The single non-model path is
+*deterministic, not heuristic*: a counterpart's attachment-only last act (a
+photo/file/voice note the text model can't read, but which plainly invites a
+reply) gets a fixed trusted `.nonTextContent` verdict so it can reach the
+Neglected lens. User-sent attachments take the model path and stay out of the
+noisier Ghosted lens. Unjudged conversations are invisible — there is no pending
+row.
 
 - **Availability is a startup gate.** The app calls `modelAvailability() async ->
   StowerModelAvailability` before any board work. When the model can't run,
