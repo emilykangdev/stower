@@ -129,7 +129,7 @@ set, imported by `CLAUDE.md`).
 
 ## License
 
-[FSL-1.1-MIT](LICENSE) (Functional Source License) — the source is public and
-free to read, run, and modify for any purpose **except** building a competing
-product. Each release automatically converts to the [MIT License](LICENSE) two
-years after it ships.
+[PolyForm Noncommercial 1.0.0](LICENSE) — the source is public and free to read,
+run, and modify for any **noncommercial** purpose (personal use, research,
+education, hobby and nonprofit projects). Any commercial use requires a separate
+commercial license from the maintainer.

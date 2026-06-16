@@ -1,8 +1,11 @@
 # Contributing to Stower
 
-> **We are not accepting external contributions right now.** Stower is in early,
-> solo development. Please do not open pull requests; issues and discussion may
-> not get a response. This may change as the project matures — check back later.
+> **Issues welcome; pull requests are not.** Stower is in early, solo
+> development. **Bug reports, questions, and ideas via
+> [issues](https://github.com/emilykangdev/stower/issues) are genuinely
+> welcome.** External **pull requests are not accepted** right now and are closed
+> automatically (see `.github/workflows/decline-external-prs.yml`) — please open
+> an issue instead. This may change as the project matures.
 
 The notes below are for the maintainer and AI agents working in the repo. The bar
 is small, reviewable changes that keep the guardrails green.

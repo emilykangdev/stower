@@ -1,0 +1,36 @@
+name: Decline external PRs
+
+# Stower is solo-maintained and does not accept external pull requests
+# (see CONTRIBUTING.md). Issues are welcome; any PR from someone who is not the
+# owner or a collaborator is closed automatically with a pointer to the policy.
+#
+# Uses pull_request_target so the job has write access even for PRs from forks.
+# It deliberately does NOT check out the PR's code — it only reads the PR URL and
+# author association — so there is no untrusted-code-execution risk.
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  decline:
+    # Skip PRs opened by the owner or a collaborator (the maintainer's own
+    # internal PRs). Only outside contributions are auto-closed.
+    if: ${{ !contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment and close
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          gh pr comment "$PR_URL" --body "Thanks for your interest in Stower! 🙏
+
+          Stower is in early, solo development and is **not accepting external pull requests** right now (see [CONTRIBUTING.md]($REPO_URL/blob/main/CONTRIBUTING.md)), so this PR is being closed automatically — please don't take it personally.
+
+          **Issues and discussion are very welcome.** If you've found a bug or have an idea, please [open an issue]($REPO_URL/issues) instead. This policy may change as the project matures."
+          gh pr close "$PR_URL"
