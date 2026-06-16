@@ -1,12 +1,17 @@
 # EvalSuite — 5-metric evaluation suite
 
 > **Status: future work (v2+). Do not implement without a human asking.**
-> This file is a design anchor only. There is no eval code today, and none should
-> be written — no `Evals/` directory, no metric implementations, no new
-> dependencies — until a human explicitly asks for it. It can't be built yet
-> anyway: there is no retrieval or caption pipeline to evaluate. If you are an
-> agent and a task seems to call for the eval suite, stop and confirm with the
-> human first.
+> This file is a design anchor for the *5-metric photo+caption* suite below
+> (Recall@5 / MRR / CLIPScore / CHAIR_i / RAGAS). None of it is built — no
+> `Evals/` directory, no metric implementations, no new dependencies — and none
+> should be written until a human explicitly asks. It needs the Photos caption
+> pipeline, which does not exist yet. If you are an agent and a task seems to
+> call for this suite, stop and confirm with the human first.
+>
+> **Not to be confused with the shipped `stower eval` command**, a far simpler
+> 3-arm (fts / semantic / hybrid) HIT/MISS recall check over a gitignored TSV of
+> Messages queries (`Sources/StowerCLI/EvalCommand.swift`). That exists today;
+> the 5-metric suite described here does not.
 
 Design anchor for the eval harness. **No implementation yet.** When built, it
 runs against an `Evals/goldens.json` file and stores results in SQLite with
