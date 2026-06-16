@@ -162,15 +162,16 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         if case .unavailable(let reason) = await modelAvailabilityResolver() {
             throw StowerMessagesError.languageModelUnavailable(reason)
         }
-        let reader = try sharedReader()
-        let records = try await reader.conversationStateRecords(windowDays: windowDays, now: now)
-        // Availability passed above but the concrete judge could not be built (model
-        // evicted between the two resolves, or a construction fault). Fail loud and
-        // symmetric with the availability gate — never a silent empty board the user
-        // would read as "all caught up" when judging actually failed.
+        // Resolve the judge BEFORE opening the reader. Availability passed above but
+        // the concrete judge could not be built (model evicted between the two
+        // resolves, or a construction fault). Fail loud and symmetric with the
+        // availability gate — and before the side effect of opening (copying)
+        // chat.db — never a silent empty board the user reads as "all caught up".
         guard let judge = resolveLanguageModelJudge() else {
             throw StowerMessagesError.languageModelUnavailable(.modelNotReady)
         }
+        let reader = try sharedReader()
+        let records = try await reader.conversationStateRecords(windowDays: windowDays, now: now)
         let judged = await judgedConversations(records: records, judge: judge)
         let neglected = StowerNoReplyPolicy.neglected(
             from: judged,
