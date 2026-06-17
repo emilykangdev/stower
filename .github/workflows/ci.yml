@@ -19,6 +19,14 @@ jobs:
       # lockstep — one definition of "green". Any check added to precheck.sh
       # (swift-format, swiftlint, build, test, module-boundary, and future greps a
       # harden-guardrail pass may add) is then enforced in CI automatically, with
-      # no second place to keep in sync.
+      # no second place to keep in sync. The ONE deliberate divergence is the
+      # FoundationModels integration suite below: it needs macOS 26 + Apple
+      # Intelligence, which macos-15 cannot provide, so it would fail-hard here
+      # forever. STOWER_SKIP_FM_INTEGRATION=1 excludes ONLY that suite in CI;
+      # every other test still runs fail-hard, and the suite runs for real on the
+      # macOS 26 dev machine where the var is unset. Drop this env once the runner
+      # image is macOS 26 with Apple Intelligence available.
       - name: Run precheck gate
+        env:
+          STOWER_SKIP_FM_INTEGRATION: "1"
         run: ./Scripts/precheck.sh

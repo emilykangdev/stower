@@ -16,6 +16,33 @@ A plan is the contract the implementer signs against. Everything below exists to
 - <Refactor that's tempting while touching this code — out unless it's strictly required.>
 - <Surface or platform this plan does not extend to.>
 
+## Assumptions
+
+What the plan **bets is true about the world** without fully verifying it — the foundation the
+rest (especially the JCs below) rests on. These come FIRST: a JC is usually a decision made
+*given* an assumption, so if an assumption is false the plan may be invalid, not just
+sub-optimal. Scope to things you **can't verify by reading this repo** (external APIs, the
+environment, a consuming branch, performance/latency, the product premise); codebase claims go
+in §Surface. Keep each one **load-bearing and checkable** — no abstract filler. Omit the section
+only if genuinely none are load-bearing.
+
+| # | Assumption (we believe…) | What breaks if false | Status |
+|---|--------------------------|----------------------|--------|
+| A1 | <belief about the world> | <how the plan fails> | verified (how) / to-verify / accepted risk |
+
+## Judgment calls (JCs)
+
+The decisions in this plan that a **human** made and that are NOT mechanically derivable —
+taste calls, one-way doors, places reasonable people could differ, or a settled decision being
+reversed. These are what a reviewer (or Codex) should scrutinize first. Mechanical/obvious
+choices do not belong here. One row per call.
+
+| # | The call | What was decided | Alternative not taken | Why | Door (1-way/2-way) |
+|---|----------|------------------|-----------------------|-----|---------------------|
+| JC1 | <the decision> | <chosen> | <rejected option> | <reason> | <reversibility> |
+
+Also list any **deferred** JCs (decisions intentionally NOT made yet) with who/when decides.
+
 ## Why
 
 <The motivating problem. What breaks or feels wrong today, who notices, and which failure modes this resolves. Reference prior briefs / decisions instead of re-litigating.>
@@ -47,6 +74,29 @@ A plan is the contract the implementer signs against. Everything below exists to
 - [ ] <Single-source-of-truth claim — "no other inline copies of X remain".>
 - [ ] <Each §Invariant below has a corresponding test that passes.>
 - [ ] Typecheck + lint + smoke / test commands pass.
+
+### Pseudocode
+
+Show HOW the load-bearing pieces are implemented, in language-agnostic pseudocode (not full
+source). One block per non-trivial new/changed function or flow — enough that a reviewer can
+catch a wrong algorithm before any code is written, but not so much it duplicates the eventual
+diff. Cover the tricky control flow: ordering, the gate/branch conditions, what's excluded, the
+error/empty paths. Keep names matching the real symbols.
+
+```text
+funcName(inputs) -> output:
+  guard <precondition> else throw <TypedError>
+  <step>
+  for <each>: <branch> -> <result>
+  return <shape>
+```
+
+### Bad patterns to avoid
+
+The specific anti-patterns an implementer (human or AI) is likely to reach for HERE, and the
+correct move instead. Plan-specific, not generic style rules (those live in AGENTS.md / the
+SWIFT_PATTERNS catalog). One bullet per trap: **Bad:** <what not to do> → **Instead:** <the
+right pattern> → **Why:** <the failure it causes>.
 
 ## §Surface
 
@@ -139,7 +189,7 @@ Approaches that were on the table and got ruled out. Logging these here stops th
 
 ## Architecture Overview
 
-<ASCII diagram of the data/control flow. Show: single source of truth → call sites → component(s) → rendered surface(s). Mark who reads vs. writes. Use it to make the symmetry (or asymmetry) visible at a glance.>
+<MERMAID diagram of the data/control flow. Show: single source of truth → call sites → component(s) → rendered surface(s). Mark who reads vs. writes. Use it to make the symmetry (or asymmetry) visible at a glance.>
 
 ```
               <singleSourceOfTruth()>
@@ -156,6 +206,10 @@ Approaches that were on the table and got ruled out. Logging these here stops th
 ```
 
 <1–2 sentences describing the shape — why it's small, what stays simple, and which boundary is the irreducible complexity.>
+
+## Lifecycle Diagram 
+
+Mermaid diagram of changes that will be made to existing lifecycle based on this plan.
 
 ## Tasks (in implementation order)
 

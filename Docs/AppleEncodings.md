@@ -64,7 +64,9 @@ off first. This is invisible to fixtures: a fixture author naturally writes the
 clean bare GUID, the test passes, and the prefixed reality on a real device is
 never exercised — so tapback-clearing silently no-ops on real data.
 
-**The three shapes we measured** (of 2 706 reaction rows):
+**The three shapes we measured** (of 2706 reaction rows):
+
+This was an experiment based on Emily's own chat.db.
 
 | shape | count | % | decode |
 | --- | ---: | ---: | --- |
@@ -72,7 +74,7 @@ never exercised — so tapback-clearing silently no-ops on real data.
 | `bp:<guid>`  | 20    | 0.7%  | strip `bp:` → the guid after the `:` |
 | bare `<guid>`| 318   | 11.8% | already the guid; matches as-is |
 
-Cross-checked against `message.guid`: **2 387 reactions (88%) match ONLY after
+Cross-checked against `message.guid`: **2387 reactions (88%) match ONLY after
 prefix-strip**, 318 match bare, 1 matches neither (a target message that no
 longer exists). The 318 bare rows line up exactly with the `(bare)` shape count —
 these are reactions stored under an **older encoding** (the format has shifted

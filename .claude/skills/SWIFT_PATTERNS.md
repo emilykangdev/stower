@@ -185,6 +185,28 @@ Legend for **Sweep-able**:
 
 ---
 
+## 16. Magic numbers / homeless constants
+
+- **Bad:** an inline numeric literal in an expression (`x * 86_400`, `withTimeout(.seconds(20))`,
+  `prefix(60)`), a global/file-scope `let`, or a `Constants.swift` dumping ground.
+- **Why it spreads:** the literal is the shortest path to "it works"; the next agent copies the
+  number and its meaning is lost (what is `86_400`?), and a global/`Constants` bag becomes the
+  place every later constant gets dumped, untyped and unscoped.
+- **Good:** a named `static let` on the type the value belongs to, narrowest access
+  (`private`→`internal`→`public`), co-located with its use; `Duration` for time
+  (`static let perRecordTimeout: Duration = .seconds(20)`). A case-less `enum` namespace ONLY
+  for a bag of constants with no natural home type — never a `Constants.swift`. In-tree examples:
+  `StowerConversationStateExtractor.reciprocityWindowDays`, `StowerCoreMLEmbedder.maxBatch`,
+  `StowerRetriever.defaultRRFK`.
+- **Caught by:** `judgment` today (AGENTS.md rule). The `no_magic_numbers` swiftlint gate (verified
+  it fires on `* 86_400`, passes named `static let`s) is **scheduled** — enabled in the
+  heuristic-removal plan's Task 9, once that pass eradicates the ~31 Sources literals, with a nested
+  `Tests/.swiftlint.yml` opt-out (test fixtures legitimately use literal data, ~95 violations). Flip
+  this to `gate` then. The "no global / no `Constants.swift` / static-let-on-type" half stays
+  `judgment` (not mechanizable).
+- **Sweep-able:** no — each literal needs a named home and a meaning (per-site judgment; the right
+  scope/owner differs). Route recurrences here; fix by hand.
+
 ## How to add an entry
 
 Append a numbered section in the same shape: **Bad / Why it spreads / Good / Caught

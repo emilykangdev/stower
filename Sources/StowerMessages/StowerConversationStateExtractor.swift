@@ -22,6 +22,24 @@ internal enum StowerConversationStateExtractor {
         contacts: StowerContactsResolver,
         now: Date
     ) -> [StowerConversationState] {
+        records(
+            items: items,
+            activity: activity,
+            reactions: reactions,
+            contacts: contacts,
+            now: now
+        ).map(\.state)
+    }
+
+    /// Emits one record per 1:1 chat, each pairing the facts with the last act's
+    /// GUID for the verdict cache (the GUID never reaches the public init, M2).
+    internal static func records(
+        items: [StowerMessageItem],
+        activity: [StowerSourceActivityRow],
+        reactions: [StowerSourceReactionRow],
+        contacts: StowerContactsResolver,
+        now: Date
+    ) -> [StowerConversationStateRecord] {
         let itemsByGUID = Dictionary(
             items.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
@@ -30,27 +48,29 @@ internal enum StowerConversationStateExtractor {
             items.map { ($0.groupID, $0.groupTitle) },
             uniquingKeysWith: { first, _ in first }
         )
-        let net = netReactions(reactions)
+        let userNet = netReactions(reactions.filter(\.isFromMe))
+        let counterpartNet = netReactions(reactions.filter { !$0.isFromMe })
         let inputs = Inputs(
             itemsByGUID: itemsByGUID,
             titleByChat: titleByChat,
-            activeTargets: activeTargetsByChat(net),
-            reactionActs: reactionActsByChat(net),
+            userActiveTargets: activeTargetsByChat(userNet),
+            counterpartActiveTargets: activeTargetsByChat(counterpartNet),
+            reactionActs: reactionActsByChat(userNet),
             contacts: contacts,
             cutoff: now.addingTimeInterval(-Double(reciprocityWindowDays) * 86_400)
         )
         let grouped = Dictionary(grouping: activity, by: { $0.chat.groupID })
         return grouped.compactMap { chatID, rows in
-            state(chatID: chatID, rows: rows, inputs: inputs)
+            record(chatID: chatID, rows: rows, inputs: inputs)
         }
-        .sorted { $0.chatID < $1.chatID }
+        .sorted { $0.state.chatID < $1.state.chatID }
     }
 
-    private static func state(
+    private static func record(
         chatID: String,
         rows: [StowerSourceActivityRow],
         inputs: Inputs
-    ) -> StowerConversationState? {
+    ) -> StowerConversationStateRecord? {
         guard let chat = rows.first?.chat, chat.isOneToOne, let last = rows.last,
             let lastTimestamp = StowerMessageDate.date(from: last.rawDate)
         else {
@@ -59,7 +79,7 @@ internal enum StowerConversationStateExtractor {
         let counterpartHandle = chat.identifier
         let counterpart = inputs.contacts.displayName(for: counterpartHandle)
         let kind = classifyKind(last)
-        return StowerConversationState(
+        let state = StowerConversationState(
             chatID: chatID,
             chatTitle: inputs.titleByChat[chatID] ?? counterpart,
             counterpart: counterpart,
@@ -76,16 +96,20 @@ internal enum StowerConversationStateExtractor {
                 reactionActs: inputs.reactionActs[chatID] ?? [],
                 cutoff: inputs.cutoff
             ),
-            userReactedToLastMessage: (inputs.activeTargets[chatID] ?? []).contains(last.guid),
+            userReactedToLastMessage: (inputs.userActiveTargets[chatID] ?? []).contains(last.guid),
+            counterpartReactedToLastMessage: (inputs.counterpartActiveTargets[chatID] ?? [])
+                .contains(last.guid),
             deepLink: chat.deepLink
         )
+        return StowerConversationStateRecord(state: state, lastMessageGUID: last.guid)
     }
 
     /// Shared lookups threaded through the per-chat fold.
     private struct Inputs {
         let itemsByGUID: [String: StowerMessageItem]
         let titleByChat: [String: String]
-        let activeTargets: [String: Set<String>]
+        let userActiveTargets: [String: Set<String>]
+        let counterpartActiveTargets: [String: Set<String>]
         let reactionActs: [String: [Date]]
         let contacts: StowerContactsResolver
         let cutoff: Date
@@ -98,16 +122,33 @@ internal enum StowerConversationStateExtractor {
     private static func classifyKind(
         _ row: StowerSourceActivityRow
     ) -> StowerConversationLastMessageKind {
-        if row.balloonBundleID == StowerMessageMapper.urlPreviewBalloonBundleID {
+        classifyKind(
+            balloonBundleID: row.balloonBundleID,
+            hasText: row.hasText,
+            hasAttachments: row.hasAttachments
+        )
+    }
+
+    /// Coarsely labels a message from its raw columns alone.
+    ///
+    /// Shared by the chronology fold and the thread-read so both classify a row
+    /// identically (M7) — a non-URL balloon is `app` even when it carries body
+    /// text, mirroring the indexable contract.
+    internal static func classifyKind(
+        balloonBundleID: String?,
+        hasText: Bool,
+        hasAttachments: Bool
+    ) -> StowerConversationLastMessageKind {
+        if balloonBundleID == StowerMessageMapper.urlPreviewBalloonBundleID {
             return .link
         }
-        if row.balloonBundleID != nil {
+        if balloonBundleID != nil {
             return .app
         }
-        if row.hasText {
+        if hasText {
             return .text
         }
-        if row.hasAttachments {
+        if hasAttachments {
             return .attachment
         }
         return .other

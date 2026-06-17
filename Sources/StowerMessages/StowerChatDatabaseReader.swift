@@ -70,6 +70,22 @@ public actor StowerChatDatabaseReader {
         windowDays: Int = 180,
         now: Date = Date()
     ) throws -> [StowerConversationState] {
+        try conversationStateRecords(windowDays: windowDays, now: now).map(\.state)
+    }
+
+    /// Returns per-1:1 facts paired with each conversation's last-act GUID.
+    ///
+    /// The GUID feeds the verdict cache key; it never reaches the public
+    /// `StowerConversationState.init`. Same window/error semantics as
+    /// `conversationStates`.
+    ///
+    /// - Throws: `StowerMessagesError.invalidArgument` for a negative
+    ///   `windowDays`, or `.unreadableSource` if a snapshot read fails. Full
+    ///   Disk Access is surfaced earlier, at `init`, as `.fullDiskAccessMissing`.
+    internal func conversationStateRecords(
+        windowDays: Int = 180,
+        now: Date = Date()
+    ) throws -> [StowerConversationStateRecord] {
         guard windowDays >= 0 else {
             throw StowerMessagesError.invalidArgument("Window days must not be negative.")
         }
@@ -77,7 +93,7 @@ public actor StowerChatDatabaseReader {
         let items = try ingestWindow(days: windowDays, now: now)
         let activity = try snapshot.activityRows(since: startDate)
         let reactions = try snapshot.reactionRows(since: startDate)
-        return StowerConversationStateExtractor.states(
+        return StowerConversationStateExtractor.records(
             items: items,
             activity: activity,
             reactions: reactions,
@@ -86,53 +102,49 @@ public actor StowerChatDatabaseReader {
         )
     }
 
-    /// Returns the 1:1 conversations the user owes a reply to, ranked
-    /// most-recently-unanswered first.
+    /// Returns the newest messages of one chat as lightweight thread rows.
     ///
-    /// Convenience over `conversationStates` + `StowerNoReplyPolicy`. A
-    /// counterpart's non-text last act (photo/sticker) is surfaced with its
-    /// `lastMessageKind`, not suppressed. The order is deterministic: newer
-    /// unanswered acts first, ties broken by `chatID`. `deepLink` may be `nil`.
-    ///
-    /// - Parameters:
-    ///   - unansweredForDays: Minimum whole days since the counterpart's last
-    ///     act (UI presets are days). Must be in `0...windowDays` — a threshold
-    ///     beyond the read window could only ever match unread history.
-    ///   - minimumReciprocity: Minimum recent reciprocal exchanges for the
-    ///     thread to count as a real two-way relationship. Must be `>= 0`.
-    ///   - windowDays: How far back to read. Must be `>= 0`.
-    ///   - now: The reference instant the age is measured against.
-    /// - Returns: The candidates, ranked most-recently-unanswered first.
-    /// - Throws: `StowerMessagesError.invalidArgument` for a negative argument or
-    ///   an `unansweredForDays` greater than `windowDays`, or `.unreadableSource`
-    ///   if a snapshot read fails. Full Disk Access is surfaced earlier, at
-    ///   `init`, as `.fullDiskAccessMissing`.
-    public func noReplyCandidates(
-        unansweredForDays: Int,
-        minimumReciprocity: Int = 1,
-        windowDays: Int = 180,
-        now: Date = Date()
-    ) throws -> [StowerNoReplyCandidate] {
-        guard unansweredForDays >= 0 else {
-            throw StowerMessagesError.invalidArgument("unansweredForDays must not be negative.")
+    /// Mirrors `recentMessages` but yields `StowerThreadMessage` (carrying a
+    /// per-message `kind`) for the tap-through thread view. The body is decoded
+    /// for text/link rows and `nil` for any other kind. Ordered oldest-first for
+    /// display. A `limit <= 0` yields no rows.
+    public func threadMessages(
+        chatID: String,
+        limit: Int = 100
+    ) throws -> [StowerThreadMessage] {
+        guard limit > 0 else {
+            return []
         }
-        guard minimumReciprocity >= 0 else {
-            throw StowerMessagesError.invalidArgument("minimumReciprocity must not be negative.")
+        let sourceRows = try snapshot.threadRows(chatID: chatID, limit: limit)
+        var seenGUIDs: Set<String> = []
+        let rows = sourceRows.compactMap { row -> StowerThreadMessage? in
+            guard seenGUIDs.insert(row.guid).inserted,
+                let timestamp = StowerMessageDate.date(from: row.rawDate)
+            else {
+                return nil
+            }
+            return threadMessage(for: row, timestamp: timestamp)
         }
-        // A threshold beyond the read window can only match history we never
-        // read, so it would silently return zero. Reject it: widen windowDays.
-        guard unansweredForDays <= windowDays else {
-            throw StowerMessagesError.invalidArgument(
-                "unansweredForDays (\(unansweredForDays)) must not exceed windowDays "
-                    + "(\(windowDays)); widen the read window to cover the threshold."
-            )
-        }
-        let states = try conversationStates(windowDays: windowDays, now: now)
-        return StowerNoReplyPolicy.candidates(
-            from: states,
-            unansweredForDays: unansweredForDays,
-            minimumReciprocity: minimumReciprocity,
-            now: now
+        return rows.reversed()
+    }
+
+    private func threadMessage(
+        for row: StowerSourceMessageRow,
+        timestamp: Date
+    ) -> StowerThreadMessage {
+        let hasText = row.text != nil || row.attributedBody != nil
+        let kind = StowerConversationStateExtractor.classifyKind(
+            balloonBundleID: row.balloonBundleID,
+            hasText: hasText,
+            hasAttachments: row.hasAttachments
+        )
+        let text = (kind == .text || kind == .link) ? decodedBody(for: row) : nil
+        return StowerThreadMessage(
+            id: row.guid,
+            isFromMe: row.isFromMe,
+            timestamp: timestamp,
+            text: text,
+            kind: kind
         )
     }
 

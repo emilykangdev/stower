@@ -39,7 +39,7 @@ flowchart TD
     model[("Core ML model dir<br/>mlpackage · tokenizer · manifest.json")]
     convert -->|"one-time, offline"| model
 
-    cli["stower CLI<br/>index · search · eval · no-reply"]
+    cli["stower CLI<br/>index · search · eval"]
     mac["StowerMac<br/>branch 2 · planned"]
     msgs["StowerMessages<br/>chat.db reader + Contacts"]
 
@@ -109,10 +109,6 @@ swift build -c release
 .build/release/stower index --days 180
 .build/release/stower search "the pizza place Sam mentioned"
 .build/release/stower search "quarterly numbers" --arm fts   # keyword-only, no model needed
-
-# 4. See the 1:1 conversations you haven't replied to (reads raw messages, not
-#    the index; needs no model). Local-only — do NOT paste its output anywhere.
-.build/release/stower no-reply --unanswered-days 14
 ```
 
 The model and index default to `~/Library/Application Support/Stower/` so
@@ -121,6 +117,23 @@ Conductor worktrees share one conversion and one index. Override with
 (the cache survives rebuilds). `stower eval <queries.tsv>` scores a
 pre-registered recall set; the query file must be gitignored (it holds personal
 queries) — the command refuses a non-ignored in-repo path.
+
+## What Stower can see (a `chat.db` limitation)
+
+Stower reads the **Mac's** Messages database, so it only knows what the Messages
+app on your Mac has — which is not necessarily your whole texting life:
+
+- **iMessage** (blue bubble) syncs to the Mac automatically via your Apple ID.
+- **SMS/MMS/RCS with Android users** (green bubble) is handled by your iPhone's
+  cellular radio, *not* Apple's servers. It reaches the Mac only if **Text
+  Message Forwarding** is on (iPhone → Settings → Messages → Text Message
+  Forwarding → enable your Mac), and only from the moment you enabled it — older
+  history is not backfilled.
+
+So if you text Android contacts over SMS without Text Message Forwarding, those
+threads are invisible to Stower: they won't surface in recall, and the
+relationship-debt engine can't flag them as neglected or ghosted. Stower reflects
+your iMessage + forwarded-SMS world, not every message you've sent.
 
 ## Contributing
 

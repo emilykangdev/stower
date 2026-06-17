@@ -36,6 +36,32 @@ internal enum StowerMessageQuery {
         )
     }
 
+    /// Reads one chat's newest real messages of ANY content type for the thread.
+    ///
+    /// Unlike `recentRows` (text-only, built for the search index), this keeps
+    /// photos, files, and app payloads so the tap-through thread is complete; it
+    /// still excludes reactions (`associated_message_type = 0`) and system rows
+    /// (`item_type = 0`). Newest-first with a `LIMIT`; the reader reverses it for
+    /// chronological display and labels each row's kind.
+    internal static func threadRows(
+        database: Database,
+        chatID: String,
+        limit: Int
+    ) throws -> [StowerSourceMessageRow] {
+        try StowerSourceMessageRow.fetchAll(
+            database,
+            sql: baseSelect + """
+                WHERE m.date != 0
+                  AND m.associated_message_type = 0
+                  AND m.item_type = 0
+                  AND (c.guid = ? OR c.chat_identifier = ?)
+                ORDER BY m.date DESC, m.ROWID DESC
+                LIMIT ?
+                """,
+            arguments: [chatID, chatID, limit]
+        )
+    }
+
     /// Reads the full chronology of real messages in the window — any content type.
     ///
     /// Keeps text, photos, files, app payloads, and link previews, but excludes
@@ -69,12 +95,15 @@ internal enum StowerMessageQuery {
         )
     }
 
-    /// Reads the user's own tapback rows in the window, each joined to its chat.
+    /// Reads both sides' tapback rows in the window, each joined to its chat.
     ///
-    /// Restricted to `is_from_me = 1` (only the user's reactions establish their
-    /// engagement) and the reaction range `2000–3999` (added and removed). The
+    /// Both directions are read so the extractor can net them separately: the
+    /// user's reactions (`is_from_me = 1`) establish engagement and clear the
+    /// user's view of a thread, while the counterpart's reactions
+    /// (`is_from_me = 0`) clear a Ghosted candidate (a 👍 on your last message).
+    /// Restricted to the reaction range `2000–3999` (added and removed); the
     /// `(date, ROWID)` order makes add/remove netting deterministic.
-    internal static func myReactionRows(
+    internal static func reactionRows(
         database: Database,
         since date: Date
     ) throws -> [StowerSourceReactionRow] {
@@ -91,8 +120,7 @@ internal enum StowerMessageQuery {
                 FROM message m
                 JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
                 JOIN chat c ON c.ROWID = cmj.chat_id
-                WHERE m.is_from_me = 1
-                  AND m.associated_message_type BETWEEN 2000 AND 3999
+                WHERE m.associated_message_type BETWEEN 2000 AND 3999
                   AND \(referenceSecondsExpression) >= ?
                 ORDER BY m.date ASC, m.ROWID ASC
                 """,

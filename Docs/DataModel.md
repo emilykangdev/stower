@@ -23,10 +23,19 @@ Each entity's first row is a **LIFECYCLE** marker:
   after one day. Apple's schema, opened read-only.
 - `NOT_BUILT` — design anchor only; nothing creates or writes it.
 
-> The relationship "no-reply" engine (`StowerMessages`) adds **no tables**. It is
-> a pure in-memory fold over `ingestWindow` items + a windowed reaction read on
-> the *same* read-only snapshot. It is intentionally absent from this diagram —
-> there is nothing to store.
+> The relationship-debt engine (`StowerMessages`) adds **no tables to the search
+> index**. Its conversation facts are a pure in-memory fold over `ingestWindow`
+> items + a windowed reaction read on the *same* read-only snapshot. Its only
+> persistent state is its own disposable cache, `StowerReplyVerdictCache`
+> (`reply-verdicts.sqlite`), keyed by `(judge_version, message_guid)` with an
+> `input_hash`. It stores **no plaintext and no long-form content** — only the
+> input hash, the `expects_reply` boolean, the `0...1` confidence, and the
+> `verdict_source` token. The cache is the trust boundary: a write rejects a
+> malformed payload (non-finite or out-of-`0...1` confidence), and a read whose
+> stored source token is unknown/garbled resolves to a **miss** (re-judged later)
+> rather than defaulting to the trusted source. There is no heuristic verdict — a
+> version bump simply erases the cache and the next refresh refills it. It is
+> intentionally absent from the index diagram below; it owns no index table.
 
 ```mermaid
 erDiagram

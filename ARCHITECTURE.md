@@ -4,7 +4,7 @@ Two diagrams: **how a query flows through the system today**, and **the tables**
 For the full per-table column detail and ownership/status notes, see
 [`Docs/DataModel.md`](Docs/DataModel.md); this file is the bird's-eye view.
 
-## System flow — ingest, query, and the no-reply engine
+## System flow — ingest, query, and the relationship-debt engine
 
 ```mermaid
 flowchart TB
@@ -38,24 +38,28 @@ flowchart TB
     user --> search
     grouped --> out1["Ranked, grouped matches → UI / summary"]
 
-    subgraph debt["Relationship no-reply engine — StowerMessages, NO tables, NOT via the index"]
+    subgraph debt["Relationship-debt engine — StowerMessages, FM-only, judged-only, NO index tables"]
         direction TB
         facts["conversationStates(windowDays:now:)"]
         ingest["ingestWindow → [StowerMessageItem] (incl. isOneToOne)"]
         activity["snapshot.activityRows → [StowerSourceActivityRow]\n(true last act, any content type)"]
         reacts["snapshot.reactionRows → [StowerSourceReactionRow] (w/ chatID)"]
-        extract["StowerConversationStateExtractor (pure):\nlastActor · lastMessageKind · recentExchangeCount · userReactedToLastMessage"]
+        extract["StowerConversationStateExtractor (pure):\nlastActor · lastMessageKind · recentExchangeCount · reactedToLastMessage"]
         states["[StowerConversationState]\nneutral per-1:1 facts"]
-        policy["noReplyCandidates(...) = StowerNoReplyPolicy:\n1:1 → recency mutuality → counterpart-last → not tapback-cleared → ≥ threshold"]
-        cands["[StowerNoReplyCandidate]\nranked most-recently-unanswered first"]
+        judge["refreshJudgments → FoundationModels judge\n(on-device, per-record timeout)"]
+        cache[("StowerReplyVerdictCache\nreply-verdicts.sqlite — disposable")]
+        neglected["StowerNoReplyPolicy.neglected:\n1:1 → mutuality → counterpart-last → not tapped back → ≥ threshold → should-respond verdict"]
+        ghosted["StowerGhostedPolicy.ghosted:\n1:1 → mutuality → you-last → not tapped back → ≥ threshold → should-respond + confidence gate"]
+        board["StowerDebtBoard\n(Neglected + Ghosted [StowerDebtItem])"]
         facts --> ingest
         facts --> activity
         facts --> reacts
         ingest --> extract
         activity --> extract
         reacts --> extract
-        extract --> states --> policy --> cands
-        states --> drift["future 'drift' policy / UI"]
+        extract --> states --> judge --> cache
+        cache --> neglected --> board
+        cache --> ghosted --> board
     end
 
     chatdb -. "same read-only snapshot, two more read paths" .-> activity
@@ -63,13 +67,26 @@ flowchart TB
     messages --> facts
 ```
 
+The relationship-debt engine is **FoundationModels-only** and **judged-only**: a
+conversation reaches the Neglected or Ghosted list only once the on-device model
+has judged it and a trusted verdict is cached — unjudged conversations stay
+invisible, and there is **no heuristic fallback**. On a Mac that can't run the
+model the engine throws `languageModelUnavailable(reason)` (checked at startup via
+`modelAvailability()`, before `loadDebtBoard` opens `chat.db`); the app routes to
+an onboarding or unsupported screen rather than degrading to a heuristic board.
+`loadDebtBoard` returns at structural speed from the cache and never runs the
+model; `refreshJudgments` is the background pass that judges and backfills the
+cache, reporting `judged`/`failed`/`total` and which chats changed.
+
 ## The tables (condensed)
 
 There is **no database literally named "index."** The persistent search database
 is the one the `StowerIndex` actor manages (caller-supplied file path; in-memory
 in tests) and it holds the three tables below. The `chat.db` **snapshot** is a
 throwaway temp copy of Apple's data. `llm_trace` is design-only (not built). The
-no-reply engine stores nothing.
+relationship-debt engine writes no index tables; its only state is the disposable
+`StowerReplyVerdictCache` (`reply-verdicts.sqlite`), which holds nothing but input
+hashes and model verdicts and can be deleted at any time.
 
 Each table's first row is a **LIFECYCLE** marker:
 - `PERSISTENT_REBUILDABLE` — survives across runs; erased + rebuilt from sources on a `schema_version` bump.

@@ -13,7 +13,14 @@ public enum StowerConversationLastActor: Sendable, Equatable {
 ///
 /// Populated from the message row alone (no `attachment`-table join), so
 /// `attachment` is generic — it is not split into photo/voice/video/file in v1.
-public enum StowerConversationLastMessageKind: Sendable, Equatable {
+///
+/// Backed by an explicit `String` raw value because the case token is folded into
+/// the persisted verdict-cache key (`inputHash`). `rawValue` is a stable
+/// serialization contract; `String(describing:)` is not (Apple documents it as
+/// debug-only), so keying on it would silently re-hash the on-disk cache on a case
+/// rename or compiler change. The raw values equal the old `String(describing:)`
+/// output, so existing cache entries stay valid.
+public enum StowerConversationLastMessageKind: String, Sendable, Equatable {
     /// A text message (its body is available in `lastMessageText`).
     case text
 
@@ -79,6 +86,13 @@ public struct StowerConversationState: Sendable, Equatable {
     /// Whether the user has an active tapback on the true last act.
     public let userReactedToLastMessage: Bool
 
+    /// Whether the counterpart has an active tapback on the true last act.
+    ///
+    /// Symmetric to `userReactedToLastMessage`. The Ghosted gate reads it: a
+    /// counterpart 👍 on your last message means they acknowledged it, so it is
+    /// not a ghost even though they sent no text reply.
+    public let counterpartReactedToLastMessage: Bool
+
     /// A best-effort Messages deep link, or `nil` when none can be formed.
     public let deepLink: URL?
 
@@ -97,6 +111,7 @@ public struct StowerConversationState: Sendable, Equatable {
         lastMessageTimestamp: Date,
         recentExchangeCount: Int,
         userReactedToLastMessage: Bool,
+        counterpartReactedToLastMessage: Bool,
         deepLink: URL?
     ) {
         self.chatID = chatID
@@ -112,6 +127,7 @@ public struct StowerConversationState: Sendable, Equatable {
         self.lastMessageTimestamp = lastMessageTimestamp
         self.recentExchangeCount = recentExchangeCount
         self.userReactedToLastMessage = userReactedToLastMessage
+        self.counterpartReactedToLastMessage = counterpartReactedToLastMessage
         self.deepLink = deepLink
     }
 }

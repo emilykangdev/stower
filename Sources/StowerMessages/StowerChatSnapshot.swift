@@ -68,6 +68,15 @@ internal final class StowerChatSnapshot {
         }
     }
 
+    internal func threadRows(
+        chatID: String,
+        limit: Int
+    ) throws -> [StowerSourceMessageRow] {
+        try databaseQueue.read { database in
+            try StowerMessageQuery.threadRows(database: database, chatID: chatID, limit: limit)
+        }
+    }
+
     internal func activityRows(
         since date: Date
     ) throws -> [StowerSourceActivityRow] {
@@ -80,7 +89,7 @@ internal final class StowerChatSnapshot {
         since date: Date
     ) throws -> [StowerSourceReactionRow] {
         try databaseQueue.read { database in
-            try StowerMessageQuery.myReactionRows(database: database, since: date)
+            try StowerMessageQuery.reactionRows(database: database, since: date)
         }
     }
 
