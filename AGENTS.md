@@ -32,6 +32,13 @@ Apply the following constraints to every change you make.
   without a `// swiftlint:disable:next` comment that explains why.
 - Do not use real Photos or Messages data in test fixtures, prompts, debug
   logs, or network calls.
+- Do not use magic numbers/literals or global/file-scope constants. Define a
+  constant as a named `static let` on the type it naturally belongs to, scoped
+  to the narrowest access (`private` → `internal` → `public`) and co-located with
+  its use (e.g. `StowerConversationStateExtractor.reciprocityWindowDays`,
+  `StowerCoreMLEmbedder.maxBatch`). Use `Duration` for time intervals. Only
+  introduce a case-less `enum` namespace for a *bag of homeless* constants with no
+  natural home type — never a `Constants.swift` dumping ground.
 
 ## Process
 

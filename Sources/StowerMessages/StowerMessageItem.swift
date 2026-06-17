@@ -27,6 +27,9 @@ public struct StowerMessageItem: StowerIndexedItem, Sendable {
     /// The resolved sender label for this row.
     public let sender: String
 
+    /// Whether this message belongs to a one-to-one (non-group) conversation.
+    public let isOneToOne: Bool
+
     /// The source adapter.
     public let source = StowerSource.messages
 
@@ -43,7 +46,8 @@ public struct StowerMessageItem: StowerIndexedItem, Sendable {
         groupID: String,
         groupTitle: String,
         isFromMe: Bool,
-        sender: String
+        sender: String,
+        isOneToOne: Bool
     ) {
         self.id = id
         self.text = text
@@ -53,5 +57,6 @@ public struct StowerMessageItem: StowerIndexedItem, Sendable {
         self.groupTitle = groupTitle
         self.isFromMe = isFromMe
         self.sender = sender
+        self.isOneToOne = isOneToOne
     }
 }

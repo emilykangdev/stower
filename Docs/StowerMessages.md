@@ -18,7 +18,79 @@ Must never import `StowerPhotos`. The two adapters never know about each other.
   messages in one chat without the search-window cutoff, then returns them in
   chronological order.
 - `StowerMessageItem` is the adapter's `StowerIndexedItem` conformer and also
-  carries direction and resolved sender attribution for the thread view.
+  carries direction, resolved sender attribution, and an `isOneToOne` flag for
+  the thread view.
+- `StowerChatDatabaseReader.conversationStates(windowDays:now:)` returns neutral
+  per-1:1 conversation facts (`StowerConversationState`): the true last act and
+  its kind (from a chronology read over **all** content types, not just
+  indexable text), recent reciprocity, and whether the user tapped back the last
+  message. This is the facts boundary — a future "drift" policy reads the same
+  states with no engine re-cut.
+- `StowerDebtBoardProviding` is the seam the StowerMac app depends on for the
+  relationship-debt board. `modelAvailability()` routes at startup;
+  `loadDebtBoard(config:now:)` builds the two-lens, judged-only board at
+  structural speed (it never runs the model); `refreshJudgments(config:now:)` is
+  the background pass that judges and backfills the verdict cache. Two pure,
+  stateless policies select the rows over the judged facts: `StowerNoReplyPolicy`
+  (Neglected — the counterpart acted last) and `StowerGhostedPolicy` (Ghosted —
+  you acted last). Both gate on the on-device model's should-respond verdict;
+  Ghosted additionally keeps a confidence threshold. Mutuality is recency-gated
+  (recent reciprocal exchanges, not a lifetime boolean), a tapback counts as a
+  reply, and a non-text last act is surfaced with its `lastMessageKind`, never
+  suppressed.
+
+### Relationship-debt engine reads (not indexed)
+
+The engine adds two read paths on the **same** read-only snapshot, never the
+index: a chronology read (`activityRows`, every real message of any content type
+— `associated_message_type = 0 AND item_type = 0`) for the true last act, and a
+reaction read (`myReactionRows`, the user's own tapbacks `2000–3999`) for
+mutuality and last-message clearing. Reactions carry their own chat provenance so
+mutuality-by-reaction works even when the reacted-to message is non-indexable.
+`associated_message_guid` is prefix-encoded on real data and is normalized to the
+bare `message.guid` before comparison — see `Docs/AppleEncodings.md` §1 (GUID
+prefix), §2 (reaction-type ranges), §3 (URL balloons). `style == 45` marks a 1:1
+chat. Neither read produces `StowerIndexedItem`s; the content-only index is
+untouched.
+
+### Reply-expectation lifecycle (FM-only, judged-only)
+
+The reply-expectation engine is **FoundationModels-only** and **judged-only** for
+text. There is no heuristic *text* judge and no heuristic fallback: a text
+conversation appears in Neglected or Ghosted only after the on-device model has
+judged it and a trusted verdict is cached. The single non-model path is
+*deterministic, not heuristic*: a counterpart's attachment-only last act (a
+photo/file/voice note the text model can't read, but which plainly invites a
+reply) gets a fixed trusted `.nonTextContent` verdict so it can reach the
+Neglected lens. User-sent attachments take the model path and stay out of the
+noisier Ghosted lens. Unjudged conversations are invisible — there is no pending
+row.
+
+- **Availability is a startup gate.** The app calls `modelAvailability() async ->
+  StowerModelAvailability` before any board work. When the model can't run,
+  `loadDebtBoard` throws `StowerMessagesError.languageModelUnavailable(reason)` —
+  where `reason` is `StowerModelUnavailableReason` (`.deviceNotEligible` /
+  `.appleIntelligenceNotEnabled` / `.modelNotReady` / `.unknown`) — **before** it
+  opens `chat.db`. The app routes each state to an onboarding or unsupported
+  screen rather than degrading to a heuristic board.
+- **Cold start shows a loading screen.** `loadDebtBoard` serves only conversations
+  with a trusted cached verdict, so a cold cache returns empty lists. The app
+  shows a loading screen on first run, never an instant empty board.
+- **Refresh reports progress.** `refreshJudgments(config:now:) async throws ->
+  StowerRefreshSummary?` is the only model caller. It returns `nil` when coalesced
+  (a pass is already in flight) and throws `languageModelUnavailable` when the
+  model is unavailable. `StowerRefreshSummary` carries `changedChatIDs`,
+  `judgedCount`, `failedCount`, and `totalCount`. The app clears its cold-start
+  loading screen once `judgedCount + failedCount == totalCount` (never
+  `judgedCount == totalCount` — a permanently failing record would hang the
+  spinner) and reloads the board when `changedChatIDs` is non-empty. Each record
+  is judged under a per-record timeout so one hung judge can't stall the pass.
+- **Cache is the trust boundary.** Verdicts land in `StowerReplyVerdictCache`
+  (`reply-verdicts.sqlite`), disposable and keyed by `(judge_version,
+  message_guid)` with an `input_hash` over the raw last text. An app-owned
+  `modelIdentity` epoch folds into the judge version, so a model-identity change
+  invalidates stale verdicts. Bad payloads are rejected on write; an unknown
+  source token is a miss on read.
 
 ## Constraints & known gotchas
 
@@ -68,7 +140,12 @@ Must never import `StowerPhotos`. The two adapters never know about each other.
 
 - International phone normalization beyond exact E.164 and unambiguous
   last-ten-digit matching.
-- Attachment content, tapbacks, edited-message history, and group deep links.
+- Attachment content, edited-message history, and group deep links. (Tapbacks
+  are no longer deferred — the relationship-debt engine reads them on a separate,
+  non-indexed path.)
+- Splitting the generic `attachment` last-message kind into photo/voice/video/
+  file (needs the `attachment`-table `uti` join), and per-contact dedupe of a
+  person's SMS + iMessage threads (needs a stable contact-identity key).
 - Incremental indexing and recall beyond the 180-day bulk window.
 
 ## See also

@@ -68,6 +68,31 @@ internal final class StowerChatSnapshot {
         }
     }
 
+    internal func threadRows(
+        chatID: String,
+        limit: Int
+    ) throws -> [StowerSourceMessageRow] {
+        try databaseQueue.read { database in
+            try StowerMessageQuery.threadRows(database: database, chatID: chatID, limit: limit)
+        }
+    }
+
+    internal func activityRows(
+        since date: Date
+    ) throws -> [StowerSourceActivityRow] {
+        try databaseQueue.read { database in
+            try StowerMessageQuery.activityRows(database: database, since: date)
+        }
+    }
+
+    internal func reactionRows(
+        since date: Date
+    ) throws -> [StowerSourceReactionRow] {
+        try databaseQueue.read { database in
+            try StowerMessageQuery.reactionRows(database: database, since: date)
+        }
+    }
+
     private static func makeValidatedSnapshot(
         sourceURL: URL,
         temporaryDirectory: URL,

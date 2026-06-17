@@ -118,6 +118,23 @@ Conductor worktrees share one conversion and one index. Override with
 pre-registered recall set; the query file must be gitignored (it holds personal
 queries) — the command refuses a non-ignored in-repo path.
 
+## What Stower can see (a `chat.db` limitation)
+
+Stower reads the **Mac's** Messages database, so it only knows what the Messages
+app on your Mac has — which is not necessarily your whole texting life:
+
+- **iMessage** (blue bubble) syncs to the Mac automatically via your Apple ID.
+- **SMS/MMS/RCS with Android users** (green bubble) is handled by your iPhone's
+  cellular radio, *not* Apple's servers. It reaches the Mac only if **Text
+  Message Forwarding** is on (iPhone → Settings → Messages → Text Message
+  Forwarding → enable your Mac), and only from the moment you enabled it — older
+  history is not backfilled.
+
+So if you text Android contacts over SMS without Text Message Forwarding, those
+threads are invisible to Stower: they won't surface in recall, and the
+relationship-debt engine can't flag them as neglected or ghosted. Stower reflects
+your iMessage + forwarded-SMS world, not every message you've sent.
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) (agent rule

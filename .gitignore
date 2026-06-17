@@ -19,5 +19,11 @@ tmp/
 Models/
 # Personal eval query files (natural-language queries over real messages).
 *.local.txt
+# On-device persistent stores (reply-verdict cache, embeddings) — written to the
+# app-support dir at runtime; repo-relative *.sqlite is a safety net so a stray
+# store never gets committed. Disposable: no plaintext, rebuildable on fault.
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 # Python bytecode cache from the conversion script.
 __pycache__/
