@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 
 @testable import StowerMacUI
@@ -145,6 +146,36 @@ import Testing
 
         #expect(recorder.opened.first == StowerSystemSettingsOpener.paneURL(for: .contacts))
         #expect(model.contactsTaskHandle == nil)  // denied takes no async path
-        #expect(spy.loadCallCount == 1)  // no reload
+        #expect(spy.loadCallCount == 1)  // no reload yet — recovery happens on re-activation
+    }
+
+    @Test("granting in Settings then returning to the app reloads into names")
+    internal func recoversAfterSettingsGrant() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [oneRowBoard()]
+        // Status flips denied -> authorized to model the grant made in System Settings.
+        let granted = Mutex(false)
+        let access = StowerContactsAccess(
+            status: { granted.withLock { $0 } ? .authorized : .denied },
+            request: { false }
+        )
+        let model = makeViewModel(spy, contacts: access, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+        #expect(model.showsContactsAccessBanner)  // denied + rows
+
+        model.resolveContactsAccess()  // opens Settings, arms recovery
+        granted.withLock { $0 = true }  // user grants in Settings
+        model.onAppBecameActive()  // returns to the app
+        await model.loadTaskHandle?.value
+
+        #expect(spy.loadCallCount == 2)  // recovery reload fired
+        #expect(model.showsContactsAccessBanner == false)  // now authorized
+
+        // A second activation does not reload again (recovery was one-shot).
+        model.onAppBecameActive()
+        await model.loadTaskHandle?.value
+        #expect(spy.loadCallCount == 2)
     }
 }

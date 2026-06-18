@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The debt board — the app's home once startup reaches `.connectedPreparingBoard`.
@@ -25,7 +26,15 @@ internal struct StowerBoardView: View {
         }
         .task { model.onAppear() }
         .onDisappear { model.cancel() }
+        .onReceive(Self.didBecomeActive) { _ in model.onAppBecameActive() }
     }
+
+    /// Fires when the app returns to the foreground — the cue to re-check a Contacts
+    /// grant the user may have made in System Settings (the board's `.task` does not
+    /// re-run on an app switch).
+    private static let didBecomeActive = NotificationCenter.default.publisher(
+        for: NSApplication.didBecomeActiveNotification
+    )
 
     @ViewBuilder private var content: some View {
         switch model.phase {

@@ -65,6 +65,8 @@ internal final class StowerBoardViewModel {
     private var loadGeneration = 0
     private var refreshGeneration = 0
     private var hasResolvedColdStart = false
+    private var isRequestingContacts = false
+    private var awaitingContactsRecovery = false
 
     /// Creates the board view-model.
     ///
@@ -135,22 +137,41 @@ internal final class StowerBoardViewModel {
     ///
     /// `.notDetermined` raises the one system prompt (non-blocking) and, on a fresh
     /// grant, reloads so the per-load resolver rebuilds and rows flip to names with
-    /// no relaunch. `.denied` (or restricted) can't be re-prompted, so it opens
-    /// System Settings → Contacts; the board reloads on reappear and picks up the
-    /// grant. `.authorized` is a no-op (the banner is already hidden).
+    /// no relaunch; re-taps while a request is in flight are ignored so a double-tap
+    /// can't fan out into duplicate requests. `.denied` (or restricted) can't be
+    /// re-prompted, so it opens System Settings → Contacts and arms a recovery
+    /// reload for when the user returns (`onAppBecameActive`). `.authorized` is a
+    /// no-op (the banner is already hidden).
     internal func resolveContactsAccess() {
         switch contacts.authorization {
         case .authorized:
             return
         case .denied:
+            awaitingContactsRecovery = true
             settings.openPane(.contacts)
         case .notDetermined:
+            guard !isRequestingContacts else { return }
+            isRequestingContacts = true
             contactsTask = Task { [weak self] in
                 guard let self else { return }
+                defer { isRequestingContacts = false }
                 guard await contacts.requestAccessIfNeeded(), !Task.isCancelled else { return }
                 load()
             }
         }
+    }
+
+    /// Re-checks Contacts when the app returns to the foreground.
+    ///
+    /// Opening the Settings pane can't notify us of a grant, and switching apps does
+    /// not re-run the board's `.task`, so without this a grant made in System
+    /// Settings would leave the board on handles until the next manual action. After
+    /// we've sent the user to recover access, the next activation reloads once — into
+    /// names if they granted, or back to handles + banner if they didn't.
+    internal func onAppBecameActive() {
+        guard awaitingContactsRecovery else { return }
+        awaitingContactsRecovery = false
+        load()
     }
 
     /// Selects a new day preset, re-loading at the new threshold (I8).
