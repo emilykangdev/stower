@@ -111,6 +111,7 @@ internal struct StowerBoardView: View {
         }
         .disabled(model.isRefreshing)
         .help("Refresh the board")
+        .accessibilityLabel("Refresh board")
     }
 
     private var emptyDirectionMessage: String {
@@ -145,6 +146,7 @@ private struct StowerBoardNotice<Action: View>: View {
             Image(systemName: symbol)
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text(title)
                 .font(.title3.weight(.semibold))
             Text(message)

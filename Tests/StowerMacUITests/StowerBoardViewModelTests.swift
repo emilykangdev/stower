@@ -297,4 +297,36 @@ import Testing
         #expect(spy.recordedLoadConfigs.last?.unansweredForDays == 90)
         #expect(model.phase == .rows)
     }
+
+    @Test("cancel resets the refresh guard so a reappear refresh is not blocked (I13)")
+    internal func cancelUnblocksReappearRefresh() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.gateRefresh = true
+        spy.loadModels = [emptyModel]
+        let model = makeViewModel(spy, recorder: FailureRecorder())
+
+        model.refresh()
+        while spy.pendingRefreshGateCount < 1 { await Task.yield() }
+        #expect(model.isRefreshing)
+
+        // Dismiss mid-refresh: the gated task can't unwind yet, but the guard must
+        // reset so the reappear refresh is not blocked.
+        model.cancel()
+        #expect(model.isRefreshing == false)
+
+        spy.gateRefresh = false
+        spy.refreshOutcomes = [.completed(reloadNeeded: false, anyJudged: false, hadRecords: false)]
+        model.load()
+        await model.loadTaskHandle?.value
+        model.refresh()
+        await settle(model)
+        #expect(spy.refreshCallCount == 2)
+        #expect(model.phase == .caughtUp)
+
+        // The superseded, parked task's late exit must not clobber the resolved board.
+        spy.releaseRefresh(at: 0, with: .coalesced)
+        await Task.yield()
+        #expect(model.phase == .caughtUp)
+        #expect(model.isRefreshing == false)
+    }
 }

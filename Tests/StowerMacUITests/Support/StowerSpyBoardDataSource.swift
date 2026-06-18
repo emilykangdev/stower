@@ -35,6 +35,9 @@ internal final class StowerSpyBoardDataSource: StowerBoardDataSource {
     /// When `true`, `loadBoard` suspends on a gate the test releases explicitly.
     internal var gateLoads = false
 
+    /// When `true`, `refreshJudgments` suspends on a gate the test releases.
+    internal var gateRefresh = false
+
     private(set) internal var loadCallCount = 0
     private(set) internal var refreshCallCount = 0
     private(set) internal var threadCallCount = 0
@@ -42,9 +45,13 @@ internal final class StowerSpyBoardDataSource: StowerBoardDataSource {
     private(set) internal var recordedRefreshConfigs: [StowerStartupDebtConfig] = []
 
     private var loadGates: [CheckedContinuation<StowerBoardModel, Error>] = []
+    private var refreshGates: [CheckedContinuation<StowerBoardRefreshOutcome, Error>] = []
 
     /// How many gated loads are suspended awaiting release.
     internal var pendingLoadGateCount: Int { loadGates.count }
+
+    /// How many gated refreshes are suspended awaiting release.
+    internal var pendingRefreshGateCount: Int { refreshGates.count }
 
     internal func loadBoard(
         config: StowerStartupDebtConfig,
@@ -78,12 +85,20 @@ internal final class StowerSpyBoardDataSource: StowerBoardDataSource {
         if let refreshError {
             throw refreshError
         }
+        if gateRefresh {
+            return try await withCheckedThrowingContinuation { refreshGates.append($0) }
+        }
         return dequeue(&refreshOutcomes) ?? .coalesced
     }
 
     /// Resumes a gated load with `model`.
     internal func releaseLoad(at index: Int, with model: StowerBoardModel) {
         loadGates.remove(at: index).resume(returning: model)
+    }
+
+    /// Resumes a gated refresh with `outcome`.
+    internal func releaseRefresh(at index: Int, with outcome: StowerBoardRefreshOutcome) {
+        refreshGates.remove(at: index).resume(returning: outcome)
     }
 
     private func dequeue<Element>(_ queue: inout [Element]) -> Element? {

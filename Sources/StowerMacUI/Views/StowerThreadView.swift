@@ -109,6 +109,7 @@ private struct StowerThreadNotice: View {
             Image(systemName: symbol)
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text(title)
                 .font(.title3.weight(.semibold))
             Text(message)

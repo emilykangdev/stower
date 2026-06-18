@@ -60,6 +60,7 @@ internal final class StowerBoardViewModel {
     private var loadTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var loadGeneration = 0
+    private var refreshGeneration = 0
     private var hasResolvedColdStart = false
 
     /// Creates the board view-model.
@@ -117,9 +118,18 @@ internal final class StowerBoardViewModel {
     }
 
     /// Cancels in-flight work when the board view disappears.
+    ///
+    /// Resets `isRefreshing` and supersedes the refresh generation so the next
+    /// `onAppear` can start a fresh refresh even if the cancelled task hasn't
+    /// finished unwinding yet — without that reset, a cancelled-but-not-yet-exited
+    /// refresh would keep `isRefreshing` true and block the reappear refresh,
+    /// stranding cold start in `.preparing`. The superseded task's `defer` is
+    /// generation-guarded, so its late exit can't clear a newer refresh's flag.
     internal func cancel() {
         loadTask?.cancel()
         refreshTask?.cancel()
+        refreshGeneration += 1
+        isRefreshing = false
     }
 
     /// Builds a thread view-model for a tapped row, sharing the data source/opener.
@@ -151,8 +161,10 @@ internal final class StowerBoardViewModel {
     internal func refresh() {
         guard !isRefreshing else { return }
         isRefreshing = true
+        refreshGeneration += 1
+        let generation = refreshGeneration
         refreshTask = Task { [weak self] in
-            await self?.runRefreshLoop()
+            await self?.runRefreshLoop(generation: generation)
         }
     }
 
@@ -196,8 +208,12 @@ internal final class StowerBoardViewModel {
     ///
     /// The loop IS the re-issue, so the `isRefreshing` guard never blocks it;
     /// cancellation breaks out.
-    private func runRefreshLoop() async {
-        defer { isRefreshing = false }
+    private func runRefreshLoop(generation: Int) async {
+        // Generation-guarded so a superseded (cancelled) run's late exit can't clear
+        // a newer refresh's `isRefreshing` flag.
+        defer {
+            if generation == refreshGeneration { isRefreshing = false }
+        }
         do {
             while true {
                 let outcome = try await dataSource.refreshJudgments(config: config, now: clock())
