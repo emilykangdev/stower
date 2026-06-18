@@ -63,6 +63,9 @@ internal struct StowerLemonSqueezyClient: Sendable {
     private static func activateRequest(key: String, instanceName: String) -> URLRequest? {
         guard let url = URL(string: activateURLString) else { return nil }
         var request = URLRequest(url: url)
+        // A short timeout so a first-run user on a blackholed network gets
+        // `.couldNotReach` in seconds, not URLSession's ~60s default.
+        request.timeoutInterval = requestTimeout
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -98,6 +101,7 @@ internal struct StowerLemonSqueezyClient: Sendable {
     }()
 
     private static let serverErrorStatusCodes = 500...599
+    private static let requestTimeout: TimeInterval = 15
     private static let activateURLString = "https://api.lemonsqueezy.com/v1/licenses/activate"
 }
 

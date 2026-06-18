@@ -46,6 +46,24 @@ import Testing
         #expect(fields["instance_name"] == label)
     }
 
+    @Test("the request carries a short timeout so a blackholed network fails fast")
+    internal func requestHasShortTimeout() async throws {
+        let captured = CapturedRequest()
+        let client = StowerLemonSqueezyClient(transport: { request in
+            await captured.set(request)
+            let url = try #require(URL(string: "https://example.invalid/activate"))
+            let response = try #require(
+                HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)
+            )
+            return (Data(#"{"activated":true,"instance":{"id":"i"}}"#.utf8), response)
+        })
+
+        _ = await client.activate(key: "k", instanceName: "Stower")
+
+        let request = try #require(await captured.request)
+        #expect(request.timeoutInterval < 60)
+    }
+
     @Test("a 200 with activated:true and an instance id classifies as .activated")
     internal func activatedClassifies() async throws {
         let client = StowerLemonSqueezyClient(
