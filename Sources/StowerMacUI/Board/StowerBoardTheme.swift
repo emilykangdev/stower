@@ -36,6 +36,8 @@ internal enum StowerBoardTheme {
     /// The fill of an outbound (from-me) thread bubble.
     internal static let outboundBubble = Color.accentColor
 
-    /// The fill of an inbound (counterpart) thread bubble.
-    internal static let inboundBubble = Color(nsColor: .controlBackgroundColor)
+    /// The fill of an inbound (counterpart) thread bubble — a gray that stays
+    /// legible against the window background in both light and dark mode (the
+    /// system control-background gray is nearly the dark window background).
+    internal static let inboundBubble = Color.gray.opacity(0.3)
 }
