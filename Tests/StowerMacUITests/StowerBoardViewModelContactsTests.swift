@@ -18,7 +18,24 @@ import Testing
         var failures: [StowerStartupFailure] = []
     }
 
-    private var emptyModel: StowerBoardModel { StowerBoardModel(neglected: [], ghosted: []) }
+    /// A one-row board, so `applyLoaded` reaches the in-context Contacts prompt
+    /// (an empty board deliberately never prompts).
+    private func oneRowBoard() -> StowerBoardModel {
+        StowerBoardModel(
+            neglected: [
+                StowerBoardRow(
+                    chatID: "a",
+                    counterpart: "+14155550100",
+                    counterpartHandle: "+14155550100",
+                    monogram: "1",
+                    summary: StowerLastMessageSummary.make(kind: .text, text: "hi"),
+                    ageInDays: 1,
+                    deepLink: nil
+                )
+            ],
+            ghosted: []
+        )
+    }
 
     private func makeViewModel(
         _ spy: StowerSpyBoardDataSource,
@@ -42,15 +59,16 @@ import Testing
         }
     }
 
-    @Test("a fresh Contacts grant on appear triggers exactly one extra reload")
+    @Test("a fresh Contacts grant when rows appear triggers exactly one extra reload")
     internal func contactsGrantReloads() async {
         let spy = StowerSpyBoardDataSource()
-        spy.loadModels = [emptyModel]
+        spy.loadModels = [oneRowBoard()]
         // Undetermined → the request fires and grants, so wasAuthorized == false.
         let granting = StowerContactsAccess(status: { .notDetermined }, request: { true })
         let model = makeViewModel(spy, contacts: granting, recorder: FailureRecorder())
 
         model.onAppear()
+        await model.loadTaskHandle?.value
         await model.contactsTaskHandle?.value
         await settle(model)
 
@@ -58,13 +76,14 @@ import Testing
         #expect(spy.loadCallCount == 2)
     }
 
-    @Test("a denied Contacts access on appear never triggers an extra reload")
+    @Test("a denied Contacts access never triggers an extra reload when rows appear")
     internal func contactsDenialDoesNotReload() async {
         let spy = StowerSpyBoardDataSource()
-        spy.loadModels = [emptyModel]
+        spy.loadModels = [oneRowBoard()]
         let model = makeViewModel(spy, contacts: .denied, recorder: FailureRecorder())
 
         model.onAppear()
+        await model.loadTaskHandle?.value
         await model.contactsTaskHandle?.value
         await settle(model)
 
@@ -74,11 +93,12 @@ import Testing
     @Test("an already-authorized launch does not reload (names came on the first load)")
     internal func alreadyAuthorizedDoesNotReload() async {
         let spy = StowerSpyBoardDataSource()
-        spy.loadModels = [emptyModel]
+        spy.loadModels = [oneRowBoard()]
         let authorized = StowerContactsAccess(status: { .authorized }, request: { true })
         let model = makeViewModel(spy, contacts: authorized, recorder: FailureRecorder())
 
         model.onAppear()
+        await model.loadTaskHandle?.value
         await model.contactsTaskHandle?.value
         await settle(model)
 

@@ -64,6 +64,7 @@ internal final class StowerBoardViewModel {
     private var loadGeneration = 0
     private var refreshGeneration = 0
     private var hasResolvedColdStart = false
+    private var hasRequestedContacts = false
 
     /// Creates the board view-model.
     ///
@@ -104,17 +105,20 @@ internal final class StowerBoardViewModel {
     internal func onAppear() {
         load()
         refresh()
-        requestContactsAccess()
     }
 
-    /// Requests Contacts access without blocking the first render.
+    /// Requests Contacts access the first time the board actually has rows to label.
     ///
-    /// The board has already loaded with handles; this fires the one system prompt
-    /// (only when undetermined) in a detached task and, on a *fresh* grant, reloads
-    /// so the per-load `.live()` resolver rebuilds and rows flip to names — no
-    /// relaunch. An already-authorized launch reloads nothing (the first load
-    /// already resolved names); a denial keeps handles and never gates.
-    private func requestContactsAccess() {
+    /// Deferred out of `onAppear` (driven by `applyLoaded` instead) so an
+    /// all-caught-up or still-cold-start-empty board never prompts for address-book
+    /// access it wouldn't use — the system prompt appears *in context*, right when
+    /// the first names would show. Fires at most once; non-blocking; on a *fresh*
+    /// grant it reloads so the per-load resolver rebuilds and rows flip to names with
+    /// no relaunch. An already-authorized board reloads nothing (the load that
+    /// surfaced these rows already resolved names); a denial keeps handles, no gate.
+    private func requestContactsAccessIfNeeded() {
+        guard !hasRequestedContacts else { return }
+        hasRequestedContacts = true
         let wasAuthorized = contacts.isAuthorized
         contactsTask = Task { [weak self] in
             guard let self else { return }
@@ -225,6 +229,8 @@ internal final class StowerBoardViewModel {
         board = model
         if !model.isEmpty {
             phase = .rows
+            // Rows exist — now is the in-context moment to ask for Contacts (once).
+            requestContactsAccessIfNeeded()
         } else if hasResolvedColdStart {
             phase = .caughtUp
         } else {
