@@ -49,6 +49,7 @@ internal final class StowerBoardViewModel {
 
     private let dataSource: any StowerBoardDataSource
     private let contacts: StowerContactsAccess
+    private let settings: StowerSystemSettingsOpener
     private let opener: StowerMessagesLinkOpener
     private let onFailure: @MainActor (StowerStartupFailure) -> Void
     private let clock: @Sendable () -> Date
@@ -64,7 +65,6 @@ internal final class StowerBoardViewModel {
     private var loadGeneration = 0
     private var refreshGeneration = 0
     private var hasResolvedColdStart = false
-    private var hasRequestedContacts = false
 
     /// Creates the board view-model.
     ///
@@ -73,6 +73,8 @@ internal final class StowerBoardViewModel {
     ///   - contacts: The Contacts-access wrapper; defaults to a denied no-op so
     ///     tests/previews never prompt. Production injects the real access from the
     ///     composition, so a first-run grant flips rows to names on the next load.
+    ///   - settings: Opens the System Settings → Contacts pane when access was
+    ///     denied (the system never re-prompts; Settings is the only recovery).
     ///   - opener: The Messages deep-link opener handed to thread view-models.
     ///   - onFailure: Routes a board failure back to the startup model.
     ///   - clock: Supplies `now`; injectable so tests are deterministic.
@@ -81,6 +83,7 @@ internal final class StowerBoardViewModel {
     internal init(
         dataSource: any StowerBoardDataSource,
         contacts: StowerContactsAccess = .denied,
+        settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
         opener: StowerMessagesLinkOpener = StowerMessagesLinkOpener(),
         onFailure: @escaping @MainActor (StowerStartupFailure) -> Void,
         clock: @escaping @Sendable () -> Date = { Date() },
@@ -90,6 +93,7 @@ internal final class StowerBoardViewModel {
     ) {
         self.dataSource = dataSource
         self.contacts = contacts
+        self.settings = settings
         self.opener = opener
         self.onFailure = onFailure
         self.clock = clock
@@ -107,24 +111,45 @@ internal final class StowerBoardViewModel {
         refresh()
     }
 
-    /// Requests Contacts access the first time the board actually has rows to label.
+    /// Whether to show the "show real names" banner above the board.
     ///
-    /// Deferred out of `onAppear` (driven by `applyLoaded` instead) so an
-    /// all-caught-up or still-cold-start-empty board never prompts for address-book
-    /// access it wouldn't use — the system prompt appears *in context*, right when
-    /// the first names would show. Fires at most once; non-blocking; on a *fresh*
-    /// grant it reloads so the per-load resolver rebuilds and rows flip to names with
-    /// no relaunch. An already-authorized board reloads nothing (the load that
-    /// surfaced these rows already resolved names); a denial keeps handles, no gate.
-    private func requestContactsAccessIfNeeded() {
-        guard !hasRequestedContacts else { return }
-        hasRequestedContacts = true
-        let wasAuthorized = contacts.isAuthorized
-        contactsTask = Task { [weak self] in
-            guard let self else { return }
-            let granted = await contacts.requestAccessIfNeeded()
-            guard granted, !wasAuthorized, !Task.isCancelled else { return }
-            load()
+    /// Visible exactly when the board has rows to label and Contacts is not
+    /// authorized — so an unmatched board always carries a durable, in-context way to
+    /// grant access, instead of relying on a one-shot system prompt that, once
+    /// denied, never returns. Empty / caught-up / preparing boards show nothing.
+    internal var showsContactsAccessBanner: Bool {
+        phase == .rows && !contacts.isAuthorized
+    }
+
+    /// The banner button's label, matched to the action `resolveContactsAccess` will
+    /// take: a never-asked board can be prompted in-app; a denied one must go to
+    /// Settings, so the label sets that expectation before the tap.
+    internal var contactsBannerActionTitle: String {
+        switch contacts.authorization {
+        case .denied: return "Open Settings"
+        default: return "Show names"
+        }
+    }
+
+    /// Drives the banner's button: raise the system prompt, or route to Settings.
+    ///
+    /// `.notDetermined` raises the one system prompt (non-blocking) and, on a fresh
+    /// grant, reloads so the per-load resolver rebuilds and rows flip to names with
+    /// no relaunch. `.denied` (or restricted) can't be re-prompted, so it opens
+    /// System Settings → Contacts; the board reloads on reappear and picks up the
+    /// grant. `.authorized` is a no-op (the banner is already hidden).
+    internal func resolveContactsAccess() {
+        switch contacts.authorization {
+        case .authorized:
+            return
+        case .denied:
+            settings.openPane(.contacts)
+        case .notDetermined:
+            contactsTask = Task { [weak self] in
+                guard let self else { return }
+                guard await contacts.requestAccessIfNeeded(), !Task.isCancelled else { return }
+                load()
+            }
         }
     }
 
@@ -229,8 +254,6 @@ internal final class StowerBoardViewModel {
         board = model
         if !model.isEmpty {
             phase = .rows
-            // Rows exist — now is the in-context moment to ask for Contacts (once).
-            requestContactsAccessIfNeeded()
         } else if hasResolvedColdStart {
             phase = .caughtUp
         } else {

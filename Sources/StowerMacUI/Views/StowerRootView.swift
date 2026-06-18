@@ -46,6 +46,7 @@ public struct StowerRootView: View {
             initialValue: StowerBoardViewModel(
                 dataSource: board,
                 contacts: contacts,
+                settings: settings,
                 onFailure: { failure in startupModel.handleBoardFailure(failure) }
             )
         )

@@ -1,6 +1,23 @@
 import Contacts
 import Foundation
 
+/// App-owned Contacts authorization, so views/view-models never import `Contacts`.
+///
+/// Collapses the system states into the three the UI actually branches on: a
+/// `denied` here also covers `.restricted` (both recover only through System
+/// Settings, never an in-app prompt).
+internal enum StowerContactsAuthorization: Sendable {
+    /// Access granted — names resolve.
+    case authorized
+
+    /// Never asked — an in-app tap can still raise the one system prompt.
+    case notDetermined
+
+    /// Refused or restricted — the system never re-prompts; recovery is System
+    /// Settings → Privacy → Contacts.
+    case denied
+}
+
 /// The one isolated wrapper over Contacts authorization for the app.
 ///
 /// Mirrors `StowerSystemSettingsOpener`'s injection shape: the two system calls are
@@ -39,8 +56,22 @@ internal struct StowerContactsAccess: Sendable {
     /// layer: the VM and root view reference this instead of a `Contacts` enum literal.
     internal static let denied = StowerContactsAccess(status: { .denied }, request: { false })
 
+    /// The current authorization, collapsed into the app-owned three-state.
+    ///
+    /// A bare read; never prompts. `.restricted` collapses into `.denied` (both
+    /// recover only via System Settings); any future/unknown case is treated as
+    /// `.denied` so the UI offers the Settings path rather than a prompt that
+    /// can't succeed.
+    internal var authorization: StowerContactsAuthorization {
+        switch status() {
+        case .authorized: return .authorized
+        case .notDetermined: return .notDetermined
+        default: return .denied
+        }
+    }
+
     /// Whether Contacts is currently authorized (a bare read; never prompts).
-    internal var isAuthorized: Bool { status() == .authorized }
+    internal var isAuthorized: Bool { authorization == .authorized }
 
     /// Requests access only when undetermined, returning the resulting authorized-ness.
     ///

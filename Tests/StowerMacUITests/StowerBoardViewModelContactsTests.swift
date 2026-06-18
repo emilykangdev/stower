@@ -3,14 +3,14 @@ import Testing
 
 @testable import StowerMacUI
 
-/// The board view-model's non-blocking Contacts-grant reload: a *fresh* grant on
-/// appear reloads so the per-load resolver rebuilds and rows flip to names, while a
-/// denial or an already-authorized launch issues no extra load.
+/// The board view-model's Contacts-access affordance: a durable banner shown above
+/// the board whenever it has rows but Contacts isn't authorized, and the banner
+/// action that either raises the system prompt (never asked) or routes to System
+/// Settings (denied) — and reloads into names on a fresh grant.
 ///
-/// Driven by `StowerSpyBoardDataSource` (no engine) and an injected
-/// `StowerContactsAccess`, so no real `CNContactStore` is touched. The refresh
-/// outcome is a judged-nothing completion, so the refresh loop never issues its own
-/// reload — the only reload observed is the contacts-grant one.
+/// Driven by `StowerSpyBoardDataSource` (no engine) plus an injected
+/// `StowerContactsAccess` and a recording `StowerSystemSettingsOpener`, so no real
+/// `CNContactStore` and no real System Settings are touched.
 @MainActor
 @Suite internal struct StowerBoardViewModelContactsTests {
     /// Collects routed failures (none expected here; satisfies the VM's `onFailure`).
@@ -18,8 +18,20 @@ import Testing
         var failures: [StowerStartupFailure] = []
     }
 
-    /// A one-row board, so `applyLoaded` reaches the in-context Contacts prompt
-    /// (an empty board deliberately never prompts).
+    /// Records every URL an opener was asked to open, returning a scriptable result.
+    private final class OpenedURLRecorder {
+        private(set) var opened: [URL] = []
+        var result = true
+
+        func record(_ url: URL) -> Bool {
+            opened.append(url)
+            return result
+        }
+    }
+
+    private var emptyModel: StowerBoardModel { StowerBoardModel(neglected: [], ghosted: []) }
+
+    /// A one-row board, so a loaded board reaches `.rows` (the banner's precondition).
     private func oneRowBoard() -> StowerBoardModel {
         StowerBoardModel(
             neglected: [
@@ -40,68 +52,99 @@ import Testing
     private func makeViewModel(
         _ spy: StowerSpyBoardDataSource,
         contacts: StowerContactsAccess,
+        settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(open: { _ in true }),
         recorder: FailureRecorder
     ) -> StowerBoardViewModel {
-        spy.refreshOutcomes = [.completed(reloadNeeded: false, anyJudged: false, hadRecords: false)]
-        return StowerBoardViewModel(
+        StowerBoardViewModel(
             dataSource: spy,
             contacts: contacts,
+            settings: settings,
             onFailure: { recorder.failures.append($0) },
             sleep: { _ in }
         )
     }
 
-    /// Awaits the in-flight refresh and any reload it spawns, twice, to quiesce.
-    private func settle(_ model: StowerBoardViewModel) async {
-        for _ in 0..<2 {
-            await model.refreshTaskHandle?.value
-            await model.loadTaskHandle?.value
-        }
-    }
-
-    @Test("a fresh Contacts grant when rows appear triggers exactly one extra reload")
-    internal func contactsGrantReloads() async {
+    @Test("the banner shows when the board has rows and Contacts is not authorized")
+    internal func bannerShowsWhenUnauthorizedWithRows() async {
         let spy = StowerSpyBoardDataSource()
         spy.loadModels = [oneRowBoard()]
-        // Undetermined → the request fires and grants, so wasAuthorized == false.
-        let granting = StowerContactsAccess(status: { .notDetermined }, request: { true })
-        let model = makeViewModel(spy, contacts: granting, recorder: FailureRecorder())
+        let denied = StowerContactsAccess(status: { .denied }, request: { false })
+        let model = makeViewModel(spy, contacts: denied, recorder: FailureRecorder())
 
-        model.onAppear()
+        model.load()
         await model.loadTaskHandle?.value
-        await model.contactsTaskHandle?.value
-        await settle(model)
 
-        // Initial launch load + one reload from the grant.
-        #expect(spy.loadCallCount == 2)
+        #expect(model.phase == .rows)
+        #expect(model.showsContactsAccessBanner)
     }
 
-    @Test("a denied Contacts access never triggers an extra reload when rows appear")
-    internal func contactsDenialDoesNotReload() async {
-        let spy = StowerSpyBoardDataSource()
-        spy.loadModels = [oneRowBoard()]
-        let model = makeViewModel(spy, contacts: .denied, recorder: FailureRecorder())
-
-        model.onAppear()
-        await model.loadTaskHandle?.value
-        await model.contactsTaskHandle?.value
-        await settle(model)
-
-        #expect(spy.loadCallCount == 1)
-    }
-
-    @Test("an already-authorized launch does not reload (names came on the first load)")
-    internal func alreadyAuthorizedDoesNotReload() async {
+    @Test("the banner is hidden once Contacts is authorized")
+    internal func bannerHiddenWhenAuthorized() async {
         let spy = StowerSpyBoardDataSource()
         spy.loadModels = [oneRowBoard()]
         let authorized = StowerContactsAccess(status: { .authorized }, request: { true })
         let model = makeViewModel(spy, contacts: authorized, recorder: FailureRecorder())
 
-        model.onAppear()
+        model.load()
         await model.loadTaskHandle?.value
-        await model.contactsTaskHandle?.value
-        await settle(model)
 
-        #expect(spy.loadCallCount == 1)
+        #expect(model.showsContactsAccessBanner == false)
+    }
+
+    @Test("the banner is hidden when there are no rows to label")
+    internal func bannerHiddenWhenNoRows() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [emptyModel]
+        let denied = StowerContactsAccess(status: { .denied }, request: { false })
+        let model = makeViewModel(spy, contacts: denied, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+
+        #expect(model.phase != .rows)
+        #expect(model.showsContactsAccessBanner == false)
+    }
+
+    @Test("a never-asked banner action requests and reloads on a fresh grant")
+    internal func notDeterminedActionRequestsAndReloads() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [oneRowBoard()]
+        let granting = StowerContactsAccess(status: { .notDetermined }, request: { true })
+        let model = makeViewModel(spy, contacts: granting, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+        #expect(model.contactsBannerActionTitle == "Show names")
+
+        model.resolveContactsAccess()
+        await model.contactsTaskHandle?.value
+        await model.loadTaskHandle?.value
+
+        // Initial load + one reload from the grant.
+        #expect(spy.loadCallCount == 2)
+    }
+
+    @Test("a denied banner action opens the Contacts Settings pane and never reloads")
+    internal func deniedActionOpensSettings() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [oneRowBoard()]
+        let denied = StowerContactsAccess(status: { .denied }, request: { false })
+        let recorder = OpenedURLRecorder()
+        let model = makeViewModel(
+            spy,
+            contacts: denied,
+            settings: StowerSystemSettingsOpener(open: { recorder.record($0) }),
+            recorder: FailureRecorder()
+        )
+
+        model.load()
+        await model.loadTaskHandle?.value
+        #expect(model.contactsBannerActionTitle == "Open Settings")
+
+        model.resolveContactsAccess()
+
+        #expect(recorder.opened.first == StowerSystemSettingsOpener.paneURL(for: .contacts))
+        #expect(model.contactsTaskHandle == nil)  // denied takes no async path
+        #expect(spy.loadCallCount == 1)  // no reload
     }
 }

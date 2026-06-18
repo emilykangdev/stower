@@ -36,7 +36,14 @@ internal struct StowerBoardView: View {
         case .error:
             errorNotice
         case .rows:
-            rowsList
+            VStack(spacing: 0) {
+                if model.showsContactsAccessBanner {
+                    StowerContactsAccessBanner(actionTitle: model.contactsBannerActionTitle) {
+                        model.resolveContactsAccess()
+                    }
+                }
+                rowsList
+            }
         }
     }
 

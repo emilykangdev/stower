@@ -12,7 +12,17 @@ import Testing
     internal func paneURLsConstruct() {
         #expect(StowerSystemSettingsOpener.paneURL(for: .fullDiskAccess) != nil)
         #expect(StowerSystemSettingsOpener.paneURL(for: .appleIntelligence) != nil)
+        #expect(StowerSystemSettingsOpener.paneURL(for: .contacts) != nil)
         #expect(StowerSystemSettingsOpener.generalSettingsURL != nil)
+    }
+
+    @Test("openPane opens the Contacts pane URL and does not fall back")
+    internal func opensContactsPane() {
+        let recorder = StowerOpenedURLRecorder()
+        let opener = StowerSystemSettingsOpener(open: { recorder.record($0) })
+        opener.openPane(.contacts)
+        #expect(recorder.opened.count == 1)
+        #expect(recorder.opened.first == StowerSystemSettingsOpener.paneURL(for: .contacts))
     }
 
     @Test("openPane opens the Full Disk Access pane URL and does not fall back")
