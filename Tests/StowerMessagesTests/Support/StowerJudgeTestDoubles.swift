@@ -142,7 +142,7 @@ internal struct StowerStubFactsReader: StowerConversationFactsReading {
     }
 
     internal func threadMessages(chatID: String, limit: Int) async throws -> [StowerThreadMessage] {
-        threads[chatID] ?? []
+        Array((threads[chatID] ?? []).prefix(limit))
     }
 }
 

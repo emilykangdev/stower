@@ -19,10 +19,18 @@ internal struct StowerStartupDebtConfig: Sendable, Equatable {
     ///
     /// `minimumReciprocity` and `ghostGateThreshold` mirror the engine's own init
     /// defaults; `unansweredForDays` has none and must be supplied.
+    /// Mirrors the engine `StowerDebtConfig`'s own init defaults.
+    private static let defaultMinimumReciprocity = 1
+    private static let defaultGhostGateThreshold = 0.5
+
+    /// The app-supplied debt threshold (JC4) — the one knob the engine has no
+    /// default for, changeable in one line.
+    private static let appDefaultUnansweredForDays = 3
+
     internal init(
         unansweredForDays: Int,
-        minimumReciprocity: Int = 1,
-        ghostGateThreshold: Double = 0.5
+        minimumReciprocity: Int = StowerStartupDebtConfig.defaultMinimumReciprocity,
+        ghostGateThreshold: Double = StowerStartupDebtConfig.defaultGhostGateThreshold
     ) {
         self.unansweredForDays = unansweredForDays
         self.minimumReciprocity = minimumReciprocity
@@ -32,7 +40,8 @@ internal struct StowerStartupDebtConfig: Sendable, Equatable {
     /// The app default debt configuration.
     ///
     /// `unansweredForDays` has no engine default — the debt threshold ("haven't
-    /// replied in N days") is a product knob, so the app supplies it (JC4: 3
-    /// days). Emily can change this in one line.
-    internal static let appDefault = StowerStartupDebtConfig(unansweredForDays: 3)
+    /// replied in N days") is a product knob, so the app supplies it (JC4).
+    internal static let appDefault = StowerStartupDebtConfig(
+        unansweredForDays: appDefaultUnansweredForDays
+    )
 }

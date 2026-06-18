@@ -21,8 +21,10 @@ internal enum StowerSystemSettingsPane: Sendable {
 internal struct StowerSystemSettingsOpener: Sendable {
     private let open: @Sendable @MainActor (URL) -> Bool
 
-    /// Creates an opener. `open` returns whether the URL actually opened and is
-    /// injectable so previews/tests don't launch System Settings.
+    /// Creates an opener.
+    ///
+    /// `open` returns whether the URL actually opened and is injectable so
+    /// previews/tests don't launch System Settings.
     internal init(
         open: @escaping @Sendable @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
     ) {
