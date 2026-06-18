@@ -8,6 +8,9 @@ let package = Package(
         .library(name: "StowerCore", targets: ["StowerCore"]),
         .library(name: "StowerPhotos", targets: ["StowerPhotos"]),
         .library(name: "StowerMessages", targets: ["StowerMessages"]),
+        // The tested StowerMac UI library. The Xcode app links this product (Task
+        // 5); only its one adapter file imports StowerMessages.
+        .library(name: "StowerMacUI", targets: ["StowerMacUI"]),
         // The target name alone does not name the binary; the explicit executable
         // product is what makes `swift run stower` resolve (eng Codex 6).
         .executable(name: "stower", targets: ["StowerCLI"]),
@@ -55,6 +58,16 @@ let package = Package(
             path: "Sources/StowerMessages",
             exclude: ["README.md"]
         ),
+        .target(
+            // The StowerMac app's tested UI library. Depends on the LOCAL
+            // StowerMessages target (the app is a client of the engine —
+            // MacAppContract.md §2), not a .product. Only
+            // Startup/StowerMessagesStartupAdapter.swift imports StowerMessages;
+            // every other file talks to the app-owned boundary alone.
+            name: "StowerMacUI",
+            dependencies: ["StowerMessages"],
+            path: "Sources/StowerMacUI"
+        ),
         .executableTarget(
             name: "StowerCLI",
             dependencies: [
@@ -90,6 +103,14 @@ let package = Package(
                 .product(name: "CustomDump", package: "swift-custom-dump"),
             ],
             path: "Tests/StowerMessagesTests"
+        ),
+        .testTarget(
+            // Depends on BOTH StowerMacUI and StowerMessages: the adapter-mapping
+            // tests drive StowerFakeMessagesEngine, which conforms to the engine's
+            // StowerDebtBoardProviding.
+            name: "StowerMacUITests",
+            dependencies: ["StowerMacUI", "StowerMessages"],
+            path: "Tests/StowerMacUITests"
         ),
     ]
 )

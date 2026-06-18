@@ -6,6 +6,25 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-17: **StowerMac FDA-onboarding slice + judge-owned model id.** Task 0 moved the
+  cache-invalidation epoch off the app surface: `StowerDebtBoardProvider` no longer takes or
+  exposes `modelIdentity`, and `StowerFoundationModelReplyJudge` owns a `static modelIdentity`
+  folded into `judgeVersion()` — the judge owns its prompt AND its model id; behavior unchanged
+  (the verdict cache still auto-invalidates on a prompt/model change). New tested `StowerMacUI`
+  library with an app-owned startup boundary the SwiftUI views never leave: `StowerStartupProviding`,
+  `StowerStartupModelAvailability` / `StowerStartupModelUnavailableReason`, `StowerStartupDebtConfig`
+  (`appDefault` `unansweredForDays: 3`), `StowerStartupFailure`, `StowerStartupState`, and a
+  `@MainActor @Observable StowerStartupModel` with Task+generation re-entrancy (cancel-before-replace;
+  `CancellationError` never routes to `.failed`). Only `StowerMessagesStartupAdapter` imports
+  `StowerMessages`, mapping the seven-case `StowerMessagesError` + availability + config 1:1. FDA-first
+  views (`StowerRootView` is the lone `public` symbol; FDA / model-unavailable / checking /
+  connected-loading / failure) per the UI Contract, plus one isolated System Settings opener (FDA +
+  Apple Intelligence panes, `guard let` + general fallback). Access-granted parks at an honest
+  `.connectedPreparingBoard` loading state — the board + `refreshJudgments` lifecycle are the next
+  slice. `precheck.sh` Step 6 now gates the StowerMacUI import boundary, the Messages-probe ban, and
+  the app-entry imports. `Scripts/precheck.sh` green (163 tests). **Still blocked at Task 5 (human
+  Xcode step): add the local package, link the `StowerMacUI` product, App Sandbox off, macOS-only,
+  render `StowerRootView()`, delete `ContentView.swift`.**
 - 2026-06-15: Relationship-debt engine went **FM-only and judged-only**
   (remove-heuristic-reply-judge). The heuristic judge
   (`StowerHeuristicReplyJudge`), the judge-mode concept (`StowerReplyJudgeMode` /
@@ -29,7 +48,7 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
   carries `changedChatIDs`, `judgedCount`, `failedCount`, `totalCount`, and the app
   clears its cold-start loading screen at `judged + failed == total` and reloads
   when `changedChatIDs` is non-empty. Each record is judged under a per-record FM
-  timeout; an app-owned `modelIdentity` epoch folds into the judge version and the
+  timeout; the judge's own `modelIdentity` epoch folds into the judge version and the
   input hash fingerprints the raw message text. `Scripts/precheck.sh` green.
 - 2026-06-14: Relationship-debt engine groundwork in `StowerMessages` (feature 5).
   Two-layer, pure, reads only the local 180-day window on the existing read-only

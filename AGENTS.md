@@ -68,6 +68,11 @@ Apply the following constraints to every change you make.
   rationale changes — not when the code changes.
 - After each meaningful commit, update `PLAN.md`'s "Status" section so the
   next session can re-enter without re-reading the diff.
+- When writing or editing a plan/spec/doc, refer to real codebase symbols
+  (types, functions, views, state cases) by their **exact names** — e.g.
+  `StowerModelUnavailableView`, not "the model screen". Invented English
+  paraphrases drift out of sync and aren't greppable; exact names are. If the
+  symbol doesn't exist yet, name the one you intend to create, not a vibe.
 
 ## Signal-coding skills
 
