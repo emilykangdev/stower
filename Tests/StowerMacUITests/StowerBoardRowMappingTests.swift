@@ -62,6 +62,14 @@ import Testing
         #expect(row.counterpart == "Alex Rivera")
     }
 
+    @Test("hasResolvedName drives the avatar: true with a name, false for a raw handle")
+    internal func hasResolvedNameTracksResolution() {
+        let named = StowerMessagesMapping.mapRow(item(), now: Self.now, contacts: Self.named)
+        let unmatched = StowerMessagesMapping.mapRow(item(), now: Self.now, contacts: Self.empty)
+        #expect(named.hasResolvedName)
+        #expect(unmatched.hasResolvedName == false)
+    }
+
     @Test("a deep link enables Open in Messages; its absence disables it (I3)")
     internal func deepLinkDrivesEnable() {
         let withLink = StowerMessagesMapping.mapRow(item(), now: Self.now, contacts: Self.empty)

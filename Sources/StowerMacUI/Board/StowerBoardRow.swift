@@ -36,6 +36,13 @@ internal struct StowerBoardRow: Identifiable, Sendable, Equatable, Hashable {
     /// Whether "Open in Messages" is enabled — exactly `deepLink != nil`.
     internal var canOpenInMessages: Bool { deepLink != nil }
 
+    /// Whether a Contacts name resolved (`counterpart` is a real name, not the handle).
+    ///
+    /// Drives the avatar: a named row shows its initials monogram, an unresolved
+    /// handle shows a generic person glyph instead of a meaningless digit (every
+    /// unknown `+1…` number would otherwise collapse to an identical "1").
+    internal var hasResolvedName: Bool { counterpart != counterpartHandle }
+
     /// Creates a board row from already-computed display values.
     internal init(
         chatID: String,
