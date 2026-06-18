@@ -119,15 +119,17 @@ internal final class StowerBoardViewModel {
 
     /// Cancels in-flight work when the board view disappears.
     ///
-    /// Resets `isRefreshing` and supersedes the refresh generation so the next
-    /// `onAppear` can start a fresh refresh even if the cancelled task hasn't
-    /// finished unwinding yet — without that reset, a cancelled-but-not-yet-exited
-    /// refresh would keep `isRefreshing` true and block the reappear refresh,
-    /// stranding cold start in `.preparing`. The superseded task's `defer` is
-    /// generation-guarded, so its late exit can't clear a newer refresh's flag.
+    /// Supersedes BOTH generations so a cancellation-ignoring load or refresh that
+    /// completes after disappearance is discarded by the generation guards (it
+    /// can't apply stale board state or route a failure into onboarding once the
+    /// board is gone). Also resets `isRefreshing` so the next `onAppear` can start a
+    /// fresh refresh even if the cancelled task hasn't finished unwinding yet —
+    /// without that reset a cancelled-but-not-yet-exited refresh would keep
+    /// `isRefreshing` true and strand cold start in `.preparing`.
     internal func cancel() {
         loadTask?.cancel()
         refreshTask?.cancel()
+        loadGeneration += 1
         refreshGeneration += 1
         isRefreshing = false
     }

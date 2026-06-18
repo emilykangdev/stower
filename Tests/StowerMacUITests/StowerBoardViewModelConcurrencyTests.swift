@@ -69,6 +69,23 @@ import Testing
         #expect(model.board?.rows(for: .neglected).map(\.id) == ["fresh"])
     }
 
+    @Test("cancel supersedes an in-flight load so its late result is discarded (I13)")
+    internal func cancelDiscardsInFlightLoad() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.gateLoads = true
+        let model = makeViewModel(spy)
+
+        model.load()
+        while spy.pendingLoadGateCount < 1 { await Task.yield() }
+
+        // Dismiss while the load is in flight; releasing it afterwards must not
+        // apply stale board state (cancel superseded the load generation).
+        model.cancel()
+        spy.releaseLoad(at: 0, with: board(neglected: ["stale"]))
+        await Task.yield()
+        #expect(model.board == nil)
+    }
+
     @Test("a refresh completion reloads at the CURRENT preset, not the start preset (I13)")
     internal func refreshReloadsAtCurrentPreset() async {
         let spy = StowerSpyBoardDataSource()
