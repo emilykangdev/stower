@@ -42,8 +42,15 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
                 config: StowerMessagesMapping.mapConfig(config),
                 now: now
             )
-            // Built once per load (not per row): `.live()` enumerates the whole
-            // address book, so calling it inside the row map would be O(rows × contacts).
+            // No rows to label — skip building the resolver entirely. `.live()`
+            // enumerates the whole address book, and the cold-start / caught-up path
+            // loads an empty board repeatedly; enumerating Contacts for zero rows is
+            // pure waste.
+            guard !board.neglected.isEmpty || !board.ghosted.isEmpty else {
+                return StowerBoardModel(neglected: [], ghosted: [])
+            }
+            // Built once per load (not per row): calling `.live()` inside the row map
+            // would be O(rows × contacts).
             let contacts = makeContactsResolver()
             return StowerBoardModel(
                 neglected: board.neglected.map {

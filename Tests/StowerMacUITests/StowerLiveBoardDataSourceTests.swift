@@ -92,6 +92,21 @@ import Testing
         #expect(builds.withLock { $0 } == 2)
     }
 
+    @Test("an empty board never builds the resolver (no Contacts enumeration for zero rows)")
+    internal func emptyBoardSkipsResolver() async throws {
+        let builds = Mutex(0)
+        let adapter = StowerLiveBoardDataSource(
+            engine: StowerFakeMessagesEngine(),  // default empty board
+            makeContactsResolver: {
+                builds.withLock { $0 += 1 }
+                return StowerContactsResolver()
+            }
+        )
+        let board = try await adapter.loadBoard(config: .appDefault, now: Date())
+        #expect(board.isEmpty)
+        #expect(builds.withLock { $0 } == 0)
+    }
+
     @Test("a post-grant rebuild yields names on the next load (self-heal, I6)")
     internal func secondLoadYieldsNames() async throws {
         let engine = StowerFakeMessagesEngine(
