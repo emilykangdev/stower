@@ -7,14 +7,10 @@ internal enum StowerFakeActivateBehavior: Sendable {
     /// Returns the outcome immediately.
     case outcome(StowerLicenseActivation)
 
-    /// Awaits an effectively unbounded sleep that returns once the in-flight task
-    /// is cancelled — for the re-entrancy / overlapping-submit test (I8).
-    case blockUntilCancelled
-
     /// Blocks until the test calls `release()`, then returns the outcome — for the
-    /// stale-activation test (I6), where the superseded run keeps running and
-    /// still returns `.activated`, proving the generation guard (not cancellation)
-    /// is what prevents the persist/commit.
+    /// in-flight tests (I6/I8): the run keeps running while the test drives a
+    /// `cancel()` or a re-entrant submit, proving the generation guard / ignore
+    /// path without racing on real cancellation timing.
     case blockUntilReleased(StowerLicenseActivation)
 }
 
@@ -84,9 +80,6 @@ internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Send
         switch behavior {
         case .outcome(let outcome):
             return outcome
-        case .blockUntilCancelled:
-            try? await Task.sleep(for: .seconds(3_600))
-            return .couldNotReach
         case .blockUntilReleased(let outcome):
             await waitForRelease()
             return outcome

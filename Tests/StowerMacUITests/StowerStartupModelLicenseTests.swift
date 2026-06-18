@@ -101,11 +101,11 @@ import Testing
         #expect(gate.persistedLicenses.isEmpty)
     }
 
-    @Test("I6: a superseded activation neither persists nor commits")
+    @Test("I6: an activation superseded by cancel() neither persists nor commits")
     internal func supersededActivationDoesNotPersist() async {
         let gate = StowerFakeLicenseGate(
             hasLicense: false,
-            activate: [.blockUntilReleased(.activated(instanceID: "inst")), .outcome(.invalid)]
+            activate: [.blockUntilReleased(.activated(instanceID: "inst"))]
         )
         let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
         model.start()
@@ -115,11 +115,11 @@ import Testing
             await Task.yield()
         }
         let runA = model.activeRun
-        model.submitLicense("B")
-        await model.activeRun?.value
+        // A cancel() (e.g. the root view disappears) bumps the generation while the
+        // activate is blocked; the generation guard must then drop the late persist.
+        model.cancel()
         gate.release()
         await runA?.value
-        #expect(model.state == .needsLicense(.invalid))
         #expect(gate.persistedLicenses.isEmpty)
     }
 
@@ -134,11 +134,11 @@ import Testing
         #expect(gate.activateCallCount == 0)
     }
 
-    @Test("I8: an overlapping submit cancels the in-flight activation without routing to .failed")
-    internal func overlappingSubmitDiscardsStaleActivation() async {
+    @Test("I8: a submit while an activation is in flight is ignored — only one POST fires")
+    internal func reentrantSubmitIgnoredWhileActivating() async {
         let gate = StowerFakeLicenseGate(
             hasLicense: false,
-            activate: [.blockUntilCancelled, .outcome(.activated(instanceID: "inst"))]
+            activate: [.blockUntilReleased(.activated(instanceID: "inst"))]
         )
         let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
         model.start()
@@ -147,8 +147,10 @@ import Testing
         while gate.activateCallCount < 1 {
             await Task.yield()
         }
-        model.submitLicense("B")
+        model.submitLicense("B")  // ignored: an activation is already in flight
+        gate.release()
         await model.activeRun?.value
+        #expect(gate.activateCallCount == 1)
         #expect(model.state == .connectedPreparingBoard)
     }
 

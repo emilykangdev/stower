@@ -24,6 +24,9 @@ internal final class StowerStartupModel {
     private let onCommit: (@MainActor @Sendable (StowerStartupState) -> Void)?
     private var inFlight: Task<Void, Never>?
     private var generation = 0
+    /// True while an `/activate` POST is in flight, so a re-entrant submit (a fast
+    /// double-click) is ignored rather than firing a second seat-consuming call.
+    private var isActivating = false
 
     /// Minimum time the checking state stays up, so a fast result doesn't flash.
     private static let minimumCheckingDisplay: Duration = .milliseconds(400)
@@ -72,18 +75,24 @@ internal final class StowerStartupModel {
 
     /// Activates the license key entered on `StowerLicenseEntryView`.
     ///
-    /// Re-entrant, mirroring `beginRun`'s `[weak self]` capture and generation
-    /// token. Trims once at this boundary so the stored key equals the activated
-    /// key; an all-whitespace field can't submit (the entry view also disables on
-    /// an empty trim).
+    /// Unlike `beginRun` (the idempotent board probe), activation consumes a
+    /// server-side device seat, so it is NOT cancel-and-restart re-entrant: a
+    /// second submit while one is in flight is **ignored**. `isActivating` is set
+    /// synchronously here — before the spawned task commits `.checkingLicense` —
+    /// so a fast double-click on Activate can't fire two `/activate` POSTs and
+    /// burn two of the five seats. Trims once so the stored key equals the
+    /// activated key; an all-whitespace field can't submit.
     internal func submitLicense(_ rawKey: String) {
+        guard !isActivating else { return }
         let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return }
+        isActivating = true
         inFlight?.cancel()
         generation += 1
         let runGeneration = generation
         inFlight = Task { [weak self] in
             await self?.runActivation(key: key, generation: runGeneration)
+            self?.isActivating = false
         }
     }
 
