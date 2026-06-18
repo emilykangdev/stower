@@ -27,6 +27,11 @@ internal struct StowerBoardView: View {
         .task { model.onAppear() }
         .onDisappear { model.cancel() }
         .onReceive(Self.didBecomeActive) { _ in model.onAppBecameActive() }
+        .onChange(of: model.contactsRevocationToken) {
+            // Contacts access was revoked — close any open thread so a resolved name
+            // captured at tap time can't linger in its title after access is gone.
+            selectedRow = nil
+        }
     }
 
     /// Fires when the app returns to the foreground — the cue to re-check a Contacts

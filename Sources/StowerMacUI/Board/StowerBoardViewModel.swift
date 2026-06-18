@@ -49,13 +49,15 @@ internal final class StowerBoardViewModel {
 
     /// The last-synced Contacts authorization, as *observed* state.
     ///
-    /// The banner's visibility and label derive from this — not a live read of
-    /// `contacts.authorization` — so SwiftUI recomputes them when it changes. It is
-    /// refreshed whenever authorization can have moved: on appear, after an in-app
-    /// prompt resolves (grant *or* deny), and on app re-activation (a Settings
-    /// change). Without this, denying the prompt would leave the banner's stale
-    /// "Show names" label even though the action has switched to opening Settings.
+    /// So SwiftUI recomputes the banner when it changes (a live read of
+    /// `contacts.authorization` wouldn't). Refreshed wherever authorization can move:
+    /// on appear, after an in-app prompt resolves (grant *or* deny), and on app
+    /// re-activation.
     internal private(set) var contactsAuthorization: StowerContactsAuthorization
+
+    /// Bumps whenever Contacts access is *lost* (authorized → not), so the board view
+    /// dismisses an open thread before its captured row's resolved name can linger.
+    internal private(set) var contactsRevocationToken = 0
 
     private let dataSource: any StowerBoardDataSource
     private let contacts: StowerContactsAccess
@@ -196,6 +198,11 @@ internal final class StowerBoardViewModel {
     internal func onAppBecameActive() {
         let previous = contactsAuthorization
         syncContactsAuthorization()
+        // Access lost while away — signal the view to dismiss an open thread so its
+        // captured row's resolved name can't outlive the grant.
+        if previous == .authorized, contactsAuthorization != .authorized {
+            contactsRevocationToken += 1
+        }
         let wasAwaitingRecovery = awaitingContactsRecovery
         awaitingContactsRecovery = false
         if wasAwaitingRecovery || contactsAuthorization != previous {

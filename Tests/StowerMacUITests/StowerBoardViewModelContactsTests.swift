@@ -229,4 +229,31 @@ import Testing
         #expect(spy.loadCallCount == 2)  // reloaded so names don't linger
         #expect(model.showsContactsAccessBanner)  // banner returns
     }
+
+    @Test("revocation bumps the token so the board view can dismiss an open thread")
+    internal func revocationBumpsThreadDismissalToken() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [oneRowBoard()]
+        let authorized = Mutex(true)
+        let access = StowerContactsAccess(
+            status: { authorized.withLock { $0 } ? .authorized : .denied },
+            request: { true }
+        )
+        let model = makeViewModel(spy, contacts: access, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+        let tokenBefore = model.contactsRevocationToken
+
+        authorized.withLock { $0 = false }  // revoke
+        model.onAppBecameActive()
+        await model.loadTaskHandle?.value
+        #expect(model.contactsRevocationToken == tokenBefore + 1)
+
+        // A grant (non-authorized → authorized) does NOT bump the dismissal token.
+        authorized.withLock { $0 = true }
+        model.onAppBecameActive()
+        await model.loadTaskHandle?.value
+        #expect(model.contactsRevocationToken == tokenBefore + 1)
+    }
 }
