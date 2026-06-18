@@ -24,6 +24,9 @@ internal struct StowerContactsAccessBanner: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            // Combine only the copy into one label; the button stays a separate,
+            // focusable element so VoiceOver users can still reach the action.
+            .accessibilityElement(children: .combine)
             Spacer(minLength: 0)
             Button(actionTitle, action: action)
                 .buttonStyle(.borderedProminent)
@@ -32,6 +35,5 @@ internal struct StowerContactsAccessBanner: View {
         .padding(.horizontal, StowerBoardTheme.bannerHorizontalPadding)
         .padding(.vertical, StowerBoardTheme.bannerVerticalPadding)
         .background(StowerBoardTheme.bannerBackground)
-        .accessibilityElement(children: .combine)
     }
 }
