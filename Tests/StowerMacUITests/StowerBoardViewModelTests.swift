@@ -99,13 +99,16 @@ import Testing
         spy.loadModels = [emptyModel]
         let model = makeViewModel(spy, recorder: FailureRecorder())
 
+        // The default is .all (0 days), so the launch load hides nothing by age.
+        #expect(model.selectedPreset == .all)
         model.load()
         await model.loadTaskHandle?.value
         model.selectPreset(.twentyEightDays)
         await model.loadTaskHandle?.value
 
         #expect(spy.loadCallCount == 2)
-        #expect(spy.recordedLoadConfigs.first?.unansweredForDays == StowerDayPreset.default.days)
+        #expect(StowerDayPreset.default.days == 0)
+        #expect(spy.recordedLoadConfigs.first?.unansweredForDays == 0)
         #expect(spy.recordedLoadConfigs.last?.unansweredForDays == 28)
     }
 
