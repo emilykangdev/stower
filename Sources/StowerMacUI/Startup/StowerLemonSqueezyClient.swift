@@ -5,30 +5,48 @@ import Foundation
 ///
 /// `/activate` needs no API key: it verifies the key, enforces the 5-device
 /// `activation_limit` server-side, and returns `instance.id`. The response is
-/// decoded into a MINIMAL `{activated, instance.id}` shape, so the
-/// `meta.customer_email` Lemon Squeezy also returns is never decoded, retained,
-/// or logged. This client makes no other call — there is no `/validate` in v1.
+/// decoded into a MINIMAL shape — the verdict, the `instance.id`, and the
+/// product-identity ints (`meta.store_id` / `meta.product_id`) — so the
+/// `meta.customer_email` / `customer_name` Lemon Squeezy also returns are never
+/// decoded, retained, or logged. This client makes no other call (no `/validate`
+/// in v1).
+///
+/// The `/activate` endpoint is global: a valid license key for ANY Lemon Squeezy
+/// store/product returns `activated:true`. So the client requires the response's
+/// `store_id` + `product_id` to equal Stower's configured IDs before returning
+/// `.activated` — otherwise another product's key would unlock Stower (the Lemon
+/// Squeezy license-keys guide calls this out). A mismatch is `.invalid`.
 internal struct StowerLemonSqueezyClient: Sendable {
     /// Runs one request; injectable so tests need no network.
     internal typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     private let transport: Transport
+    private let expectedStoreID: Int
+    private let expectedProductID: Int
 
     /// Creates a client.
     ///
-    /// - Parameter transport: The request runner; defaults to `URLSession.shared`.
+    /// - Parameters:
+    ///   - expectedStoreID: Stower's Lemon Squeezy `store_id`; the response must match.
+    ///   - expectedProductID: Stower's Lemon Squeezy `product_id`; the response must match.
+    ///   - transport: The request runner; defaults to `URLSession.shared`.
     internal init(
+        expectedStoreID: Int,
+        expectedProductID: Int,
         transport: @escaping Transport = { try await URLSession.shared.data(for: $0) }
     ) {
+        self.expectedStoreID = expectedStoreID
+        self.expectedProductID = expectedProductID
         self.transport = transport
     }
 
     /// Activates `key`, classifying the outcome.
     ///
     /// A transport throw, a 5xx, or an undecodable body is `.couldNotReach`
-    /// (recoverable; also the offline first-run case); a decoded `activated:true`
-    /// with an `instance.id` is `.activated`; a decoded `activated:false` is
-    /// `.invalid`.
+    /// (recoverable; also the offline first-run case); `activated:true` with an
+    /// `instance.id` AND a `meta` `store_id`/`product_id` matching Stower's is
+    /// `.activated`; anything else (`activated:false`, or a key for another
+    /// store/product) is `.invalid`.
     ///
     /// - Parameters:
     ///   - key: The trimmed license key.
@@ -52,10 +70,16 @@ internal struct StowerLemonSqueezyClient: Sendable {
         guard let body = try? JSONDecoder().decode(StowerActivateBody.self, from: data) else {
             return .couldNotReach
         }
-        if body.activated, let instanceID = body.instance?.id {
-            return .activated(instanceID: instanceID)
+        guard body.activated, let instanceID = body.instance?.id else {
+            return .invalid
         }
-        return .invalid
+        // A key for another Lemon Squeezy product/store also returns activated:true,
+        // so it must match Stower's own product before it grants access.
+        guard body.meta?.storeID == expectedStoreID, body.meta?.productID == expectedProductID
+        else {
+            return .invalid
+        }
+        return .activated(instanceID: instanceID)
     }
 
     /// Builds the percent-encoded form POST, or `nil` if the (constant) endpoint
@@ -105,16 +129,28 @@ internal struct StowerLemonSqueezyClient: Sendable {
     private static let activateURLString = "https://api.lemonsqueezy.com/v1/licenses/activate"
 }
 
-/// The minimal decode of the activate response: only the verdict and the bound
-/// instance id.
-///
-/// Deliberately has no field for `meta.customer_email` / other PII, so a wide
-/// decode can't leak it (compiler-enforced shape).
+/// The minimal decode of the activate response: the verdict, the bound instance
+/// id, and the product-identity `meta` used to confirm the key is Stower's.
 private struct StowerActivateBody: Decodable {
     let activated: Bool
     let instance: Instance?
+    let meta: StowerActivateMeta?
 
     struct Instance: Decodable {
         let id: String
+    }
+}
+
+/// The product-identity slice of the activate response `meta`.
+///
+/// Only `store_id` / `product_id` are decoded — never `customer_email` /
+/// `customer_name`, which have no field here, so a wide decode can't leak PII.
+private struct StowerActivateMeta: Decodable {
+    let storeID: Int?
+    let productID: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case storeID = "store_id"
+        case productID = "product_id"
     }
 }

@@ -30,16 +30,20 @@ import Testing
         let suite = "stower.gate.activate"
         let (store, defaults) = makeStore(suite)
         defer { defaults.removePersistentDomain(forName: suite) }
-        let client = StowerLemonSqueezyClient(transport: { _ in
-            let url = URL(string: "https://example.invalid")
-            let response = url.flatMap {
-                HTTPURLResponse(url: $0, statusCode: 200, httpVersion: nil, headerFields: nil)
+        let client = StowerLemonSqueezyClient(
+            expectedStoreID: 11,
+            expectedProductID: 22,
+            transport: { _ in
+                let url = URL(string: "https://example.invalid")
+                let response = url.flatMap {
+                    HTTPURLResponse(url: $0, statusCode: 200, httpVersion: nil, headerFields: nil)
+                }
+                let body =
+                    #"{"activated":true,"instance":{"id":"inst-2"},"#
+                    + #""meta":{"store_id":11,"product_id":22}}"#
+                return (Data(body.utf8), response ?? URLResponse())
             }
-            return (
-                Data(#"{"activated":true,"instance":{"id":"inst-2"}}"#.utf8),
-                response ?? URLResponse()
-            )
-        })
+        )
         let gate = StowerLemonSqueezyLicenseGate(client: client, store: store)
 
         let outcome = await gate.activate(key: "KEY")

@@ -13,13 +13,19 @@ internal struct StowerLemonSqueezyLicenseGate: StowerLicenseGating {
     /// Creates the gate.
     ///
     /// - Parameters:
-    ///   - client: The activate client; defaults to the real `URLSession` one.
+    ///   - client: The activate client; defaults to the real `URLSession` one,
+    ///     configured with Stower's expected store/product IDs.
     ///   - store: The plaintext `UserDefaults` store; defaults to `.standard`.
     internal init(
-        client: StowerLemonSqueezyClient = StowerLemonSqueezyClient(),
+        client: StowerLemonSqueezyClient? = nil,
         store: StowerLicenseStore = StowerLicenseStore()
     ) {
-        self.client = client
+        self.client =
+            client
+            ?? StowerLemonSqueezyClient(
+                expectedStoreID: Self.expectedStoreID,
+                expectedProductID: Self.expectedProductID
+            )
         self.store = store
     }
 
@@ -40,4 +46,16 @@ internal struct StowerLemonSqueezyLicenseGate: StowerLicenseGating {
     /// A fixed app label (not the device hostname) keeps any user-identifying
     /// device name out of the one network call.
     private static let instanceName = "Stower"
+
+    /// Stower's Lemon Squeezy `store_id` and `product_id`.
+    ///
+    /// A key whose activate response does not match BOTH is rejected as
+    /// `.invalid` — otherwise a license for any other Lemon Squeezy product would
+    /// unlock Stower.
+    ///
+    /// PLACEHOLDERS — set these to the real dashboard IDs before selling, or no
+    /// key will activate (the check fails closed). Find them in the Lemon Squeezy
+    /// dashboard (or any activate response's `meta.store_id` / `meta.product_id`).
+    private static let expectedStoreID = 0
+    private static let expectedProductID = 0
 }
