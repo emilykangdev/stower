@@ -19,20 +19,29 @@ internal enum StowerSystemSettingsPane: Sendable {
 /// let`-constructed — never force-unwrapped — and a nil/failed pane URL falls back
 /// to general System Settings so a wrong or changed string never strands the user.
 internal struct StowerSystemSettingsOpener: Sendable {
-    private let open: @Sendable @MainActor (URL) -> Void
+    private let open: @Sendable @MainActor (URL) -> Bool
 
-    /// Creates an opener. `open` is injectable so previews/tests don't actually
-    /// launch System Settings.
+    /// Creates an opener. `open` returns whether the URL actually opened and is
+    /// injectable so previews/tests don't launch System Settings.
     internal init(
-        open: @escaping @Sendable @MainActor (URL) -> Void = { NSWorkspace.shared.open($0) }
+        open: @escaping @Sendable @MainActor (URL) -> Bool = { NSWorkspace.shared.open($0) }
     ) {
         self.open = open
     }
 
-    /// Opens `pane`, falling back to general System Settings if its URL is absent.
+    /// Opens `pane`, falling back to general System Settings if its URL is absent
+    /// OR fails to open.
+    ///
+    /// The pane strings are Apple-undocumented and version-fragile, so a
+    /// parseable-but-wrong URL can fail to open — falling back on a `false` result
+    /// (not just a `nil` URL) is what keeps the user from being stranded.
     @MainActor internal func openPane(_ pane: StowerSystemSettingsPane) {
-        guard let url = Self.paneURL(for: pane) ?? Self.generalSettingsURL else { return }
-        open(url)
+        if let paneURL = Self.paneURL(for: pane), open(paneURL) {
+            return
+        }
+        if let fallback = Self.generalSettingsURL {
+            _ = open(fallback)
+        }
     }
 
     /// The deep-link URL for `pane`, or `nil` if the (fragile) string fails to
