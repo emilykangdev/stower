@@ -33,6 +33,7 @@ const isoAt = (ms: number) => new Date(ms).toISOString();
 class FakeTrials implements TrialStore {
   rows = new Map<string, TrialRow>();
   claimNowMs = T0;
+  activateError: Error | null = null;
 
   claim(fingerprint: string): Promise<boolean> {
     if (this.rows.has(fingerprint)) return Promise.resolve(false);
@@ -52,6 +53,7 @@ class FakeTrials implements TrialStore {
     licenseID: string,
     licenseKey: string,
   ): Promise<void> {
+    if (this.activateError) return Promise.reject(this.activateError);
     this.rows.set(fingerprint, {
       status: "active",
       keygen_license_id: licenseID,
@@ -63,6 +65,16 @@ class FakeTrials implements TrialStore {
   releaseClaim(fingerprint: string): Promise<void> {
     const row = this.rows.get(fingerprint);
     if (row && row.status === "pending") this.rows.delete(fingerprint);
+    return Promise.resolve();
+  }
+  reclaimStale(fingerprint: string, olderThanMs: number): Promise<void> {
+    const row = this.rows.get(fingerprint);
+    if (
+      row && row.status === "pending" &&
+      Date.parse(row.created_at) < olderThanMs
+    ) {
+      this.rows.delete(fingerprint);
+    }
     return Promise.resolve();
   }
 }
@@ -245,6 +257,36 @@ Deno.test("I3 a stale pending claim is reclaimed and minted", async () => {
   assertEquals(keygen.created, 1);
 });
 
+// I3: a DB-activate failure AFTER Keygen create keeps the claim (no orphan storm).
+Deno.test("I3 a post-create DB failure does not release the claim", async () => {
+  const trials = new FakeTrials();
+  trials.activateError = new Error("db write failed");
+  const keygen = new FakeKeygen();
+
+  const result = await mintTrial(mintDeps(trials, keygen, T0), "fp");
+  assertEquals(result.status, 503);
+  // The license was created once; the claim row is retained (still pending), so a
+  // retry inside the window will NOT mint a second license.
+  assertEquals(keygen.created, 1);
+  assertEquals(trials.rows.get("fp")?.status, "pending");
+});
+
+// The stale-reclaim delete must not destroy a competing fresh claim (TOCTOU).
+Deno.test("I3 reclaim only deletes a row older than the cutoff", async () => {
+  const trials = new FakeTrials();
+  // A FRESH pending row (created 'now'); the reclaim cutoff is now - window, so
+  // this row is younger than the cutoff and must survive.
+  trials.rows.set("fp", {
+    status: "pending",
+    keygen_license_id: null,
+    keygen_license_key: null,
+    created_at: isoAt(T0),
+  });
+
+  await trials.reclaimStale("fp", T0 - RECLAIM_WINDOW_MS);
+  assertEquals(trials.rows.has("fp"), true);
+});
+
 // I9: a bad LS signature is 401 with no Keygen call and no row write.
 Deno.test("I9 a bad signature is 401 with no side effects", async () => {
   const keygen = new FakeKeygen();
@@ -347,6 +389,22 @@ Deno.test("an FK violation at record time returns 200 after the upgrade", async 
   );
   assertEquals(result.status, 200);
   assertEquals(keygen.upgrades.length, 1);
+});
+
+// A paid order for our variant but with no license_id is acked (no retry storm),
+// upgrades nothing, and records nothing — surfaced for manual reconciliation.
+Deno.test("a paid order missing license_id is acked without upgrading", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases),
+    orderBody({ licenseID: "" }),
+    "good",
+  );
+  assertEquals(result.status, 200);
+  assertEquals(keygen.upgrades.length, 0);
+  assertEquals(purchases.records.length, 0);
 });
 
 // A non-order event is ignored with a 200.

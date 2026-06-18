@@ -22,8 +22,15 @@ export interface TrialStore {
     licenseID: string,
     licenseKey: string,
   ): Promise<void>;
-  /** `DELETE ... WHERE fingerprint = $1 AND status = 'pending'` — releases a claim, never an active row. */
+  /** `DELETE ... WHERE fingerprint = $1 AND status = 'pending'` — releases the caller's own fresh claim, never an active row. */
   releaseClaim(fingerprint: string): Promise<void>;
+  /**
+   * `DELETE ... WHERE fingerprint = $1 AND status = 'pending' AND created_at < $2`
+   * — reclaims ONLY a stale pending row. The `created_at` guard is load-bearing:
+   * without it, a delete-by-fingerprint could remove another request's fresh claim
+   * (created after we read the stale one) and cause a double-mint.
+   */
+  reclaimStale(fingerprint: string, olderThanMs: number): Promise<void>;
 }
 
 /** The `purchases` persistence seam. */
@@ -107,10 +114,12 @@ export async function mintTrial(
       };
     }
     // A 'pending' row: a winner is mid-mint, or it crashed. Reclaim it once it is
-    // older than the window; otherwise tell the caller to retry shortly.
-    const age = deps.now() - Date.parse(row.created_at);
-    if (age > deps.reclaimWindowMs) {
-      await deps.trials.releaseClaim(fingerprint);
+    // older than the window; otherwise tell the caller to retry shortly. The
+    // reclaim deletes only rows older than `cutoff`, so a competing fresh claim
+    // (newer created_at) is never destroyed.
+    const cutoffMs = deps.now() - deps.reclaimWindowMs;
+    if (Date.parse(row.created_at) < cutoffMs) {
+      await deps.trials.reclaimStale(fingerprint, cutoffMs);
       continue;
     }
     return RETRY_REPLY;
@@ -118,19 +127,32 @@ export async function mintTrial(
   return RETRY_REPLY;
 }
 
-/** The claim winner: create the Keygen license, or release the claim on failure. */
+/**
+ * The claim winner. The two failure modes are handled differently on purpose:
+ *  - Keygen create failed → nothing was created, so release the claim; a retry
+ *    can safely mint.
+ *  - Keygen create SUCCEEDED but the DB write failed → the license exists.
+ *    Do NOT release the claim — releasing it would let a retry mint a SECOND
+ *    license (an orphan storm). Leave the pending row; only the bounded
+ *    stale-reclaim path may re-mint, capping orphans instead of one-per-retry.
+ */
 async function mintForWinner(
   deps: MintDeps,
   fingerprint: string,
 ): Promise<Reply> {
+  let license: { id: string; key: string };
   try {
-    const license = await deps.keygen.createTrialLicense();
-    await deps.trials.activate(fingerprint, license.id, license.key);
-    return { status: 200, body: { key: license.key, licenseID: license.id } };
+    license = await deps.keygen.createTrialLicense();
   } catch (_error) {
     await deps.trials.releaseClaim(fingerprint);
     return RETRY_REPLY;
   }
+  try {
+    await deps.trials.activate(fingerprint, license.id, license.key);
+  } catch (_error) {
+    return RETRY_REPLY;
+  }
+  return { status: 200, body: { key: license.key, licenseID: license.id } };
 }
 
 /**
@@ -164,6 +186,17 @@ export async function handleWebhook(
 
   if (await deps.purchases.exists(orderID)) return { status: 200 }; // replay no-op
   if (variantID !== deps.paidVariantID) return { status: 200 }; // not our product
+
+  if (!licenseID) {
+    // A paid order for OUR variant but with no license id to map it to (a checkout
+    // that didn't carry custom_data.license_id). Retrying can't conjure the id, so
+    // ack (200) to stop an LS retry storm, but alert loudly for manual
+    // reconciliation rather than silently leaving a paying buyer on trial.
+    console.error(
+      `paid order ${orderID} for the paid variant has no license_id; manual reconciliation needed`,
+    );
+    return { status: 200 };
+  }
 
   try {
     await deps.keygen.upgradeToPaid(licenseID);

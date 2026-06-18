@@ -25,3 +25,11 @@ create table if not exists purchases (
     ls_variant_id      text not null,                     -- validated against the Stower paid variant before upgrading
     processed_at       timestamptz not null default now() -- written ONLY after a successful policy upgrade
 );
+
+-- Lock both tables to the service-role key. device_trials holds the secret
+-- keygen_license_key and purchases holds buyer email (PII); neither must be
+-- reachable through the public anon/authenticated PostgREST API. Enabling RLS
+-- with NO policies denies every non-service-role request, while the Edge
+-- Function (which uses SUPABASE_SERVICE_ROLE_KEY) bypasses RLS and keeps working.
+alter table device_trials enable row level security;
+alter table purchases enable row level security;

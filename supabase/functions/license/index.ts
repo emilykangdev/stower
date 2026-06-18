@@ -68,6 +68,14 @@ function trialStore(db: SupabaseClient): TrialStore {
         .eq("fingerprint", fingerprint)
         .eq("status", "pending");
     },
+    async reclaimStale(fingerprint, olderThanMs) {
+      await db
+        .from("device_trials")
+        .delete()
+        .eq("fingerprint", fingerprint)
+        .eq("status", "pending")
+        .lt("created_at", new Date(olderThanMs).toISOString());
+    },
   };
 }
 
