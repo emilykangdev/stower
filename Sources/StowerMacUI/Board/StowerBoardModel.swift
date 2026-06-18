@@ -18,8 +18,8 @@ internal enum StowerBoardDirection: Sendable, Equatable, CaseIterable, Identifia
     /// The toggle label for this direction.
     internal var title: String {
         switch self {
-        case .neglected: return "Neglected"
-        case .ghosted: return "Waiting on them"
+        case .neglected: return "Your turn"
+        case .ghosted: return "Maybe follow up"
         }
     }
 }

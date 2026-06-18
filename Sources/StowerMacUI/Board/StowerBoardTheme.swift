@@ -6,6 +6,10 @@ internal enum StowerBoardTheme {
     /// Diameter of a row's monogram avatar.
     internal static let monogramSize: CGFloat = 36
 
+    /// Width of the leading day column, fixed so the ages line up into a single
+    /// scannable column down the left edge regardless of digit count.
+    internal static let dayColumnWidth: CGFloat = 40
+
     /// Corner radius of a thread bubble.
     internal static let bubbleCornerRadius: CGFloat = 14
 

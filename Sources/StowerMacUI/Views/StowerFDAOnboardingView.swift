@@ -16,7 +16,8 @@ internal struct StowerFDAOnboardingView: View {
 
     internal var body: some View {
         StowerOnboardingPane(
-            title: "Stower reads your Messages on this Mac to find people you owe a reply."
+            title: "Stower reads your Messages on this Mac to find messages you might "
+                + "want to respond to."
         ) {
             StowerPaneIcon("lock.shield")
         } content: {
