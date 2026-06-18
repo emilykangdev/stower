@@ -189,18 +189,18 @@ internal final class StowerBoardViewModel {
 
     /// Re-checks Contacts when the app returns to the foreground.
     ///
-    /// Switching apps does not re-run the board's `.task`, and a Settings change
-    /// can't notify us, so this is where a foreground Contacts change is reconciled.
-    /// We reload when authorization *changed* while away — picking up a grant made in
-    /// Settings (names appear) **and** dropping already-resolved names when access
-    /// was revoked (a privacy leak otherwise) — or when we'd explicitly sent the user
-    /// to recover access (so a denied→still-denied return refreshes to handles too).
+    /// Switching apps doesn't re-run the board's `.task` and a Settings change can't
+    /// notify us, so this reconciles a foreground Contacts change: reload when
+    /// authorization *changed* while away (a Settings grant surfaces names; a revoke
+    /// drops them) or when we'd sent the user to recover access.
     internal func onAppBecameActive() {
         let previous = contactsAuthorization
         syncContactsAuthorization()
-        // Access lost while away — signal the view to dismiss an open thread so its
-        // captured row's resolved name can't outlive the grant.
+        // Access lost while away — hide resolved names *now* (don't wait for the async
+        // reload), dismiss an open thread (token), then reload into handle-only rows.
         if previous == .authorized, contactsAuthorization != .authorized {
+            board = nil
+            phase = .preparing
             contactsRevocationToken += 1
         }
         let wasAwaitingRecovery = awaitingContactsRecovery
