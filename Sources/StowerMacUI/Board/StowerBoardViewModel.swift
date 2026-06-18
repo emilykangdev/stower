@@ -217,19 +217,34 @@ internal final class StowerBoardViewModel {
         do {
             while true {
                 let outcome = try await dataSource.refreshJudgments(config: config, now: clock())
-                if try await handleRefreshOutcome(outcome) == false { return }
+                // A superseded refresh (cancel / a newer refresh) must not apply its
+                // outcome over a newer one, mirroring the load path's generation guard.
+                guard generation == refreshGeneration else { return }
+                if try await handleRefreshOutcome(outcome, generation: generation) == false {
+                    return
+                }
             }
-        } catch is CancellationError {
-            // Superseded / dismissed — never a failure.
-        } catch let failure as StowerStartupFailure {
-            onFailure(failure)
         } catch {
-            onFailure(.unexpected)
+            routeRefreshFailure(error, generation: generation)
         }
     }
 
+    /// Routes a refresh failure, dropping a `CancellationError` (superseded /
+    /// dismissed — never a failure) and any stale-generation throw.
+    private func routeRefreshFailure(_ error: Error, generation: Int) {
+        guard !(error is CancellationError), generation == refreshGeneration else { return }
+        onFailure((error as? StowerStartupFailure) ?? .unexpected)
+    }
+
     /// Acts on one refresh outcome; returns whether the loop should re-issue.
-    private func handleRefreshOutcome(_ outcome: StowerBoardRefreshOutcome) async throws -> Bool {
+    ///
+    /// The caller has already confirmed `generation` is current before calling, so
+    /// `applyCompleted` is safe; the coalesced path re-checks after its backoff so a
+    /// superseded refresh stops re-issuing.
+    private func handleRefreshOutcome(
+        _ outcome: StowerBoardRefreshOutcome,
+        generation: Int
+    ) async throws -> Bool {
         switch outcome {
         case .coalesced:
             // Another pass is running. Once cold start is resolved, keep the current
@@ -238,12 +253,12 @@ internal final class StowerBoardViewModel {
             // rather than strand the spinner.
             if hasResolvedColdStart || Task.isCancelled { return false }
             try await sleep(Self.coalesceRetryDelay)
-            return true
+            return generation == refreshGeneration
         case .completed(let reloadNeeded, let anyJudged, let hadRecords):
             applyCompleted(reloadNeeded: reloadNeeded, anyJudged: anyJudged, hadRecords: hadRecords)
             return false
         case .incomplete:
-            return !Task.isCancelled
+            return !Task.isCancelled && generation == refreshGeneration
         }
     }
 
