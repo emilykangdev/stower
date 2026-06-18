@@ -125,6 +125,34 @@ import Testing
         #expect(spy.loadCallCount == 2)
     }
 
+    @Test("denying the in-app prompt flips the banner action to Open Settings")
+    internal func denyingPromptFlipsToSettings() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [oneRowBoard()]
+        // Status is .notDetermined until asked, then .denied; the request denies.
+        let asked = Mutex(false)
+        let access = StowerContactsAccess(
+            status: { asked.withLock { $0 } ? .denied : .notDetermined },
+            request: {
+                asked.withLock { $0 = true }
+                return false
+            }
+        )
+        let model = makeViewModel(spy, contacts: access, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+        #expect(model.contactsBannerActionTitle == "Show names")
+
+        model.resolveContactsAccess()
+        await model.contactsTaskHandle?.value
+
+        // Status moved to denied; the banner stays but its action now routes to Settings.
+        #expect(model.contactsBannerActionTitle == "Open Settings")
+        #expect(model.showsContactsAccessBanner)
+        #expect(spy.loadCallCount == 1)  // deny does not reload
+    }
+
     @Test("a denied banner action opens the Contacts Settings pane and never reloads")
     internal func deniedActionOpensSettings() async {
         let spy = StowerSpyBoardDataSource()

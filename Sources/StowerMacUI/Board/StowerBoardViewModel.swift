@@ -47,6 +47,16 @@ internal final class StowerBoardViewModel {
     /// The visible lens; changing it re-queries nothing (I7).
     internal var direction: StowerBoardDirection = .neglected
 
+    /// The last-synced Contacts authorization, as *observed* state.
+    ///
+    /// The banner's visibility and label derive from this — not a live read of
+    /// `contacts.authorization` — so SwiftUI recomputes them when it changes. It is
+    /// refreshed whenever authorization can have moved: on appear, after an in-app
+    /// prompt resolves (grant *or* deny), and on app re-activation (a Settings
+    /// change). Without this, denying the prompt would leave the banner's stale
+    /// "Show names" label even though the action has switched to opening Settings.
+    internal private(set) var contactsAuthorization: StowerContactsAuthorization
+
     private let dataSource: any StowerBoardDataSource
     private let contacts: StowerContactsAccess
     private let settings: StowerSystemSettingsOpener
@@ -100,6 +110,7 @@ internal final class StowerBoardViewModel {
         self.onFailure = onFailure
         self.clock = clock
         self.sleep = sleep
+        contactsAuthorization = contacts.authorization
     }
 
     /// Runs the launch sequence on appear: load the cached board, then refresh.
@@ -109,8 +120,17 @@ internal final class StowerBoardViewModel {
     /// `load()` supersedes via its generation token and `refresh()` is guarded by
     /// `isRefreshing`.
     internal func onAppear() {
+        syncContactsAuthorization()
         load()
         refresh()
+    }
+
+    /// Mirrors the live Contacts authorization into observed state.
+    ///
+    /// So the banner's visibility and label recompute. Cheap (a bare status read);
+    /// call it wherever authorization can have changed.
+    private func syncContactsAuthorization() {
+        contactsAuthorization = contacts.authorization
     }
 
     /// Whether to show the "show real names" banner above the board.
@@ -120,14 +140,14 @@ internal final class StowerBoardViewModel {
     /// grant access, instead of relying on a one-shot system prompt that, once
     /// denied, never returns. Empty / caught-up / preparing boards show nothing.
     internal var showsContactsAccessBanner: Bool {
-        phase == .rows && !contacts.isAuthorized
+        phase == .rows && contactsAuthorization != .authorized
     }
 
     /// The banner button's label, matched to the action `resolveContactsAccess` will
     /// take: a never-asked board can be prompted in-app; a denied one must go to
     /// Settings, so the label sets that expectation before the tap.
     internal var contactsBannerActionTitle: String {
-        switch contacts.authorization {
+        switch contactsAuthorization {
         case .denied: return "Open Settings"
         default: return "Show names"
         }
@@ -155,7 +175,11 @@ internal final class StowerBoardViewModel {
             contactsTask = Task { [weak self] in
                 guard let self else { return }
                 defer { isRequestingContacts = false }
-                guard await contacts.requestAccessIfNeeded(), !Task.isCancelled else { return }
+                let granted = await contacts.requestAccessIfNeeded()
+                // Reflect the outcome (grant *or* deny) so the banner updates: a deny
+                // flips the label to "Open Settings"; a grant reloads into names.
+                syncContactsAuthorization()
+                guard granted, !Task.isCancelled else { return }
                 load()
             }
         }
@@ -165,10 +189,12 @@ internal final class StowerBoardViewModel {
     ///
     /// Opening the Settings pane can't notify us of a grant, and switching apps does
     /// not re-run the board's `.task`, so without this a grant made in System
-    /// Settings would leave the board on handles until the next manual action. After
-    /// we've sent the user to recover access, the next activation reloads once — into
-    /// names if they granted, or back to handles + banner if they didn't.
+    /// Settings would leave the board on handles until the next manual action. The
+    /// activation re-syncs authorization (so the banner reflects a Settings change),
+    /// and if we'd sent the user to recover access it reloads once — into names if
+    /// they granted, or back to handles + banner if they didn't.
     internal func onAppBecameActive() {
+        syncContactsAuthorization()
         guard awaitingContactsRecovery else { return }
         awaitingContactsRecovery = false
         load()
