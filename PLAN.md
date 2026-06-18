@@ -6,6 +6,26 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-18: **License core — fingerprint, lease store, Keygen + mint clients, Supabase function (Bucket A, board-independent).**
+  Ships the trial-and-upgrade machinery as four injected, unit-tested seams plus a Deno Edge Function —
+  nothing wired into the app yet (the gate that composes them is Plan B). `StowerDeviceFingerprint`
+  (`IOPlatformUUID` via IOKit → SHA-256 hex; Keychain-UUID fallback; `nonisolated`, injected readers).
+  `StowerLicenseLeaseStore` (Keychain generic-password seam `StowerLeaseStorage`/`StowerKeychainItem`,
+  `kSecAttrAccessibleAfterFirstUnlock`, no iCloud) verifies a machine-file's Ed25519 signature over
+  `"machine/"+enc` against an embedded public key on every load — a tampered cache loads as `nil` (I7).
+  `StowerKeygenClient` (raw `URLSession` JSON:API to `api.keygen.sh`: activate / check-out(ttl) /
+  validate-key; `Authorization: License <key>`; transport throw surfaced, 5xx → `.server`). 
+  `StowerTrialMintClient` (POST fingerprint → `mint-trial` → `.minted`/`.retryShortly`/`.unreachable`,
+  never `{null,null}`). `supabase/`: `device_trials` + `purchases` migrations and a `license` function
+  (`handlers.ts` pure logic + `index.ts` wiring) — `mint-trial` is row-idempotent with crash recovery
+  (I3) and `ls-webhook` verifies the LS HMAC (I9), validates variant, `PUT /policy` trial→paid, records
+  only on success, replay/forged-id safe (I8/I15). 21 Swift tests + 13 Deno tests; `Scripts/precheck.sh`
+  green (211 tests). **O2 resolved:** trial = 30d (function), machine-file checkout TTL = 7d
+  (`StowerKeygenClient.machineFileTTL`, the single offline-validity boundary — the gate must read the
+  file's own expiry, not add a second window). **Still open (tracked, out of this slice):** B1 — the
+  `mint-trial` endpoint is unauthenticated; needs an abuse control (Supabase rate-limit / proof-of-work
+  / App Attest) before public launch. Embedded Keygen Ed25519 public key is an all-zero placeholder
+  until Plan B wires the real account key.
 - 2026-06-18: **Lemon Squeezy license-entry gate (activate-once, store, no recurring validate).**
   Stower is now paid from first launch. After the model-availability check and before the FDA gate,
   `StowerStartupModel` checks a new `StowerLicenseGating` seam: a stored license (`hasStoredLicense`,
