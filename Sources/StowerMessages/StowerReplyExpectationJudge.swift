@@ -25,15 +25,15 @@ internal protocol StowerReplyExpectationJudge: Sendable {
     ///   task is cancelled.
     func judge(messageText: String?, context: [String]) async throws -> StowerReplyExpectation
 
-    /// A stable fingerprint of this judge's prompt + the app-owned model identity
+    /// A stable fingerprint of this judge's own prompt + its own model identity
     /// (M12).
     ///
-    /// Derived, never hand-bumped: changing the prompt template OR the supplied
-    /// `modelIdentity` changes this, so an edited judge or a bumped model epoch
+    /// Derived, never hand-bumped: changing the prompt template OR the judge's
+    /// model identity changes this, so an edited judge or a bumped model epoch
     /// misses the cache and re-judges instead of serving a stale verdict forever.
-    /// The judge folds its own private prompt with `modelIdentity`; the caller
-    /// never reads the judge's instructions.
-    func judgeVersion(modelIdentity: String) -> String
+    /// Model and prompt selection are the judge's concern — it folds both itself;
+    /// neither the provider nor the app supplies a model identity.
+    func judgeVersion() -> String
 }
 
 /// A stable, process-independent short hash for cache keys and judge versions.
@@ -51,8 +51,8 @@ internal func stowerShortHash(_ value: String) -> String {
 ///
 /// A pure, FM-free helper so it is unit-testable: changing either input changes
 /// the version, so an edited prompt or a bumped model epoch can never serve a
-/// stale verdict. A judge folds its own private instructions through this; the
-/// caller supplies only `modelIdentity` and never reads the instructions.
+/// stale verdict. A judge folds its own private instructions and its own model
+/// identity through this; nothing outside the judge supplies either.
 internal func stowerJudgeVersion(instructions: String, modelIdentity: String) -> String {
     stowerShortHash(instructions + "|model=" + modelIdentity)
 }

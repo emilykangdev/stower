@@ -45,9 +45,8 @@ internal final class StowerSpyReplyJudge: StowerReplyExpectationJudge, @unchecke
         return verdictFor(messageText)
     }
 
-    /// The spy's fixed version, independent of `modelIdentity` so tests can pin a
-    /// known cache key.
-    internal func judgeVersion(modelIdentity: String) -> String { version }
+    /// The spy's fixed version so tests can pin a known cache key.
+    internal func judgeVersion() -> String { version }
 }
 
 internal enum StowerSpyJudgeError: Error {
@@ -81,7 +80,7 @@ internal final class StowerHangingReplyJudge: StowerReplyExpectationJudge, @unch
         )
     }
 
-    internal func judgeVersion(modelIdentity: String) -> String { "hang-v1" }
+    internal func judgeVersion() -> String { "hang-v1" }
 }
 
 /// A verdict cache double that fails on demand, modeling a locked/corrupt store.

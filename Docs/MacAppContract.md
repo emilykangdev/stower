@@ -15,7 +15,7 @@
 > | Availability check | (none) | public `modelAvailability() async -> StowerModelAvailability` |
 > | Refresh summary | `init(changedChatIDs:)` + `changedCount` | `init(changedChatIDs:judgedCount:failedCount:totalCount:)` + public `judgedCount`/`failedCount`/`totalCount`; `changedCount` retained |
 > | Refresh return | `async -> StowerRefreshSummary` | `async throws -> StowerRefreshSummary?` (`nil` = coalesced; throws when unavailable) |
-> | Model identity | (n/a — implicit) | **required** `modelIdentity:` on the `StowerDebtBoardProvider` init (cache-invalidation epoch; no default — the app supplies and bumps it) |
+> | Model identity | (n/a — implicit) | **judge-owned** — the judge folds its own model-identity epoch into the verdict cache; the app supplies no model argument on the `StowerDebtBoardProvider` init |
 > | Cold start | paint immediately | **loading screen** until `judged + failed == total`, then board / "all caught up" |
 >
 > `StowerReplyExpectation` and `StowerReplyJudgeSource` are now `internal` — no public API returns
@@ -89,8 +89,7 @@ let provider = StowerDebtBoardProvider(
     sourceURL: .defaultSourceURL,         // the chat.db to read
     contactsResolver: .live,              // name enrichment; degrades on denial
     cacheURL: .defaultCacheURL,           // verdict cache; nil/fault → empty board until refresh rebuilds
-    windowDays: 180,                      // how far back facts are read (NOT per-call)
-    modelIdentity: "stower-fm-reply-v1"   // REQUIRED, no default — app-owned cache epoch
+    windowDays: 180                       // how far back facts are read (NOT per-call)
 )
 ```
 
@@ -98,13 +97,13 @@ let provider = StowerDebtBoardProvider(
 `unansweredForDays` the app will ask for, or `loadDebtBoard` throws
 `invalidArgument` (fail-loud, by design — widen the window).
 
-`modelIdentity` is a **required** parameter with **no default and no
-engine-provided epoch constant** — each caller supplies its own. It is exposed
-back as a readable `public let modelIdentity: String`. Bump it only when Stower
-intentionally changes the validated judge behavior/prompt/model; a bump
-invalidates every cache hit, so rows disappear until re-judged — treat the first
-load after a bump like a cold start / re-warm (loading screen, not "all caught
-up"). Never derive it from the OS version.
+The app supplies **no model argument** — model and prompt selection are the
+judge's concern. The judge owns its own cache-invalidation epoch (folded with its
+prompt into the verdict-cache `judge_version`); changing the validated judge
+behavior/prompt/model invalidates every cache hit, so rows disappear until
+re-judged — treat the first load after such a change like a cold start / re-warm
+(loading screen, not "all caught up"). The epoch is never derived from the OS
+version, so a silent OS model revision never discards verdicts.
 
 ### The four methods
 
