@@ -56,8 +56,9 @@ internal struct StowerFDAOnboardingView: View {
 private struct StowerTrustBlock: View {
     var body: some View {
         Label(
-            "Everything stays on your Mac. Stower never sends your messages anywhere, and "
-                + "uses an on-device model only.",
+            "The only thing Stower ever sends is your license key, once, to verify your "
+                + "purchase. Your messages never leave your Mac, and judging runs on an "
+                + "on-device model only.",
             systemImage: "checkmark.shield.fill"
         )
         .font(.callout.weight(.medium))

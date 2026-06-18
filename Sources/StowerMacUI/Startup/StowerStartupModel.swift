@@ -17,9 +17,11 @@ internal final class StowerStartupModel {
     internal private(set) var state: StowerStartupState = .checkingModel
 
     private let provider: any StowerStartupProviding
+    private let licenseGate: any StowerLicenseGating
     private let config: StowerStartupDebtConfig
     private let clock: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
+    private let onCommit: (@MainActor @Sendable (StowerStartupState) -> Void)?
     private var inFlight: Task<Void, Never>?
     private var generation = 0
 
@@ -31,22 +33,31 @@ internal final class StowerStartupModel {
     /// - Parameters:
     ///   - provider: The startup boundary (the real adapter in production, a fake
     ///     in tests).
+    ///   - licenseGate: The license seam (the real Lemon Squeezy gate in
+    ///     production, a fake in tests). No default — a "has license" default
+    ///     would ship a paywall bypass.
     ///   - config: The debt-board knobs passed to every load.
     ///   - clock: Supplies `now`; injectable so tests are deterministic.
     ///   - sleep: The minimum-display delay; injectable so tests need no real
     ///     wall-clock wait. Throwing, because `Task.sleep(for:)` throws.
+    ///   - onCommit: A test recorder fired with every committed state (after the
+    ///     generation guard); `nil` in production.
     internal init(
         provider: any StowerStartupProviding,
+        licenseGate: any StowerLicenseGating,
         config: StowerStartupDebtConfig = .appDefault,
         clock: @escaping @Sendable () -> Date = { Date() },
         sleep: @escaping @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
-        }
+        },
+        onCommit: (@MainActor @Sendable (StowerStartupState) -> Void)? = nil
     ) {
         self.provider = provider
+        self.licenseGate = licenseGate
         self.config = config
         self.clock = clock
         self.sleep = sleep
+        self.onCommit = onCommit
     }
 
     /// Runs the startup flow once (initial launch).
@@ -57,6 +68,23 @@ internal final class StowerStartupModel {
     /// Reruns the same startup flow (the FDA / failure screens' Check Again).
     internal func checkAgain() {
         beginRun()
+    }
+
+    /// Activates the license key entered on `StowerLicenseEntryView`.
+    ///
+    /// Re-entrant, mirroring `beginRun`'s `[weak self]` capture and generation
+    /// token. Trims once at this boundary so the stored key equals the activated
+    /// key; an all-whitespace field can't submit (the entry view also disables on
+    /// an empty trim).
+    internal func submitLicense(_ rawKey: String) {
+        let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return }
+        inFlight?.cancel()
+        generation += 1
+        let runGeneration = generation
+        inFlight = Task { [weak self] in
+            await self?.runActivation(key: key, generation: runGeneration)
+        }
     }
 
     /// Cancels any in-flight run so startup work (the real provider's database
@@ -114,12 +142,72 @@ internal final class StowerStartupModel {
                 commit(.modelUnavailable(reason), generation: generation)
                 return
             }
-            commit(.checkingMessages, generation: generation)
-            let target = try await loadAndRoute(wasAwaitingFDA: wasAwaitingFDA)
+            // A stored license ⇒ licensed: a pure local read, no network and no
+            // spinner. Otherwise show the entry screen; the launch path never
+            // calls `/activate`.
+            if licenseGate.hasStoredLicense() == false {
+                try await minimumDisplayDone
+                commit(.needsLicense(nil), generation: generation)
+                return
+            }
+            let target = try await continueAfterLicense(
+                generation: generation,
+                wasAwaitingFDA: wasAwaitingFDA
+            )
             try await minimumDisplayDone
             commit(target, generation: generation)
         } catch is CancellationError {
             // A superseded / cancelled run never routes to a failure screen.
+        } catch {
+            commit(.failed(.unexpected), generation: generation)
+        }
+    }
+
+    /// The post-license tail of startup: probe the board and route.
+    ///
+    /// Factored out of `runStartup` so the activate path (`runActivation`) reuses
+    /// it verbatim; returns the target state so the caller honors the minimum
+    /// display before committing it.
+    private func continueAfterLicense(
+        generation: Int,
+        wasAwaitingFDA: Bool
+    ) async throws -> StowerStartupState {
+        commit(.checkingMessages, generation: generation)
+        return try await loadAndRoute(wasAwaitingFDA: wasAwaitingFDA)
+    }
+
+    /// The activate flow body, under the same generation token, minimum-display
+    /// delay, and do/catch wrapper as `runStartup` — no second concurrency scheme.
+    ///
+    /// `activate` is pure; the license is persisted only after the generation
+    /// guard, so a superseded activation (a newer submit bumped the generation
+    /// before this one returned) neither persists nor commits.
+    private func runActivation(key: String, generation: Int) async {
+        commit(.checkingLicense, generation: generation)
+        let sleepClosure = sleep
+        let minimumDisplay = Self.minimumCheckingDisplay
+        do {
+            async let minimumDisplayDone: Void = sleepClosure(minimumDisplay)
+            let outcome = await licenseGate.activate(key: key)
+            guard generation == self.generation else { return }
+            switch outcome {
+            case .activated(let instanceID):
+                licenseGate.persistLicense(key: key, instanceID: instanceID)
+                let target = try await continueAfterLicense(
+                    generation: generation,
+                    wasAwaitingFDA: false
+                )
+                try await minimumDisplayDone
+                commit(target, generation: generation)
+            case .invalid:
+                try await minimumDisplayDone
+                commit(.needsLicense(.invalid), generation: generation)
+            case .couldNotReach:
+                try await minimumDisplayDone
+                commit(.needsLicense(.couldNotReach), generation: generation)
+            }
+        } catch is CancellationError {
+            // A superseded / cancelled activation never routes to a failure screen.
         } catch {
             commit(.failed(.unexpected), generation: generation)
         }
@@ -158,5 +246,6 @@ internal final class StowerStartupModel {
     private func commit(_ newState: StowerStartupState, generation: Int) {
         guard generation == self.generation else { return }
         state = newState
+        onCommit?(newState)
     }
 }

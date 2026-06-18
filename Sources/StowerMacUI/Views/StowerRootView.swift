@@ -14,9 +14,11 @@ import SwiftUI
 public struct StowerRootView: View {
     @State private var model: StowerStartupModel
     @State private var boardModel: StowerBoardViewModel
+    @State private var licenseKey = ""
     private let settings: StowerSystemSettingsOpener
 
-    /// Builds the production root wired to the shared engine-backed composition.
+    /// Builds the production root wired to the shared engine-backed composition and
+    /// the real Lemon Squeezy license gate.
     ///
     /// Throws only when an essential store can't be opened (a true disk-level draft
     /// store failure) — the same posture as any other essential-store startup fault.
@@ -33,13 +35,15 @@ public struct StowerRootView: View {
             draftStore: composition.draftStore,
             dropper: composition.dropper,
             contacts: composition.contacts,
+            licenseGate: StowerLemonSqueezyLicenseGate(),
             settings: StowerSystemSettingsOpener(),
             flusher: flusher
         )
     }
 
-    /// Injects both boundaries (and optionally a Contacts access + settings opener)
-    /// for tests and previews; production builds them from the shared composition.
+    /// Injects both boundaries plus the license gate (and optionally a Contacts
+    /// access + settings opener) for tests and previews; production builds the
+    /// boundaries from the shared composition.
     ///
     /// The board's `onFailure` is wired to `StowerStartupModel.handleBoardFailure`,
     /// so a mid-session board error re-enters onboarding rather than showing an
@@ -54,10 +58,11 @@ public struct StowerRootView: View {
             isAccessibilityTrusted: { false }
         ),
         contacts: StowerContactsAccess = .denied,
+        licenseGate: any StowerLicenseGating,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
         flusher: StowerTerminationFlusher? = nil
     ) {
-        let startupModel = StowerStartupModel(provider: startup)
+        let startupModel = StowerStartupModel(provider: startup, licenseGate: licenseGate)
         _model = State(initialValue: startupModel)
         let boardModel = StowerBoardViewModel(
             dataSource: board,
@@ -83,8 +88,14 @@ public struct StowerRootView: View {
 
     @ViewBuilder private var screen: some View {
         switch model.state {
-        case .checkingModel, .checkingMessages:
+        case .checkingModel, .checkingLicense, .checkingMessages:
             StowerCheckingView(state: model.state)
+        case .needsLicense(let error):
+            StowerLicenseEntryView(
+                key: $licenseKey,
+                error: error,
+                onActivate: { model.submitLicense($0) }
+            )
         case .modelUnavailable(let reason):
             StowerModelUnavailableView(
                 reason: reason,

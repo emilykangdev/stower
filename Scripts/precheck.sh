@@ -153,3 +153,13 @@ if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[
     echo "ERROR: the StowerMac app entry must import only SwiftUI + StowerMacUI, never the engine/db" >&2
     exit 1
 fi
+
+# 6g — No logging in StowerMacUI. The license key and the activate response (which
+#      carries customer PII) flow through this module; a stray print/Logger/os_log/
+#      NSLog would leak them. Locks the key-never-logged invariant (authored via
+#      /harden-guardrail). Anchored to real call sites so words like "footprint" or
+#      "Logger" in a comment can't trip it; green today.
+if grep -RInE --include="*.swift" '(^|[^A-Za-z0-9_])(print|NSLog|os_log)[[:space:]]*\(|(^|[^A-Za-z0-9_])Logger[[:space:]]*\(' Sources/StowerMacUI 2>/dev/null; then
+    echo "ERROR: no logging in Sources/StowerMacUI — the license key / activate-response PII must never reach logs (remove the print/Logger/os_log/NSLog call)" >&2
+    exit 1
+fi

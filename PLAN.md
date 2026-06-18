@@ -6,6 +6,22 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-18: **Lemon Squeezy license-entry gate (activate-once, store, no recurring validate).**
+  Stower is now paid from first launch. After the model-availability check and before the FDA gate,
+  `StowerStartupModel` checks a new `StowerLicenseGating` seam: a stored license (`hasStoredLicense`,
+  pure local `UserDefaults` read) proceeds with zero network; otherwise `.needsLicense(nil)` shows the
+  new `StowerLicenseEntryView` (focused monospaced field, inline error, help row), and `submitLicense`
+  runs `runActivation` under the existing generation token + shared do/catch — `.checkingLicense`
+  spinner, `activate` (pure), then a generation-guarded `persistLicense` so a superseded activation
+  never writes. The only network egress is `StowerLemonSqueezyClient` POSTing once to
+  `/v1/licenses/activate` (percent-encoded form body; minimal `{activated, instance.id}` decode — no
+  `meta.customer_email`; transport-throw/5xx/undecodable → `.couldNotReach`). `{key, instance_id}` is
+  stored plaintext in `StowerLicenseStore`; no `clear()`/`/validate` in v1 (next ticket). New states
+  `.checkingLicense` / `.needsLicense(StowerLicenseGateError?)`; `StowerCheckingView` switch is now
+  exhaustive (no `default:`). `StowerTrustBlock` copy owns the one call honestly. `precheck.sh` step
+  6g bans logging in `StowerMacUI` (key/PII). `Scripts/precheck.sh` green (187 tests). Open: O1
+  paid-vs-trial (kept paid), O2 `instance_name` (fixed label "Stower"), and the support/product URLs
+  in `StowerLicenseEntryView` are placeholders pending Emily's confirmation.
 - 2026-06-18: **StowerMac v1 debt-board surface (board slice).** Built the reply-debt board on the
   merged engine + onboarding slice. New app-owned `Board/` group in `StowerMacUI`: view-models
   (`StowerBoardRow`/`StowerThreadLine` — `Identifiable` by `chatID`/GUID, no confidence exposed),
