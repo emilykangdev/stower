@@ -6,6 +6,26 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-18: **StowerMac v1 debt-board surface (board slice).** Built the reply-debt board on the
+  merged engine + onboarding slice. New app-owned `Board/` group in `StowerMacUI`: view-models
+  (`StowerBoardRow`/`StowerThreadLine` — `Identifiable` by `chatID`/GUID, no confidence exposed),
+  `StowerBoardModel` (+`StowerBoardDirection`), `StowerDayPreset` (7/14/28/60/90, default 7),
+  `StowerLastMessageKind` mirror + the pure `StowerLastMessageSummary` non-text rule (placeholder
+  italic + angle-bracketed), `StowerBoardRefreshOutcome`, the `StowerBoardDataSource` seam (untyped
+  `throws`), `@MainActor @Observable` `StowerBoardViewModel` (load/refresh split, generation guard on
+  load only, `isRefreshing`-guarded re-issue loop) + `StowerThreadViewModel`, and an injectable
+  `StowerMessagesLinkOpener`. Three new engine-coupled files join the adapter: `StowerMessagesMapping`
+  (shared maps incl. the moved `mapError`/`mapConfig`/`mapReason`/`mapAvailability`),
+  `StowerLiveBoardDataSource`, and `StowerMessagesComposition` (ONE `StowerDebtBoardProvider` injected
+  into both adapters). Views: `StowerBoardView` (toggle + day filter + manual refresh + preparing /
+  rows / caught-up / error), `StowerNoReplyRowView`, `StowerThreadView` (bubbles + Open in Messages).
+  `StowerRootView` renders the board at `.connectedPreparingBoard` via a `@State` board VM whose
+  `onFailure` calls the new `StowerStartupModel.handleBoardFailure` — `StowerStartupState` gains NO
+  board cases. One permitted engine change: doc-comment sweep pinning `recentMessages` "newest
+  `limit`, oldest-first" across the three sibling comments + the `StowerConversationFactsReading`
+  one-reader fix, plus `StowerDebtBoardThreadOrderTests` pinning the order. `precheck.sh` 6b widened
+  to the four engine importers (sorted-set compare). `Scripts/precheck.sh` green (204 tests). The
+  human Xcode shell wiring (Task 5 of the prior slice) is already merged.
 - 2026-06-17: **StowerMac FDA-onboarding slice + judge-owned model id.** Task 0 moved the
   cache-invalidation epoch off the app surface: `StowerDebtBoardProvider` no longer takes or
   exposes `modelIdentity`, and `StowerFoundationModelReplyJudge` owns a `static modelIdentity`

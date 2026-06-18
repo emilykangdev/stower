@@ -1,8 +1,152 @@
 # Stower — Architecture at a glance
 
-Two diagrams: **how a query flows through the system today**, and **the tables**.
-For the full per-table column detail and ownership/status notes, see
-[`Docs/DataModel.md`](Docs/DataModel.md); this file is the bird's-eye view.
+Diagrams, top to bottom: **the runtime lifecycle** (app launch → startup flow →
+engine → background refresh), **how a query flows through the system today**, and
+**the tables**. For the full per-table column detail and ownership/status notes,
+see [`Docs/DataModel.md`](Docs/DataModel.md); this file is the bird's-eye view.
+
+## Runtime lifecycle — launch, startup flow, and the engine
+
+Two views of the same machine: a **call graph** (who calls whom, by file) and a
+**state machine** (how the UI moves through screens and keeps running). The app
+target imports only `StowerMacUI`; exactly four engine-coupled files —
+`StowerMessagesStartupAdapter`, `StowerLiveBoardDataSource`,
+`StowerMessagesComposition`, and `StowerMessagesMapping` — import the
+`StowerMessages` engine (enforced by `precheck.sh` 6b). They are the
+anti-corruption boundary that maps engine types to app-owned `StowerStartup*` /
+`StowerBoard*` types; `StowerMessagesComposition` builds ONE
+`StowerDebtBoardProvider` and injects it into both the startup adapter and the
+board adapter, so the reader, verdict cache, and refresh coalescing are shared.
+
+### Call graph — who calls whom on startup
+
+```mermaid
+flowchart TB
+    subgraph app["StowerMac (app target) · StowerMacApp.swift"]
+        main["@main StowerMacApp\nWindowGroup { StowerRootView() }"]
+    end
+
+    subgraph views["StowerMacUI · Views/StowerRootView.swift"]
+        rootInit["StowerRootView.init()\nbuilds StowerMessagesComposition + StowerStartupModel + StowerBoardViewModel"]
+        body["body → screen\nswitch model.state → child view"]
+        task[".task { model.start() }"]
+        disappear[".onDisappear { model.cancel() }"]
+    end
+
+    subgraph model["StowerMacUI · Startup/StowerStartupModel.swift  (@MainActor @Observable)"]
+        start["start() / checkAgain()"]
+        begin["beginRun()\ncancel in-flight · bump generation · spawn Task"]
+        run["runStartup(generation:)\nmin-display delay · async let"]
+        loadRoute["loadAndRoute()"]
+        route["route(failure)\ntyped failure → state"]
+        commit["commit(state, generation)\ngeneration-guarded write → state"]
+    end
+
+    subgraph adapter["StowerMacUI · Startup/StowerMessagesStartupAdapter.swift  (one of four engine-coupled files)"]
+        aAvail["modelAvailability()\nmapAvailability"]
+        aLoad["loadDebtBoard()\ndiscards board · mapError → StowerStartupFailure"]
+    end
+
+    subgraph engine["StowerMessages · StowerDebtBoardProvider.swift  (actor)"]
+        eAvail["modelAvailability()\n→ modelAvailabilityResolver()"]
+        eLoad["loadDebtBoard(config, now)\nbounds gate → availability gate → resolve judge"]
+        eRefresh["refreshJudgments(config, now)\nsingle-flight · background · ONLY model caller"]
+        readers["sharedReader() / refreshedReader()\n→ readerFactory()"]
+    end
+
+    subgraph judging["StowerMessages · StowerDebtBoardProviderJudging.swift"]
+        judged["judgedConversations()\ntrusted cache reads only — NO model"]
+        refreshPass["runRefreshPass()\nclassify → judgeRecord → persist"]
+    end
+
+    subgraph deps["StowerMessages · facts · policies · model · cache"]
+        reader["StowerChatDatabaseReader\nconversationStateRecords() · threadMessages()\n(copies chat.db, integrity check)"]
+        policies["StowerNoReplyPolicy.neglected\nStowerGhostedPolicy.ghosted"]
+        judge["StowerReplyExpectationJudge\n(FoundationModels, per-record timeout)"]
+        cache[("StowerReplyVerdictCache\nreply-verdicts.sqlite")]
+    end
+
+    main --> rootInit --> body
+    body --> task --> start
+    body -.-> disappear
+    start --> begin --> run
+    run -->|"await provider.modelAvailability()"| aAvail
+    run --> loadRoute -->|"try await provider.loadDebtBoard()"| aLoad
+    loadRoute --> route --> commit
+    run --> commit -->|"@Observable re-renders"| body
+
+    aAvail -->|"await engine.modelAvailability()"| eAvail
+    aLoad -->|"try await engine.loadDebtBoard()"| eLoad
+
+    eLoad --> readers --> reader
+    eLoad -->|"records"| judged
+    judged -->|"trusted verdicts"| cache
+    eLoad --> policies
+
+    eRefresh --> readers
+    eRefresh --> refreshPass
+    refreshPass -->|"judge un-cached"| judge
+    refreshPass -->|"upsert verdicts"| cache
+    judged -. "load reads what refresh wrote" .-> cache
+```
+
+The load path (`loadDebtBoard` → `judgedConversations`) **never runs the model**;
+it serves only conversations a trusted verdict is already cached for. The
+background `refreshJudgments` → `runRefreshPass` is the **only** model caller and
+the **only** cache writer. The two never call each other — they communicate
+through `StowerReplyVerdictCache` and the returned `StowerRefreshSummary`. That is
+what lets the load return at structural speed and never block on the model.
+
+### State machine — how the UI moves and keeps running
+
+```mermaid
+stateDiagram-v2
+    direction TB
+    [*] --> checkingModel : .task → start()
+
+    checkingModel --> modelUnavailable : availability unavailable
+    checkingModel --> checkingMessages : available
+    checkingMessages --> connectedPreparingBoard : loadDebtBoard succeeds
+    checkingMessages --> needsFullDiskAccess : FDA missing (first time)
+    checkingMessages --> needsFullDiskAccessStillMissing : FDA missing after Check Again
+    checkingMessages --> modelUnavailable : throws languageModelUnavailable
+    checkingMessages --> failed : other typed failure
+
+    modelUnavailable --> checkingModel : Check Again
+    needsFullDiskAccess --> checkingModel : Check Again
+    needsFullDiskAccessStillMissing --> checkingModel : Check Again
+    failed --> checkingModel : Retry
+
+    connectedPreparingBoard --> board : StowerRootView renders StowerBoardView
+
+    note right of board
+      Board lifecycle lives in the child StowerBoardViewModel,
+      NOT in StowerStartupState (no .loadingJudgments / .ready /
+      .allCaughtUp cases). Its own phase enum runs:
+      preparing → rows / caughtUp / error, plus refresh.
+      · clear preparing when judged + failed == total
+      · reload board when changedChatIDs non-empty
+      A board StowerStartupFailure → StowerStartupModel
+      .handleBoardFailure → back into onboarding above.
+    end note
+```
+
+Every transition runs under a **generation token**: `beginRun()` bumps a counter,
+and `commit` writes `state` only if the completing run is still the current
+generation — so an overlapping Check Again can never let a stale load overwrite a
+newer run, and a `CancellationError` (superseded run, or `onDisappear → cancel()`)
+routes to nothing, never to `.failed`. The view re-renders because
+`StowerStartupModel` is `@Observable` and `body` reads `model.state`.
+
+**How it "keeps running":** the startup flow is a one-shot that hands off at
+`connectedPreparingBoard`, where `StowerRootView` renders `StowerBoardView` backed
+by a child `StowerBoardViewModel`. `StowerStartupState` still has no board-era
+cases — the board's richer lifecycle (preparing → rows / caught-up / error, plus
+the background `refreshJudgments` loop that backfills verdicts and drives the
+spinner/reload signals off `StowerRefreshSummary`) lives in the view-model's own
+phase enum, not the startup enum. A board load that surfaces a
+`StowerStartupFailure` (e.g. a mid-session FDA loss) re-enters onboarding via
+`StowerStartupModel.handleBoardFailure`, so failure routing stays unified.
 
 ## System flow — ingest, query, and the relationship-debt engine
 

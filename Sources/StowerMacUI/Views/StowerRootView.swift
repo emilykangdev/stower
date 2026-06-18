@@ -3,29 +3,48 @@ import SwiftUI
 
 /// The app's whole composition API: a public, no-argument root view.
 ///
-/// `init()` builds the real `StowerMessagesStartupAdapter` and owns the
-/// `StowerStartupModel`, so the app target (`StowerMac`) imports only
-/// `StowerMacUI` — never the adapter, the provider, or `StowerMessages`. It
-/// switches on the startup state, cross-fading between screens, and reruns the
+/// `init()` builds the shared `StowerMessagesComposition` — ONE
+/// `StowerDebtBoardProvider` injected into both the startup adapter and the board
+/// adapter — and owns the `StowerStartupModel` and `StowerBoardViewModel` as
+/// `@State` so the screen switch never reconstructs them. The app target
+/// (`StowerMac`) imports only `StowerMacUI` — never the adapters, the provider, or
+/// `StowerMessages`. It switches on the startup state, cross-fading between
+/// screens, hands off to the board at `.connectedPreparingBoard`, and reruns the
 /// flow on Check Again.
 public struct StowerRootView: View {
     @State private var model: StowerStartupModel
+    @State private var boardModel: StowerBoardViewModel
     private let settings: StowerSystemSettingsOpener
 
-    /// Builds the production root wired to the real engine-backed provider.
+    /// Builds the production root wired to the shared engine-backed composition.
     public init() {
+        let composition = StowerMessagesComposition()
         self.init(
-            provider: StowerMessagesStartupAdapter(),
+            startup: composition.startup,
+            board: composition.board,
             settings: StowerSystemSettingsOpener()
         )
     }
 
-    /// Injects a provider (and optionally a settings opener) for tests/previews.
+    /// Injects both boundaries (and optionally a settings opener) for tests and
+    /// previews; production builds them from the shared composition.
+    ///
+    /// The board's `onFailure` is wired to `StowerStartupModel.handleBoardFailure`,
+    /// so a mid-session board error re-enters onboarding rather than showing an
+    /// empty board.
     internal init(
-        provider: any StowerStartupProviding,
+        startup: any StowerStartupProviding,
+        board: any StowerBoardDataSource,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener()
     ) {
-        _model = State(initialValue: StowerStartupModel(provider: provider))
+        let startupModel = StowerStartupModel(provider: startup)
+        _model = State(initialValue: startupModel)
+        _boardModel = State(
+            initialValue: StowerBoardViewModel(
+                dataSource: board,
+                onFailure: { failure in startupModel.handleBoardFailure(failure) }
+            )
+        )
         self.settings = settings
     }
 
@@ -53,7 +72,7 @@ public struct StowerRootView: View {
         case .needsFullDiskAccessStillMissing(let path):
             fdaView(path: path, stillMissing: true)
         case .connectedPreparingBoard:
-            StowerConnectedLoadingView()
+            StowerBoardView(model: boardModel)
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
         }

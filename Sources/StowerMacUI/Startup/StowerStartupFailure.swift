@@ -9,7 +9,7 @@ import Foundation
 /// strings are never shown, which is why every engine diagnostic payload is
 /// dropped except the FDA `path` and the model `reason` a screen actually renders.
 internal enum StowerStartupFailure: Error, Sendable, Equatable {
-    // FROZEN-ADAPTER: StowerMessagesStartupAdapter is the only engine-coupled file; engine→failure map in "Why the UI boundary is durable" item 2.
+    // ENGINE-COUPLED: four files import the engine (StowerMessagesStartupAdapter, StowerLiveBoardDataSource, StowerMessagesComposition, StowerMessagesMapping); the engine→failure map is StowerMessagesMapping.mapError, and this app-owned failure is reused as the board seam's error type.
 
     /// Full Disk Access is missing; `path` is the database path the FDA screen
     /// discloses behind its Technical-details disclosure.

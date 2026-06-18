@@ -174,7 +174,8 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         return StowerDebtBoard(neglected: neglected, ghosted: ghosted)
     }
 
-    /// Returns the newest messages of one chat for a tap-through thread view.
+    /// Returns the newest `limit` messages of one chat, ordered oldest-first for
+    /// display, for a tap-through thread view.
     public func recentMessages(chatID: String, limit: Int) async throws -> [StowerThreadMessage] {
         let reader = try sharedReader()
         return try await reader.threadMessages(chatID: chatID, limit: limit)

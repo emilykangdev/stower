@@ -108,12 +108,22 @@ if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[
     exit 1
 fi
 
-# 6b — StowerMessages may be imported by EXACTLY ONE StowerMacUI file: the adapter.
-SM_IMPORTERS="$(grep -RIlE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerMessages([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null || true)"
-if [ "$SM_IMPORTERS" != "Sources/StowerMacUI/Startup/StowerMessagesStartupAdapter.swift" ]; then
-    echo "ERROR: exactly one StowerMacUI file may import StowerMessages, and it must be" >&2
-    echo "       Sources/StowerMacUI/Startup/StowerMessagesStartupAdapter.swift. Found:" >&2
-    echo "       ${SM_IMPORTERS:-<none>}" >&2
+# 6b — StowerMessages may be imported by EXACTLY the four engine-coupled files: the
+#      startup adapter, the board adapter, the shared composition, and the shared
+#      engine->app mapping. Closed allowlist (do not weaken/delete to go green);
+#      compared as a SORTED SET so file order/addition can't slip past the gate.
+SM_ALLOWED="$(printf '%s\n' \
+    "Sources/StowerMacUI/Startup/StowerMessagesStartupAdapter.swift" \
+    "Sources/StowerMacUI/Board/StowerLiveBoardDataSource.swift" \
+    "Sources/StowerMacUI/Board/StowerMessagesComposition.swift" \
+    "Sources/StowerMacUI/Board/StowerMessagesMapping.swift" \
+    | LC_ALL=C sort)"
+SM_IMPORTERS="$(grep -RIlE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerMessages([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null | LC_ALL=C sort || true)"
+if [ "$SM_IMPORTERS" != "$SM_ALLOWED" ]; then
+    echo "ERROR: only the four engine-coupled StowerMacUI files may import StowerMessages:" >&2
+    echo "$SM_ALLOWED" | sed 's/^/       allowed: /' >&2
+    echo "       Found:" >&2
+    echo "${SM_IMPORTERS:-<none>}" | sed 's/^/       /' >&2
     exit 1
 fi
 

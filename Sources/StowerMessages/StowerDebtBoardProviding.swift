@@ -24,7 +24,13 @@ public protocol StowerDebtBoardProviding: Sendable {
     /// when the source can't be read (e.g. missing Full Disk Access).
     func loadDebtBoard(config: StowerDebtConfig, now: Date) async throws -> StowerDebtBoard
 
-    /// Returns the newest messages of one chat for a tap-through thread view.
+    /// Returns the newest `limit` messages of one chat, ordered oldest-first for
+    /// display, for a tap-through thread view.
+    ///
+    /// Two-part contract: the selection is the newest `limit` eligible messages,
+    /// and they are returned **oldest-first** so the view renders top-to-bottom
+    /// without re-sorting. The app relies on this order and cannot re-derive it
+    /// (`StowerThreadMessage` carries no sequence to sort by).
     func recentMessages(chatID: String, limit: Int) async throws -> [StowerThreadMessage]
 
     /// Runs the language model in the background, backfills the cache, and reports

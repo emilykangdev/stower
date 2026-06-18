@@ -75,6 +75,21 @@ internal final class StowerStartupModel {
     /// Not used by the views.
     internal var activeRun: Task<Void, Never>? { inFlight }
 
+    /// Routes a board-load failure back into the startup screen flow.
+    ///
+    /// The board runs as a child `StowerBoardViewModel` rooted at
+    /// `.connectedPreparingBoard`; when its load surfaces a `StowerStartupFailure`
+    /// (e.g. a mid-session FDA/source error), it re-enters onboarding here. Cancels
+    /// any in-flight startup run and bumps the generation so a late startup
+    /// completion can't overwrite this, then routes the failure exactly as startup
+    /// would — FDA escalation included, via the shared `route(_:wasAwaitingFDA:)`.
+    internal func handleBoardFailure(_ failure: StowerStartupFailure) {
+        inFlight?.cancel()
+        inFlight = nil
+        generation += 1
+        state = route(failure, wasAwaitingFDA: state.isAwaitingFullDiskAccess)
+    }
+
     /// Cancels any in-flight run, bumps the generation, and starts a fresh run.
     private func beginRun() {
         inFlight?.cancel()
