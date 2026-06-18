@@ -206,4 +206,27 @@ import Testing
         await model.loadTaskHandle?.value
         #expect(spy.loadCallCount == 2)
     }
+
+    @Test("revoking access in Settings drops resolved names on return (no stale names)")
+    internal func revokeReplacesNamesWithHandles() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [oneRowBoard()]
+        let authorized = Mutex(true)
+        let access = StowerContactsAccess(
+            status: { authorized.withLock { $0 } ? .authorized : .denied },
+            request: { true }
+        )
+        let model = makeViewModel(spy, contacts: access, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+        #expect(model.showsContactsAccessBanner == false)  // authorized: no banner
+
+        authorized.withLock { $0 = false }  // user revokes Contacts in Settings
+        model.onAppBecameActive()
+        await model.loadTaskHandle?.value
+
+        #expect(spy.loadCallCount == 2)  // reloaded so names don't linger
+        #expect(model.showsContactsAccessBanner)  // banner returns
+    }
 }

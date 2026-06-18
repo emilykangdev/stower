@@ -187,17 +187,20 @@ internal final class StowerBoardViewModel {
 
     /// Re-checks Contacts when the app returns to the foreground.
     ///
-    /// Opening the Settings pane can't notify us of a grant, and switching apps does
-    /// not re-run the board's `.task`, so without this a grant made in System
-    /// Settings would leave the board on handles until the next manual action. The
-    /// activation re-syncs authorization (so the banner reflects a Settings change),
-    /// and if we'd sent the user to recover access it reloads once — into names if
-    /// they granted, or back to handles + banner if they didn't.
+    /// Switching apps does not re-run the board's `.task`, and a Settings change
+    /// can't notify us, so this is where a foreground Contacts change is reconciled.
+    /// We reload when authorization *changed* while away — picking up a grant made in
+    /// Settings (names appear) **and** dropping already-resolved names when access
+    /// was revoked (a privacy leak otherwise) — or when we'd explicitly sent the user
+    /// to recover access (so a denied→still-denied return refreshes to handles too).
     internal func onAppBecameActive() {
+        let previous = contactsAuthorization
         syncContactsAuthorization()
-        guard awaitingContactsRecovery else { return }
+        let wasAwaitingRecovery = awaitingContactsRecovery
         awaitingContactsRecovery = false
-        load()
+        if wasAwaitingRecovery || contactsAuthorization != previous {
+            load()
+        }
     }
 
     /// Selects a new day preset, re-loading at the new threshold (I8).
