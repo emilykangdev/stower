@@ -43,7 +43,8 @@ import Testing
     ) -> StowerBoardViewModel {
         StowerBoardViewModel(
             dataSource: spy,
-            onFailure: { recorder.failures.append($0) }
+            onFailure: { recorder.failures.append($0) },
+            sleep: { _ in }
         )
     }
 
@@ -208,11 +209,38 @@ import Testing
         #expect(model.isRefreshing == false)
     }
 
-    @Test("a coalesced pass keeps preparing and does not reload (I6)")
-    internal func coalescedKeepsPreparing() async {
+    @Test("a coalesced pass after cold start is resolved is a no-op (I6)")
+    internal func coalescedAfterResolvedIsNoOp() async {
         let spy = StowerSpyBoardDataSource()
         spy.loadModels = [emptyModel]
-        spy.refreshOutcomes = [.coalesced]
+        spy.refreshOutcomes = [
+            .completed(reloadNeeded: false, anyJudged: false, hadRecords: false),
+            .coalesced
+        ]
+        let model = makeViewModel(spy, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+        model.refresh()
+        await settle(model)
+        #expect(model.phase == .caughtUp)
+
+        // A later coalesced pass must not clear or reload the resolved board.
+        model.refresh()
+        await settle(model)
+        #expect(spy.refreshCallCount == 2)
+        #expect(spy.loadCallCount == 1)
+        #expect(model.phase == .caughtUp)
+    }
+
+    @Test("a coalesced pass during cold start backs off and re-issues, never stranding")
+    internal func coalescedDuringColdStartReissues() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [emptyModel]
+        spy.refreshOutcomes = [
+            .coalesced,
+            .completed(reloadNeeded: false, anyJudged: false, hadRecords: false)
+        ]
         let model = makeViewModel(spy, recorder: FailureRecorder())
 
         model.load()
@@ -220,9 +248,9 @@ import Testing
         model.refresh()
         await settle(model)
 
-        #expect(spy.refreshCallCount == 1)
-        #expect(spy.loadCallCount == 1)
-        #expect(model.phase == .preparing)
+        #expect(spy.refreshCallCount == 2)
+        #expect(model.phase == .caughtUp)
+        #expect(model.isRefreshing == false)
     }
 
     // MARK: I13 — the staleness guard is on load only

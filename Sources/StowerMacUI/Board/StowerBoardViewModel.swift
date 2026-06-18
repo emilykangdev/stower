@@ -51,6 +51,11 @@ internal final class StowerBoardViewModel {
     private let opener: StowerMessagesLinkOpener
     private let onFailure: @MainActor (StowerStartupFailure) -> Void
     private let clock: @Sendable () -> Date
+    private let sleep: @Sendable (Duration) async throws -> Void
+
+    /// Backoff between `.coalesced` retries while cold start is unresolved, so the
+    /// re-issue waits for the other in-flight pass instead of busy-spinning.
+    private static let coalesceRetryDelay: Duration = .milliseconds(400)
 
     private var loadTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
@@ -64,16 +69,22 @@ internal final class StowerBoardViewModel {
     ///   - opener: The Messages deep-link opener handed to thread view-models.
     ///   - onFailure: Routes a board failure back to the startup model.
     ///   - clock: Supplies `now`; injectable so tests are deterministic.
+    ///   - sleep: The coalesced-retry backoff; injectable so tests need no real
+    ///     wall-clock wait. Throwing, because `Task.sleep(for:)` throws.
     internal init(
         dataSource: any StowerBoardDataSource,
         opener: StowerMessagesLinkOpener = StowerMessagesLinkOpener(),
         onFailure: @escaping @MainActor (StowerStartupFailure) -> Void,
-        clock: @escaping @Sendable () -> Date = { Date() }
+        clock: @escaping @Sendable () -> Date = { Date() },
+        sleep: @escaping @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        }
     ) {
         self.dataSource = dataSource
         self.opener = opener
         self.onFailure = onFailure
         self.clock = clock
+        self.sleep = sleep
     }
 
     /// Runs the launch sequence on appear: load the cached board, then refresh.
@@ -88,9 +99,14 @@ internal final class StowerBoardViewModel {
     }
 
     /// Selects a new day preset, re-loading at the new threshold (I8).
+    ///
+    /// Shows `.preparing` immediately so the visible rows never lag behind the
+    /// selected filter while the new load is in flight — the rows on screen always
+    /// match the chosen threshold.
     internal func selectPreset(_ preset: StowerDayPreset) {
         guard preset != selectedPreset else { return }
         selectedPreset = preset
+        phase = .preparing
         load()
     }
 
@@ -185,19 +201,7 @@ internal final class StowerBoardViewModel {
         do {
             while true {
                 let outcome = try await dataSource.refreshJudgments(config: config, now: clock())
-                switch outcome {
-                case .coalesced:
-                    return
-                case .completed(let reloadNeeded, let anyJudged, let hadRecords):
-                    applyCompleted(
-                        reloadNeeded: reloadNeeded,
-                        anyJudged: anyJudged,
-                        hadRecords: hadRecords
-                    )
-                    return
-                case .incomplete:
-                    if Task.isCancelled { return }
-                }
+                if try await handleRefreshOutcome(outcome) == false { return }
             }
         } catch is CancellationError {
             // Superseded / dismissed — never a failure.
@@ -205,6 +209,25 @@ internal final class StowerBoardViewModel {
             onFailure(failure)
         } catch {
             onFailure(.unexpected)
+        }
+    }
+
+    /// Acts on one refresh outcome; returns whether the loop should re-issue.
+    private func handleRefreshOutcome(_ outcome: StowerBoardRefreshOutcome) async throws -> Bool {
+        switch outcome {
+        case .coalesced:
+            // Another pass is running. Once cold start is resolved, keep the current
+            // board (neither clear nor reload). But while still preparing, the other
+            // pass's summary goes to ITS caller, not us — so back off and re-issue
+            // rather than strand the spinner.
+            if hasResolvedColdStart || Task.isCancelled { return false }
+            try await sleep(Self.coalesceRetryDelay)
+            return true
+        case .completed(let reloadNeeded, let anyJudged, let hadRecords):
+            applyCompleted(reloadNeeded: reloadNeeded, anyJudged: anyJudged, hadRecords: hadRecords)
+            return false
+        case .incomplete:
+            return !Task.isCancelled
         }
     }
 
