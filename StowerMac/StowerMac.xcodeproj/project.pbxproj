@@ -101,7 +101,7 @@
 			mainGroup = DB486A552FDF725E00BCEE1B;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				DB486A7F2FE398BF00BCEE1B /* XCLocalSwiftPackageReference "../../charlottetown" */,
+				DB486A7F2FE398BF00BCEE1B /* XCLocalSwiftPackageReference ".." */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = DB486A5F2FDF725E00BCEE1B /* Products */;
@@ -364,9 +364,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		DB486A7F2FE398BF00BCEE1B /* XCLocalSwiftPackageReference "../../charlottetown" */ = {
+		DB486A7F2FE398BF00BCEE1B /* XCLocalSwiftPackageReference ".." */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../charlottetown;
+			relativePath = ..;
 		};
 /* End XCLocalSwiftPackageReference section */
 

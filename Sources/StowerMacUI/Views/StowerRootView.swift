@@ -35,6 +35,7 @@ public struct StowerRootView: View {
             .frame(minWidth: Self.minWidth, minHeight: Self.minHeight)
             .animation(.easeInOut(duration: Self.crossFade), value: model.state)
             .task { model.start() }
+            .onDisappear { model.cancel() }
     }
 
     @ViewBuilder private var screen: some View {

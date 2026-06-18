@@ -59,6 +59,17 @@ internal final class StowerStartupModel {
         beginRun()
     }
 
+    /// Cancels any in-flight run so startup work (the real provider's database
+    /// read) doesn't outlive the view — called when the root view disappears.
+    ///
+    /// A bumped generation makes any late completion a no-op; `start()` later
+    /// begins a fresh run.
+    internal func cancel() {
+        inFlight?.cancel()
+        inFlight = nil
+        generation += 1
+    }
+
     /// The current run, exposed so a test can await the fire-and-forget flow.
     ///
     /// Not used by the views.

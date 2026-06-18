@@ -144,4 +144,21 @@ import Testing
         #expect(model.state == .connectedPreparingBoard)
         #expect(await provider.loadCallCount == 2)
     }
+
+    @Test("cancel() stops the in-flight run without routing to .failed")
+    internal func cancelStopsInFlightRun() async {
+        let provider = StowerFakeStartupProvider(loadBehaviors: [.blockUntilCancelled])
+        let model = makeModel(provider: provider)
+        model.start()
+        while await provider.loadCallCount < 1 {
+            await Task.yield()
+        }
+        let run = model.activeRun
+        model.cancel()
+        await run?.value
+        // The cancelled run never routes to a failure screen; it stays at the
+        // checking state it had reached, and no new run is started.
+        #expect(model.state == .checkingMessages)
+        #expect(model.activeRun == nil)
+    }
 }
