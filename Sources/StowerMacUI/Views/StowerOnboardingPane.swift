@@ -26,15 +26,23 @@ internal struct StowerOnboardingPane<Header: View, Content: View, Actions: View>
     }
 
     internal var body: some View {
-        VStack(spacing: StowerOnboardingPaneLayout.sectionSpacing) {
-            header()
-            titleBlock
-            content()
-            actions()
+        // A ScrollView with a viewport-height minimum keeps the content centered
+        // when it fits, but lets a tall pane (long FDA copy, or large Dynamic
+        // Type) scroll so the recovery actions stay reachable instead of clipping
+        // below the window's minimum height.
+        GeometryReader { proxy in
+            ScrollView {
+                VStack(spacing: StowerOnboardingPaneLayout.sectionSpacing) {
+                    header()
+                    titleBlock
+                    content()
+                    actions()
+                }
+                .frame(maxWidth: StowerOnboardingPaneLayout.maxTextWidth)
+                .padding(StowerOnboardingPaneLayout.outerPadding)
+                .frame(maxWidth: .infinity, minHeight: proxy.size.height, alignment: .center)
+            }
         }
-        .frame(maxWidth: StowerOnboardingPaneLayout.maxTextWidth)
-        .padding(StowerOnboardingPaneLayout.outerPadding)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var titleBlock: some View {
