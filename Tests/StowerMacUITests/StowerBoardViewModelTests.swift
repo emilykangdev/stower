@@ -143,8 +143,28 @@ import Testing
         #expect(model.board?.rows(for: .neglected).map(\.id) == ["n"])
     }
 
-    @Test("a completed pass that judged but gated to empty is all-caught-up, no reload (I6/I9)")
-    internal func completedJudgedButEmptyIsCaughtUp() async {
+    @Test("a cold-start completed pass reloads a warm cache even when nothing changed (I9)")
+    internal func coldStartReloadsWarmCache() async {
+        // Cold load is empty; we coalesced against another pass that warmed the
+        // cache, so our completed pass reports anyJudged but reloadNeeded=false. We
+        // must still reload — otherwise a false "all caught up" over real rows.
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [emptyModel, board(neglected: ["n"])]
+        spy.refreshOutcomes = [.completed(reloadNeeded: false, anyJudged: true, hadRecords: true)]
+        let model = makeViewModel(spy, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+        model.refresh()
+        await settle(model)
+
+        #expect(spy.loadCallCount == 2)
+        #expect(model.phase == .rows)
+        #expect(model.board?.rows(for: .neglected).map(\.id) == ["n"])
+    }
+
+    @Test("a cold-start completed pass that reloads to a still-empty board is all-caught-up (I9)")
+    internal func coldStartReloadEmptyIsCaughtUp() async {
         let spy = StowerSpyBoardDataSource()
         spy.loadModels = [emptyModel]
         spy.refreshOutcomes = [.completed(reloadNeeded: false, anyJudged: true, hadRecords: true)]
@@ -155,7 +175,7 @@ import Testing
         model.refresh()
         await settle(model)
 
-        #expect(spy.loadCallCount == 1)
+        #expect(spy.loadCallCount == 2)
         #expect(model.phase == .caughtUp)
     }
 

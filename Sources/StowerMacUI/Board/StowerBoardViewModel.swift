@@ -263,9 +263,15 @@ internal final class StowerBoardViewModel {
     }
 
     private func applyCompleted(reloadNeeded: Bool, anyJudged: Bool, hadRecords: Bool) {
+        let wasColdStart = !hasResolvedColdStart
         hasResolvedColdStart = true
         if anyJudged {
-            if reloadNeeded {
+            // Reload when this pass changed rows, OR on the first cold-start
+            // resolution while the board is still the empty cold load: if we
+            // coalesced against another pass, that pass's writes were reported to
+            // ITS caller (changedCount 0 for us), so without this we'd resolve to a
+            // false "all caught up" over a now-warm cache we never re-read.
+            if reloadNeeded || (wasColdStart && (board?.isEmpty ?? true)) {
                 load()
             } else {
                 phase = (board?.isEmpty ?? true) ? .caughtUp : .rows
