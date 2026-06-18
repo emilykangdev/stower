@@ -22,19 +22,22 @@ public struct StowerRootView: View {
         self.init(
             startup: composition.startup,
             board: composition.board,
+            contacts: composition.contacts,
             settings: StowerSystemSettingsOpener()
         )
     }
 
-    /// Injects both boundaries (and optionally a settings opener) for tests and
-    /// previews; production builds them from the shared composition.
+    /// Injects both boundaries (and optionally a Contacts access + settings opener)
+    /// for tests and previews; production builds them from the shared composition.
     ///
     /// The board's `onFailure` is wired to `StowerStartupModel.handleBoardFailure`,
     /// so a mid-session board error re-enters onboarding rather than showing an
-    /// empty board.
+    /// empty board. `contacts` defaults to a denied no-op so previews/tests never
+    /// prompt.
     internal init(
         startup: any StowerStartupProviding,
         board: any StowerBoardDataSource,
+        contacts: StowerContactsAccess = .denied,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener()
     ) {
         let startupModel = StowerStartupModel(provider: startup)
@@ -42,6 +45,7 @@ public struct StowerRootView: View {
         _boardModel = State(
             initialValue: StowerBoardViewModel(
                 dataSource: board,
+                contacts: contacts,
                 onFailure: { failure in startupModel.handleBoardFailure(failure) }
             )
         )

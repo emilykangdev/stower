@@ -48,6 +48,7 @@ internal final class StowerBoardViewModel {
     internal var direction: StowerBoardDirection = .neglected
 
     private let dataSource: any StowerBoardDataSource
+    private let contacts: StowerContactsAccess
     private let opener: StowerMessagesLinkOpener
     private let onFailure: @MainActor (StowerStartupFailure) -> Void
     private let clock: @Sendable () -> Date
@@ -59,6 +60,7 @@ internal final class StowerBoardViewModel {
 
     private var loadTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    private var contactsTask: Task<Void, Never>?
     private var loadGeneration = 0
     private var refreshGeneration = 0
     private var hasResolvedColdStart = false
@@ -67,6 +69,9 @@ internal final class StowerBoardViewModel {
     ///
     /// - Parameters:
     ///   - dataSource: The app-owned board boundary (live adapter or a spy).
+    ///   - contacts: The Contacts-access wrapper; defaults to a denied no-op so
+    ///     tests/previews never prompt. Production injects the real access from the
+    ///     composition, so a first-run grant flips rows to names on the next load.
     ///   - opener: The Messages deep-link opener handed to thread view-models.
     ///   - onFailure: Routes a board failure back to the startup model.
     ///   - clock: Supplies `now`; injectable so tests are deterministic.
@@ -74,6 +79,7 @@ internal final class StowerBoardViewModel {
     ///     wall-clock wait. Throwing, because `Task.sleep(for:)` throws.
     internal init(
         dataSource: any StowerBoardDataSource,
+        contacts: StowerContactsAccess = .denied,
         opener: StowerMessagesLinkOpener = StowerMessagesLinkOpener(),
         onFailure: @escaping @MainActor (StowerStartupFailure) -> Void,
         clock: @escaping @Sendable () -> Date = { Date() },
@@ -82,6 +88,7 @@ internal final class StowerBoardViewModel {
         }
     ) {
         self.dataSource = dataSource
+        self.contacts = contacts
         self.opener = opener
         self.onFailure = onFailure
         self.clock = clock
@@ -97,6 +104,24 @@ internal final class StowerBoardViewModel {
     internal func onAppear() {
         load()
         refresh()
+        requestContactsAccess()
+    }
+
+    /// Requests Contacts access without blocking the first render.
+    ///
+    /// The board has already loaded with handles; this fires the one system prompt
+    /// (only when undetermined) in a detached task and, on a *fresh* grant, reloads
+    /// so the per-load `.live()` resolver rebuilds and rows flip to names — no
+    /// relaunch. An already-authorized launch reloads nothing (the first load
+    /// already resolved names); a denial keeps handles and never gates.
+    private func requestContactsAccess() {
+        let wasAuthorized = contacts.isAuthorized
+        contactsTask = Task { [weak self] in
+            guard let self else { return }
+            let granted = await contacts.requestAccessIfNeeded()
+            guard granted, !wasAuthorized, !Task.isCancelled else { return }
+            load()
+        }
     }
 
     /// Selects a new day preset, re-loading at the new threshold (I8).
@@ -129,6 +154,7 @@ internal final class StowerBoardViewModel {
     internal func cancel() {
         loadTask?.cancel()
         refreshTask?.cancel()
+        contactsTask?.cancel()
         loadGeneration += 1
         refreshGeneration += 1
         isRefreshing = false
@@ -145,9 +171,10 @@ internal final class StowerBoardViewModel {
         )
     }
 
-    /// The in-flight load/refresh tasks, exposed so tests can await them.
+    /// The in-flight load/refresh/contacts tasks, exposed so tests can await them.
     internal var loadTaskHandle: Task<Void, Never>? { loadTask }
     internal var refreshTaskHandle: Task<Void, Never>? { refreshTask }
+    internal var contactsTaskHandle: Task<Void, Never>? { contactsTask }
 
     /// Loads the cached board under a fresh generation token (I13).
     internal func load() {

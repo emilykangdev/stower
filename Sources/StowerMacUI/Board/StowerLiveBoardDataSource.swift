@@ -13,11 +13,24 @@ import StowerMessages
 /// failure).
 internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
     private let engine: any StowerDebtBoardProviding
+    private let makeContactsResolver: @Sendable () -> StowerContactsResolver
 
-    /// Injects the shared engine conformer (the real provider in production, a fake
-    /// engine in adapter tests).
-    internal init(engine: any StowerDebtBoardProviding) {
+    /// Injects the shared engine conformer and the contacts-resolver factory.
+    ///
+    /// - Parameters:
+    ///   - engine: The shared engine conformer (the real provider in production, a
+    ///     fake engine in adapter tests).
+    ///   - makeContactsResolver: Builds the handle→name resolver; defaults to
+    ///     `StowerContactsResolver.live()`, which re-reads Contacts authorization on
+    ///     every call, so a post-grant reload self-heals to names with no rebuild
+    ///     logic. It is called **once per `loadBoard`** (never per row); tests inject
+    ///     a counting/empty factory.
+    internal init(
+        engine: any StowerDebtBoardProviding,
+        makeContactsResolver: @escaping @Sendable () -> StowerContactsResolver = { .live() }
+    ) {
         self.engine = engine
+        self.makeContactsResolver = makeContactsResolver
     }
 
     internal func loadBoard(
@@ -29,9 +42,16 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
                 config: StowerMessagesMapping.mapConfig(config),
                 now: now
             )
+            // Built once per load (not per row): `.live()` enumerates the whole
+            // address book, so calling it inside the row map would be O(rows × contacts).
+            let contacts = makeContactsResolver()
             return StowerBoardModel(
-                neglected: board.neglected.map { StowerMessagesMapping.mapRow($0, now: now) },
-                ghosted: board.ghosted.map { StowerMessagesMapping.mapRow($0, now: now) }
+                neglected: board.neglected.map {
+                    StowerMessagesMapping.mapRow($0, now: now, contacts: contacts)
+                },
+                ghosted: board.ghosted.map {
+                    StowerMessagesMapping.mapRow($0, now: now, contacts: contacts)
+                }
             )
         } catch let error as StowerMessagesError {
             throw StowerMessagesMapping.mapError(error)

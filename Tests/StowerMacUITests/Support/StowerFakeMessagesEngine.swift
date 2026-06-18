@@ -12,6 +12,9 @@ internal struct StowerFakeMessagesEngine: StowerDebtBoardProviding {
     internal var availability: StowerModelAvailability = .available
     internal var loadError: StowerMessagesError?
 
+    /// The board a clean `loadDebtBoard` returns (empty by default).
+    internal var board: StowerDebtBoard = StowerDebtBoard(neglected: [], ghosted: [])
+
     internal func modelAvailability() async -> StowerModelAvailability {
         availability
     }
@@ -23,7 +26,7 @@ internal struct StowerFakeMessagesEngine: StowerDebtBoardProviding {
         if let loadError {
             throw loadError
         }
-        return StowerDebtBoard(neglected: [], ghosted: [])
+        return board
     }
 
     internal func recentMessages(

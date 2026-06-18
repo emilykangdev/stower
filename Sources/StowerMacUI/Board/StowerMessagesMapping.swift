@@ -74,13 +74,24 @@ internal enum StowerMessagesMapping {
     }
 
     /// Maps an engine debt row into an app-owned board row, dropping confidence.
-    internal static func mapRow(_ item: StowerDebtItem, now: Date) -> StowerBoardRow {
+    ///
+    /// The display name is resolved app-side from the stable `counterpartHandle`
+    /// (never the engine's emitted `counterpart`, which the Mac-app engine instance
+    /// builds with an empty resolver, so it equals the handle): the injected
+    /// `contacts` is the single resolution seam, and an unmatched handle degrades to
+    /// the raw handle, never blank.
+    internal static func mapRow(
+        _ item: StowerDebtItem,
+        now: Date,
+        contacts: StowerContactsResolver
+    ) -> StowerBoardRow {
         let kind = mapKind(item.lastMessageKind)
+        let counterpart = contacts.displayName(for: item.counterpartHandle)
         return StowerBoardRow(
             chatID: item.chatID,
-            counterpart: item.counterpart,
+            counterpart: counterpart,
             counterpartHandle: item.counterpartHandle,
-            monogram: StowerBoardRow.monogram(for: item.counterpart),
+            monogram: StowerBoardRow.monogram(for: counterpart),
             summary: StowerLastMessageSummary.make(kind: kind, text: item.lastMessageText),
             ageInDays: StowerBoardRow.ageInDays(from: item.lastMessageTimestamp, to: now),
             deepLink: item.deepLink
