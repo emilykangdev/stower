@@ -85,7 +85,12 @@ internal struct StowerKeygenClient: Sendable {
             }
             return .activated(machineID: id)
         }
-        if status == Self.machineLimitStatus { return .limitReached }
+        // Only the explicit machine-limit code is the `.limitReached` verdict; any
+        // OTHER 422 (e.g. a malformed request) is surfaced, not masked as a seat
+        // limit. Plan B's gate can add more recoverable codes once observed.
+        if status == Self.unprocessableStatus, Self.isMachineLimit(data) {
+            return .limitReached
+        }
         throw StowerKeygenError.server(status: status)
     }
 
@@ -194,6 +199,12 @@ internal struct StowerKeygenClient: Sendable {
         try? JSONDecoder().decode(type, from: data)
     }
 
+    /// Whether a 422 body carries the machine-limit error code.
+    private static func isMachineLimit(_ data: Data) -> Bool {
+        let codes = decode(StowerKeygenErrorBody.self, from: data)?.errors.compactMap(\.code) ?? []
+        return codes.contains(machineLimitCode)
+    }
+
     /// The check-out TTL, in seconds, derived from ``machineFileTTL``.
     private static var checkOutTTLSeconds: Int64 { machineFileTTL.components.seconds }
 
@@ -208,7 +219,8 @@ internal struct StowerKeygenClient: Sendable {
     private static let contentType = "application/vnd.api+json"
     private static let requestTimeout: TimeInterval = 15
     private static let successRange = 200...299
-    private static let machineLimitStatus = 422
+    private static let unprocessableStatus = 422
+    private static let machineLimitCode = "MACHINE_LIMIT_EXCEEDED"
     private static let unknownValidationCode = "UNKNOWN"
 }
 
@@ -261,6 +273,16 @@ private struct StowerDataIDResponse: Decodable {
 
     struct Resource: Decodable {
         let id: String
+    }
+}
+
+/// The minimal decode of a JSON:API `errors` array — only each error's machine-
+/// readable `code`, used to tell the machine-limit 422 from other 422s.
+private struct StowerKeygenErrorBody: Decodable {
+    let errors: [ErrorObject]
+
+    struct ErrorObject: Decodable {
+        let code: String?
     }
 }
 

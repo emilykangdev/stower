@@ -48,6 +48,14 @@ import Testing
         #expect(result == .limitReached)
     }
 
+    @Test("activate surfaces a 422 that is NOT the machine limit, rather than masking it")
+    internal func activateSurfacesNonLimit422() async throws {
+        let client = try client(status: 422, json: #"{"errors":[{"code":"FINGERPRINT_TAKEN"}]}"#)
+        await #expect(throws: StowerKeygenError.server(status: 422)) {
+            _ = try await client.activate(licenseKey: "k", licenseID: "l", fingerprint: "fp")
+        }
+    }
+
     @Test("activate surfaces a transport throw rather than swallowing it")
     internal func activateSurfacesTransportThrow() async {
         let client = StowerKeygenClient(

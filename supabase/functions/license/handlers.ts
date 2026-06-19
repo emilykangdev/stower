@@ -97,6 +97,8 @@ export interface WebhookDeps {
   keygen: KeygenAdmin;
   verifySignature: (rawBody: string, signature: string) => Promise<boolean>;
   paidVariantID: string;
+  /** `SELECT 1 FROM device_trials WHERE keygen_license_id = $1` — true when we minted it. */
+  licenseIsMinted: (licenseID: string) => Promise<boolean>;
 }
 
 const RETRY_REPLY: Reply = { status: 503, body: { error: "retry" } };
@@ -226,6 +228,17 @@ export async function handleWebhook(
     // reconciliation rather than silently leaving a paying buyer on trial.
     console.error(
       `paid order ${orderID} for the paid variant has no license_id; manual reconciliation needed`,
+    );
+    return { status: 200 };
+  }
+
+  // The license id is client-controlled checkout data. Prove WE minted it before
+  // mutating any Keygen license — otherwise a tampered checkout could PUT an
+  // arbitrary license to Paid. (The purchases FK is the same guard one layer down;
+  // this just refuses the Keygen call entirely for a license we don't own.)
+  if (!(await deps.licenseIsMinted(licenseID))) {
+    console.error(
+      `order ${orderID} references a license we did not mint; ignoring`,
     );
     return { status: 200 };
   }

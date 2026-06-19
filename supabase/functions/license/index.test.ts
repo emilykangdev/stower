@@ -149,12 +149,15 @@ function mintDeps(
 function webhookDeps(
   keygen: KeygenAdmin,
   purchases: PurchaseStore,
+  licenseIsMinted: (id: string) => Promise<boolean> = () =>
+    Promise.resolve(true),
 ): WebhookDeps {
   return {
     purchases,
     keygen,
     verifySignature: (_raw, sig) => Promise.resolve(sig === "good"),
     paidVariantID: "paid-variant",
+    licenseIsMinted,
   };
 }
 
@@ -447,6 +450,22 @@ Deno.test("a paid order missing license_id is acked without upgrading", async ()
   const result = await handleWebhook(
     webhookDeps(keygen, purchases),
     orderBody({ licenseID: "" }),
+    "good",
+  );
+  assertEquals(result.status, 200);
+  assertEquals(keygen.upgrades.length, 0);
+  assertEquals(purchases.records.length, 0);
+});
+
+// A paid order whose license_id was never minted by us is refused BEFORE any
+// Keygen mutation (a tampered checkout cannot upgrade an arbitrary license).
+Deno.test("a paid order for an unminted license never calls Keygen", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases, () => Promise.resolve(false)),
+    orderBody(),
     "good",
   );
   assertEquals(result.status, 200);

@@ -150,7 +150,9 @@ function keygenAdmin(): KeygenAdmin {
     },
     async upgradeToPaid(licenseID) {
       const response = await fetch(
-        `${KEYGEN_BASE_URL}/v1/accounts/${account}/licenses/${licenseID}/policy`,
+        `${KEYGEN_BASE_URL}/v1/accounts/${account}/licenses/${
+          encodeURIComponent(licenseID)
+        }/policy`,
         {
           method: "PUT",
           headers: authHeaders,
@@ -208,11 +210,20 @@ function mintDeps(): MintDeps {
 }
 
 function webhookDeps(): WebhookDeps {
+  const db = supabase();
   return {
-    purchases: purchaseStore(supabase()),
+    purchases: purchaseStore(db),
     keygen: keygenAdmin(),
     verifySignature: verifyLemonSqueezySignature,
     paidVariantID: env("LS_PAID_VARIANT_ID"),
+    async licenseIsMinted(licenseID) {
+      const { data } = await db
+        .from("device_trials")
+        .select("keygen_license_id")
+        .eq("keygen_license_id", licenseID)
+        .maybeSingle();
+      return data !== null;
+    },
   };
 }
 
