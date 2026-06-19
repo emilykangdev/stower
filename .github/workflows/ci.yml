@@ -15,6 +15,12 @@ jobs:
       - run: swift --version
       - name: Install lint tools
         run: brew install swift-format swiftlint
+      # The precheck gate now runs the license Edge Function's Deno tests
+      # (Step 4c). They fail hard if Deno is absent, so CI must provide it —
+      # otherwise the gate would go permanently red on the runner.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
       # Run the SAME gate as the local pre-commit hook so CI and local stay in
       # lockstep — one definition of "green". Any check added to precheck.sh
       # (swift-format, swiftlint, build, test, module-boundary, and future greps a

@@ -78,6 +78,20 @@ else
     swift test ${SKIP_ARGS[@]+"${SKIP_ARGS[@]}"}
 fi
 
+# Step 4c — Deno tests for the license Edge Function (handlers.ts pure logic).
+# The mint/webhook idempotency, signature, and replay invariants live in
+# supabase/functions/license/index.test.ts. They are hermetic (no network, disk,
+# or env), so they run anywhere Deno does — including CI (ci.yml installs Deno).
+# FAILS if Deno is absent (not a skip): these guard the payment/license path, so
+# "Deno missing" must break the gate loudly, never silently drop coverage.
+if ! command -v deno >/dev/null 2>&1; then
+    echo "ERROR: deno not installed — the license Edge Function tests cannot run" >&2
+    echo "       and the payment/license invariants would ship unverified. Install:" >&2
+    echo "       https://docs.deno.com/runtime/getting_started/installation/ (or: brew install deno)" >&2
+    exit 1
+fi
+( cd supabase/functions/license && deno test )
+
 # Step 5 — module boundary checks.
 # Match only real Swift import declarations (anchored to line start, optional
 # @testable), and only in *.swift files — so a README, comment, or string that

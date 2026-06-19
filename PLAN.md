@@ -14,13 +14,18 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
   `kSecAttrAccessibleAfterFirstUnlock`, no iCloud) verifies a machine-file's Ed25519 signature over
   `"machine/"+enc` against an embedded public key on every load — a tampered cache loads as `nil` (I7).
   `StowerKeygenClient` (raw `URLSession` JSON:API to `api.keygen.sh`: activate / check-out(ttl) /
-  validate-key; `Authorization: License <key>`; transport throw surfaced, 5xx → `.server`). 
+  validate-key; `Authorization: License <key>`; transport throw surfaced, 5xx → `.server`).
   `StowerTrialMintClient` (POST fingerprint → `mint-trial` → `.minted`/`.retryShortly`/`.unreachable`,
   never `{null,null}`). `supabase/`: `device_trials` + `purchases` migrations and a `license` function
   (`handlers.ts` pure logic + `index.ts` wiring) — `mint-trial` is row-idempotent with crash recovery
   (I3) and `ls-webhook` verifies the LS HMAC (I9), validates variant, `PUT /policy` trial→paid, records
-  only on success, replay/forged-id safe (I8/I15). 21 Swift tests + 13 Deno tests; `Scripts/precheck.sh`
-  green (211 tests). **O2 resolved:** trial = 30d (function), machine-file checkout TTL = 7d
+  only on success, replay/forged-id safe (I8/I15). Hardened through a Codex ship loop: per-claim
+  token on `device_trials` (a stalled winner can't overwrite a reclaimed row), `created_at`-guarded
+  reclaim, orphan-storm guard (a post-create DB failure keeps the claim), paid upgrade also clears the
+  trial expiry (perpetual), DB-lookup errors 500 (never a silent ack), RLS on both tables, and
+  `config.toml verify_jwt=false` so the webhook + anonymous mint reach the function. 22 Swift tests +
+  20 Deno tests; `Scripts/precheck.sh` green (212 tests). **O2 resolved:** trial = 30d (function),
+  machine-file checkout TTL = 7d
   (`StowerKeygenClient.machineFileTTL`, the single offline-validity boundary — the gate must read the
   file's own expiry, not add a second window). **Still open (tracked, out of this slice):** B1 — the
   `mint-trial` endpoint is unauthenticated; needs an abuse control (Supabase rate-limit / proof-of-work
