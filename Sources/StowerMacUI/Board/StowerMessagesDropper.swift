@@ -84,6 +84,9 @@ internal struct StowerMessagesDropper: Sendable {
     /// synthetic paste lands in its compose field and not in Stower.
     private static let pasteDelay: Duration = .milliseconds(200)
 
+    /// Messages' bundle identifier, the only app a synthetic paste may target.
+    private static let messagesBundleID = "com.apple.MobileSMS"
+
     @MainActor private static func performLive(_ effect: StowerMessagesDropEffect) {
         switch effect {
         case .copyToClipboard(let text):
@@ -100,6 +103,16 @@ internal struct StowerMessagesDropper: Sendable {
         case .pasteIntoMessages:
             Task { @MainActor in
                 try? await Task.sleep(for: Self.pasteDelay)
+                // Only paste if Messages actually came frontmost. If the open was slow
+                // or another app stole focus, the private draft must NOT land in the
+                // wrong app — the clipboard already holds it, so this degrades to a
+                // manual ⌘V into Messages, never a leak.
+                guard
+                    NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                        == Self.messagesBundleID
+                else {
+                    return
+                }
                 Self.postCommandV()
             }
         }

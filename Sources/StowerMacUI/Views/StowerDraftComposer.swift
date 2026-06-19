@@ -25,7 +25,11 @@ internal struct StowerDraftComposer: View {
             replyControls
         }
         .padding()
-        .frame(width: Self.width, height: Self.height)
+        // Width is fixed (the window is always wider than this); height is a CAP, not
+        // a fixed size, so on a short window the composer shrinks (its scrollback
+        // gives) instead of overflowing and clipping the header/close (JC-B).
+        .frame(width: Self.width)
+        .frame(maxHeight: Self.maxHeight)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: Self.cornerRadius)
@@ -106,7 +110,7 @@ internal struct StowerDraftComposer: View {
     }
 
     private static let width: CGFloat = 360
-    private static let height: CGFloat = 480
+    private static let maxHeight: CGFloat = 480
     private static let cornerRadius: CGFloat = 16
     private static let cornerInset: CGFloat = 16
     private static let shadowRadius: CGFloat = 16
