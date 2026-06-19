@@ -473,6 +473,21 @@ Deno.test("a paid order for an unminted license never calls Keygen", async () =>
   assertEquals(purchases.records.length, 0);
 });
 
+// A transient failure in the license-ownership lookup must return 500 (so LS
+// retries), never silently ack a paid order as "not minted".
+Deno.test("a transient ownership-lookup failure returns 500", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases, () => Promise.reject(new Error("db down"))),
+    orderBody(),
+    "good",
+  );
+  assertEquals(result.status, 500);
+  assertEquals(keygen.upgrades.length, 0);
+});
+
 // A non-order event is ignored with a 200.
 Deno.test("a non order_created event is ignored", async () => {
   const keygen = new FakeKeygen();

@@ -68,8 +68,11 @@ export interface KeygenAdmin {
   /** Creates a 30-day trial license; resolves its resource id + secret key. */
   createTrialLicense(): Promise<{ id: string; key: string }>;
   /**
-   * Changes a license's policy to Paid. Throws `KeygenLicenseNotFoundError` for an
-   * unknown/forged license id (a 404), and any other Error for a transient failure.
+   * Upgrades a license to Paid: swaps the policy to the Paid policy AND clears the
+   * trial expiry (a one-time purchase is perpetual — the policy swap alone would
+   * leave the now+30d trial expiry, so the paid license would still expire).
+   * Throws `KeygenLicenseNotFoundError` for an unknown/forged license id (a 404),
+   * and any other Error for a transient failure.
    */
   upgradeToPaid(licenseID: string): Promise<void>;
 }
@@ -236,7 +239,15 @@ export async function handleWebhook(
   // mutating any Keygen license — otherwise a tampered checkout could PUT an
   // arbitrary license to Paid. (The purchases FK is the same guard one layer down;
   // this just refuses the Keygen call entirely for a license we don't own.)
-  if (!(await deps.licenseIsMinted(licenseID))) {
+  let minted: boolean;
+  try {
+    minted = await deps.licenseIsMinted(licenseID);
+  } catch (_error) {
+    // A transient lookup failure must NOT be acked as "not minted" (that would
+    // drop a real paid upgrade silently) — 500 so Lemon Squeezy retries.
+    return { status: 500 };
+  }
+  if (!minted) {
     console.error(
       `order ${orderID} references a license we did not mint; ignoring`,
     );

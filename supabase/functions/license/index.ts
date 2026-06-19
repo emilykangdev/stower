@@ -45,11 +45,12 @@ function trialStore(db: SupabaseClient): TrialStore {
       throw new Error(`claim failed: ${error.code}`);
     },
     async get(fingerprint) {
-      const { data } = await db
+      const { data, error } = await db
         .from("device_trials")
         .select("status, keygen_license_id, keygen_license_key, created_at")
         .eq("fingerprint", fingerprint)
         .maybeSingle();
+      if (error) throw new Error(`trial lookup failed: ${error.code}`); // never mask a DB error as no-row
       return (data as TrialRow | null) ?? null;
     },
     async activate(fingerprint, claimToken, licenseID, licenseKey) {
@@ -89,11 +90,12 @@ function trialStore(db: SupabaseClient): TrialStore {
 function purchaseStore(db: SupabaseClient): PurchaseStore {
   return {
     async exists(orderID) {
-      const { data } = await db
+      const { data, error } = await db
         .from("purchases")
         .select("ls_order_id")
         .eq("ls_order_id", orderID)
         .maybeSingle();
+      if (error) throw new Error(`purchase lookup failed: ${error.code}`); // never mask a DB error as no-row
       return data !== null;
     },
     async record({ orderID, licenseID, email, variantID }) {
@@ -149,10 +151,9 @@ function keygenAdmin(): KeygenAdmin {
       };
     },
     async upgradeToPaid(licenseID) {
-      const response = await fetch(
-        `${KEYGEN_BASE_URL}/v1/accounts/${account}/licenses/${
-          encodeURIComponent(licenseID)
-        }/policy`,
+      const encodedID = encodeURIComponent(licenseID);
+      const policyResponse = await fetch(
+        `${KEYGEN_BASE_URL}/v1/accounts/${account}/licenses/${encodedID}/policy`,
         {
           method: "PUT",
           headers: authHeaders,
@@ -161,10 +162,31 @@ function keygenAdmin(): KeygenAdmin {
           }),
         },
       );
-      if (response.status === 404) {
+      if (policyResponse.status === 404) {
         throw new KeygenLicenseNotFoundError(`license ${licenseID}`);
       }
-      if (!response.ok) throw new Error(`keygen policy ${response.status}`);
+      if (!policyResponse.ok) {
+        throw new Error(`keygen policy ${policyResponse.status}`);
+      }
+      // The policy swap alone leaves the now+30d trial expiry, so a paid (one-time
+      // purchase) license would still expire. Clear it to perpetual. Idempotent, so
+      // a webhook retry re-running this is harmless.
+      const expiryResponse = await fetch(
+        `${KEYGEN_BASE_URL}/v1/accounts/${account}/licenses/${encodedID}`,
+        {
+          method: "PATCH",
+          headers: authHeaders,
+          body: JSON.stringify({
+            data: { type: "licenses", attributes: { expiry: null } },
+          }),
+        },
+      );
+      if (expiryResponse.status === 404) {
+        throw new KeygenLicenseNotFoundError(`license ${licenseID}`);
+      }
+      if (!expiryResponse.ok) {
+        throw new Error(`keygen expiry ${expiryResponse.status}`);
+      }
     },
   };
 }
@@ -217,11 +239,12 @@ function webhookDeps(): WebhookDeps {
     verifySignature: verifyLemonSqueezySignature,
     paidVariantID: env("LS_PAID_VARIANT_ID"),
     async licenseIsMinted(licenseID) {
-      const { data } = await db
+      const { data, error } = await db
         .from("device_trials")
         .select("keygen_license_id")
         .eq("keygen_license_id", licenseID)
         .maybeSingle();
+      if (error) throw new Error(`license lookup failed: ${error.code}`); // surface DB errors; false means a real no-row
       return data !== null;
     },
   };
@@ -240,12 +263,22 @@ Deno.serve(async (request: Request) => {
     const fingerprint = String(
       (await request.json().catch(() => ({})))?.fingerprint ?? "",
     );
-    return jsonResponse(await mintTrial(mintDeps(), fingerprint));
+    try {
+      return jsonResponse(await mintTrial(mintDeps(), fingerprint));
+    } catch (_error) {
+      return jsonResponse({ status: 503, body: { error: "retry" } }); // unexpected — app retries
+    }
   }
   if (request.method === "POST" && path.endsWith("/ls-webhook")) {
     const rawBody = await request.text();
     const signature = request.headers.get("X-Signature") ?? "";
-    return jsonResponse(await handleWebhook(webhookDeps(), rawBody, signature));
+    try {
+      return jsonResponse(
+        await handleWebhook(webhookDeps(), rawBody, signature),
+      );
+    } catch (_error) {
+      return jsonResponse({ status: 500 }); // unexpected — Lemon Squeezy retries (idempotent upgrade)
+    }
   }
   return new Response("not found", { status: 404 });
 });
