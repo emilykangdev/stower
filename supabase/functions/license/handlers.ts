@@ -13,17 +13,27 @@ export interface TrialRow {
 
 /** The `device_trials` persistence seam. */
 export interface TrialStore {
-  /** `INSERT ... ON CONFLICT DO NOTHING`; resolves true when this caller won the claim. */
-  claim(fingerprint: string): Promise<boolean>;
+  /**
+   * `INSERT (fingerprint, status='pending', claim_id) ON CONFLICT DO NOTHING`.
+   * Resolves the per-claim token when this caller won the claim, or `null` when a
+   * row already exists (lost). The token is required by `activate`/`releaseClaim`
+   * so a stalled winner can only mutate the row it actually claimed.
+   */
+  claim(fingerprint: string): Promise<string | null>;
   get(fingerprint: string): Promise<TrialRow | null>;
-  /** Sets the minted id/key and flips status to 'active'. */
+  /**
+   * `UPDATE ... SET status='active', id, key WHERE fingerprint AND status='pending'
+   * AND claim_id = $token`. Resolves true when one row changed (we still own the
+   * claim), false when it was reclaimed by another winner in the meantime.
+   */
   activate(
     fingerprint: string,
+    claimToken: string,
     licenseID: string,
     licenseKey: string,
-  ): Promise<void>;
-  /** `DELETE ... WHERE fingerprint = $1 AND status = 'pending'` — releases the caller's own fresh claim, never an active row. */
-  releaseClaim(fingerprint: string): Promise<void>;
+  ): Promise<boolean>;
+  /** `DELETE ... WHERE fingerprint AND status='pending' AND claim_id = $token` — releases only the caller's own claim. */
+  releaseClaim(fingerprint: string, claimToken: string): Promise<void>;
   /**
    * `DELETE ... WHERE fingerprint = $1 AND status = 'pending' AND created_at < $2`
    * — reclaims ONLY a stale pending row. The `created_at` guard is load-bearing:
@@ -33,10 +43,18 @@ export interface TrialStore {
   reclaimStale(fingerprint: string, olderThanMs: number): Promise<void>;
 }
 
+/** A purchase row referencing a license we never minted (FK violation) — permanent, ack 200. */
+export class PurchaseForgedLicenseError extends Error {}
+
 /** The `purchases` persistence seam. */
 export interface PurchaseStore {
   exists(orderID: string): Promise<boolean>;
-  /** `INSERT ... ON CONFLICT (ls_order_id) DO NOTHING`; throws on an FK violation (a forged license id). */
+  /**
+   * `INSERT ... ON CONFLICT (ls_order_id) DO NOTHING`. A duplicate is a no-op
+   * (resolves). Throws `PurchaseForgedLicenseError` on an FK violation (a forged
+   * license id — permanent), and any other Error for a transient failure the
+   * caller should make Lemon Squeezy retry.
+   */
   record(purchase: {
     orderID: string;
     licenseID: string;
@@ -99,8 +117,9 @@ export async function mintTrial(
   }
 
   for (let attempt = 0; attempt < MINT_CLAIM_ATTEMPTS; attempt++) {
-    if (await deps.trials.claim(fingerprint)) {
-      return await mintForWinner(deps, fingerprint);
+    const claimToken = await deps.trials.claim(fingerprint);
+    if (claimToken) {
+      return await mintForWinner(deps, fingerprint, claimToken);
     }
     const row = await deps.trials.get(fingerprint);
     if (!row) continue; // lost the claim, then the row vanished — retry the claim
@@ -139,17 +158,30 @@ export async function mintTrial(
 async function mintForWinner(
   deps: MintDeps,
   fingerprint: string,
+  claimToken: string,
 ): Promise<Reply> {
   let license: { id: string; key: string };
   try {
     license = await deps.keygen.createTrialLicense();
   } catch (_error) {
-    await deps.trials.releaseClaim(fingerprint);
+    await deps.trials.releaseClaim(fingerprint, claimToken);
     return RETRY_REPLY;
   }
+  let won: boolean;
   try {
-    await deps.trials.activate(fingerprint, license.id, license.key);
+    won = await deps.trials.activate(
+      fingerprint,
+      claimToken,
+      license.id,
+      license.key,
+    );
   } catch (_error) {
+    return RETRY_REPLY; // DB write failed; keep the claim (orphan-storm guard)
+  }
+  if (!won) {
+    // Our claim was reclaimed while we were minting; another winner owns the row.
+    // Our license is an orphan — never return it as authoritative. Retry: the next
+    // loop reads the now-active row and returns the owning license.
     return RETRY_REPLY;
   }
   return { status: 200, body: { key: license.key, licenseID: license.id } };
@@ -207,8 +239,13 @@ export async function handleWebhook(
 
   try {
     await deps.purchases.record({ orderID, licenseID, email, variantID });
-  } catch (_error) {
-    return { status: 200 }; // FK violation / dup — already upgraded; do not retry
+  } catch (error) {
+    // A forged license id (FK violation) is permanent — the upgrade already ran
+    // (idempotent), so ack and stop. A transient DB failure must NOT be acked:
+    // return 500 so Lemon Squeezy retries and the audit row eventually lands (the
+    // re-run upgrade PUT is idempotent and harmless).
+    if (error instanceof PurchaseForgedLicenseError) return { status: 200 };
+    return { status: 500 };
   }
   return { status: 200 };
 }

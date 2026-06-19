@@ -10,6 +10,7 @@ import {
   KeygenLicenseNotFoundError,
   type MintDeps,
   mintTrial,
+  PurchaseForgedLicenseError,
   type PurchaseStore,
   type TrialRow,
   type TrialStore,
@@ -31,40 +32,51 @@ const T0 = 1_700_000_000_000;
 const isoAt = (ms: number) => new Date(ms).toISOString();
 
 class FakeTrials implements TrialStore {
-  rows = new Map<string, TrialRow>();
+  rows = new Map<string, TrialRow & { claim_id?: string }>();
   claimNowMs = T0;
   activateError: Error | null = null;
+  private claimCounter = 0;
 
-  claim(fingerprint: string): Promise<boolean> {
-    if (this.rows.has(fingerprint)) return Promise.resolve(false);
+  claim(fingerprint: string): Promise<string | null> {
+    if (this.rows.has(fingerprint)) return Promise.resolve(null);
+    const claimId = `claim-${++this.claimCounter}`;
     this.rows.set(fingerprint, {
       status: "pending",
       keygen_license_id: null,
       keygen_license_key: null,
       created_at: isoAt(this.claimNowMs),
+      claim_id: claimId,
     });
-    return Promise.resolve(true);
+    return Promise.resolve(claimId);
   }
   get(fingerprint: string): Promise<TrialRow | null> {
     return Promise.resolve(this.rows.get(fingerprint) ?? null);
   }
   activate(
     fingerprint: string,
+    claimToken: string,
     licenseID: string,
     licenseKey: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (this.activateError) return Promise.reject(this.activateError);
+    const row = this.rows.get(fingerprint);
+    if (!row || row.status !== "pending" || row.claim_id !== claimToken) {
+      return Promise.resolve(false); // claim was reclaimed by another winner
+    }
     this.rows.set(fingerprint, {
       status: "active",
       keygen_license_id: licenseID,
       keygen_license_key: licenseKey,
-      created_at: isoAt(this.claimNowMs),
+      created_at: row.created_at,
+      claim_id: claimToken,
     });
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
-  releaseClaim(fingerprint: string): Promise<void> {
+  releaseClaim(fingerprint: string, claimToken: string): Promise<void> {
     const row = this.rows.get(fingerprint);
-    if (row && row.status === "pending") this.rows.delete(fingerprint);
+    if (row && row.status === "pending" && row.claim_id === claimToken) {
+      this.rows.delete(fingerprint);
+    }
     return Promise.resolve();
   }
   reclaimStale(fingerprint: string, olderThanMs: number): Promise<void> {
@@ -287,6 +299,25 @@ Deno.test("I3 reclaim only deletes a row older than the cutoff", async () => {
   assertEquals(trials.rows.has("fp"), true);
 });
 
+// A stalled winner whose claim was reclaimed cannot overwrite the new owner's row:
+// activate matches on the claim token, so it returns false and leaves the row.
+Deno.test("I3 activate only succeeds for the owning claim token", async () => {
+  const trials = new FakeTrials();
+  const tokenA = await trials.claim("fp"); // request A wins the claim
+  // Meanwhile A stalls; the row is reclaimed and activated by request B:
+  trials.rows.set("fp", {
+    status: "active",
+    keygen_license_id: "lic-B",
+    keygen_license_key: "key-B",
+    created_at: isoAt(T0),
+    claim_id: "token-B",
+  });
+
+  const wonA = await trials.activate("fp", tokenA ?? "", "lic-A", "key-A");
+  assertEquals(wonA, false);
+  assertEquals(trials.rows.get("fp")?.keygen_license_id, "lic-B"); // A did not overwrite B
+});
+
 // I9: a bad LS signature is 401 with no Keygen call and no row write.
 Deno.test("I9 a bad signature is 401 with no side effects", async () => {
   const keygen = new FakeKeygen();
@@ -380,7 +411,7 @@ Deno.test("a forged license id returns 200 with no row", async () => {
 Deno.test("an FK violation at record time returns 200 after the upgrade", async () => {
   const keygen = new FakeKeygen();
   const purchases = new FakePurchases();
-  purchases.recordError = new Error("23503 foreign_key_violation");
+  purchases.recordError = new PurchaseForgedLicenseError("forged id");
 
   const result = await handleWebhook(
     webhookDeps(keygen, purchases),
@@ -388,6 +419,22 @@ Deno.test("an FK violation at record time returns 200 after the upgrade", async 
     "good",
   );
   assertEquals(result.status, 200);
+  assertEquals(keygen.upgrades.length, 1);
+});
+
+// A TRANSIENT record failure must return 500 so Lemon Squeezy retries — otherwise
+// the audit row is lost even though the upgrade already succeeded.
+Deno.test("a transient record failure returns 500 so LS retries", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+  purchases.recordError = new Error("40001 serialization_failure");
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases),
+    orderBody(),
+    "good",
+  );
+  assertEquals(result.status, 500);
   assertEquals(keygen.upgrades.length, 1);
 });
 

@@ -10,6 +10,7 @@ import {
   KeygenLicenseNotFoundError,
   type MintDeps,
   mintTrial,
+  PurchaseForgedLicenseError,
   type PurchaseStore,
   type Reply,
   type TrialRow,
@@ -35,11 +36,12 @@ function supabase(): SupabaseClient {
 function trialStore(db: SupabaseClient): TrialStore {
   return {
     async claim(fingerprint) {
+      const claimId = crypto.randomUUID();
       const { error } = await db
         .from("device_trials")
-        .insert({ fingerprint, status: "pending" });
-      if (!error) return true;
-      if (error.code === "23505") return false; // unique_violation — lost the claim
+        .insert({ fingerprint, status: "pending", claim_id: claimId });
+      if (!error) return claimId;
+      if (error.code === "23505") return null; // unique_violation — lost the claim
       throw new Error(`claim failed: ${error.code}`);
     },
     async get(fingerprint) {
@@ -50,23 +52,28 @@ function trialStore(db: SupabaseClient): TrialStore {
         .maybeSingle();
       return (data as TrialRow | null) ?? null;
     },
-    async activate(fingerprint, licenseID, licenseKey) {
-      const { error } = await db
+    async activate(fingerprint, claimToken, licenseID, licenseKey) {
+      const { data, error } = await db
         .from("device_trials")
         .update({
           status: "active",
           keygen_license_id: licenseID,
           keygen_license_key: licenseKey,
         })
-        .eq("fingerprint", fingerprint);
+        .eq("fingerprint", fingerprint)
+        .eq("status", "pending")
+        .eq("claim_id", claimToken)
+        .select("fingerprint");
       if (error) throw new Error(`activate failed: ${error.code}`);
+      return (data?.length ?? 0) > 0; // false => the claim was reclaimed by another winner
     },
-    async releaseClaim(fingerprint) {
+    async releaseClaim(fingerprint, claimToken) {
       await db
         .from("device_trials")
         .delete()
         .eq("fingerprint", fingerprint)
-        .eq("status", "pending");
+        .eq("status", "pending")
+        .eq("claim_id", claimToken);
     },
     async reclaimStale(fingerprint, olderThanMs) {
       await db
@@ -96,9 +103,11 @@ function purchaseStore(db: SupabaseClient): PurchaseStore {
         email,
         ls_variant_id: variantID,
       });
-      if (error && error.code !== "23505") {
-        throw new Error(`record failed: ${error.code}`); // FK (23503) bubbles to the caller's 200
+      if (!error || error.code === "23505") return; // success or duplicate (idempotent)
+      if (error.code === "23503") {
+        throw new PurchaseForgedLicenseError(`order ${orderID}`); // FK: forged id — ack 200
       }
+      throw new Error(`record failed: ${error.code}`); // transient — caller returns 500 to retry
     },
   };
 }

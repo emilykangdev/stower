@@ -8,6 +8,7 @@
 create table if not exists device_trials (
     fingerprint        text primary key,                  -- SHA-256 hex of IOPlatformUUID; the dedupe key
     status             text not null default 'pending',   -- 'pending' (claimed, mint in flight) | 'active' (id/key set)
+    claim_id           text,                              -- per-claim token; activate/release match on it so a stalled winner can't overwrite a row another request already reclaimed
     keygen_license_id  text unique,                       -- Keygen license RESOURCE id (UUID, NOT the secret key); UNIQUE so it is a valid FK target
     keygen_license_key text,                              -- the Keygen license KEY (the secret the app authenticates with); returned to the app
     created_at         timestamptz not null default now()
