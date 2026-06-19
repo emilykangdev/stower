@@ -99,6 +99,27 @@ import Testing
         #expect(model.onBoardDrafts.contains { $0.id == "raw:offboard" } == false)
     }
 
+    @Test("a failed store read leaves visible drafts intact, never clearing them")
+    internal func failedReadKeepsDrafts() async {
+        let store = StowerFlakyDraftStore(entries: [
+            "raw:alice": StowerDraftEntry(body: "keep me", updatedAt: Date())
+        ])
+        let spy = StowerSpyBoardDataSource()
+        let row = draftRow(chatID: "c1", handle: "alice")
+        let oneRow = StowerBoardModel(neglected: [row], ghosted: [])
+        spy.loadModels = [oneRow, oneRow]
+        let model = makeViewModel(spy, draftStore: store)
+        model.load()
+        await model.loadTaskHandle?.value
+        #expect(model.drafts["raw:alice"]?.body == "keep me")
+
+        // The next reload's draft read fails — local state must NOT be wiped.
+        await store.setFailReads(true)
+        model.load()
+        await model.loadTaskHandle?.value
+        #expect(model.drafts["raw:alice"]?.body == "keep me")
+    }
+
     @Test("the Drafts tab lists only on-board drafts, deduped (I-DraftsTabOnBoardOnly)")
     internal func draftsTabOnBoardOnly() async {
         let onBoard = draftRow(chatID: "c1", handle: "alice")
@@ -193,4 +214,36 @@ import Testing
         #expect(model.composerKey == nil)
         #expect(model.composerThread == nil)
     }
+}
+
+/// A draft store whose reads can be made to fail, to exercise the merge path's
+/// failure handling (a failed read must not wipe local drafts).
+private actor StowerFlakyDraftStore: StowerDraftStoring {
+    private var entries: [String: StowerDraftEntry]
+    private var failReads = false
+
+    init(entries: [String: StowerDraftEntry]) {
+        self.entries = entries
+    }
+
+    func setFailReads(_ failReads: Bool) {
+        self.failReads = failReads
+    }
+
+    func all() throws -> [String: StowerDraftEntry] {
+        guard !failReads else { throw StowerFlakyDraftStoreError.readFailed }
+        return entries
+    }
+
+    func upsert(key: String, body: String) {
+        entries[key] = StowerDraftEntry(body: body, updatedAt: Date())
+    }
+
+    func delete(key: String) {
+        entries[key] = nil
+    }
+}
+
+private enum StowerFlakyDraftStoreError: Error {
+    case readFailed
 }

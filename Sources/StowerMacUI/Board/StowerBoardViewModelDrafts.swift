@@ -67,10 +67,11 @@ extension StowerBoardViewModel {
     /// in-flight edit (I-ReloadPreservesEdit), and never calls the store's delete —
     /// an off-board draft stays in the store untouched (I-NeverDelete).
     internal func mergeDrafts(generation: Int) async {
-        // `try?` is intentional: a rare store-read failure degrades to "no drafts to
-        // merge this pass" (the in-memory `drafts` and the on-disk rows are untouched),
-        // mirroring the engine's disposable-cache "a fault is a miss" posture.
-        let fresh = (try? await draftStore.all()) ?? [:]
+        // A FAILED read must leave local state untouched — returning `[:]` here would
+        // make the prune below wipe every visible draft on a transient hiccup (they're
+        // still on disk). Distinguish failure from a genuine empty store: only prune
+        // after a successful read.
+        guard let fresh = try? await draftStore.all() else { return }
         guard generation == loadGeneration else { return }
         for (key, entry) in fresh where key != composerKey {
             drafts[key] = entry
