@@ -1,4 +1,5 @@
 import Foundation
+import StowerMessages
 import Testing
 
 @testable import StowerMacUI
@@ -21,6 +22,7 @@ import Testing
             chatID: chatID,
             counterpart: "Alex",
             counterpartHandle: "+14155550100",
+            draftKey: StowerDraftKey.derive(forHandle: "+14155550100"),
             monogram: "A",
             summary: StowerLastMessageSummary.make(kind: .text, text: "hi"),
             ageInDays: 2,
@@ -73,9 +75,9 @@ import Testing
         #expect(model.phase == .preparing)
     }
 
-    // MARK: I7 — the direction toggle never re-queries
+    // MARK: I7 — switching the lens tab never re-queries
 
-    @Test("toggling direction reads the one loaded model, issuing no extra load (I7)")
+    @Test("switching the lens tab reads the one loaded model, issuing no extra load (I7)")
     internal func toggleDoesNotRequery() async {
         let spy = StowerSpyBoardDataSource()
         spy.loadModels = [board(neglected: ["n"], ghosted: ["g"])]
@@ -85,8 +87,10 @@ import Testing
         await model.loadTaskHandle?.value
         #expect(spy.loadCallCount == 1)
 
-        model.direction = .ghosted
+        // selectedTab subsumes direction; selecting a lens tab must not reload (I7).
+        model.selectedTab = .maybeFollowUp
         #expect(spy.loadCallCount == 1)
+        #expect(model.direction == .ghosted)
         #expect(model.board?.rows(for: .neglected).map(\.id) == ["n"])
         #expect(model.board?.rows(for: .ghosted).map(\.id) == ["g"])
     }

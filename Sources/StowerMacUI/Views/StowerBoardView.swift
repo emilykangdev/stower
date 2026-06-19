@@ -3,40 +3,34 @@ import SwiftUI
 
 /// The debt board — the app's home once startup reaches `.connectedPreparingBoard`.
 ///
-/// A direction toggle (Neglected / Waiting on them), a day-filter preset, and a
-/// manual refresh control sit in the toolbar; the content switches on the
-/// view-model's phase (preparing / rows / all-caught-up / error). Both lists come
-/// from one `loadBoard`, so the toggle never re-queries (I7); changing the preset
-/// re-loads (I8). Tapping a row pushes the thread read.
+/// A content-area 3-segment tab control (Your turn / Maybe follow up / Drafts), a
+/// day-filter preset, and a manual refresh sit above/around the list; the content
+/// switches on the view-model's phase (preparing / rows / all-caught-up / error).
+/// Both lens lists come from one `loadBoard`, so a lens tab never re-queries (I7);
+/// changing the preset re-loads (I8). Clicking a row docks the `StowerDraftComposer`
+/// in the lower-right corner — the only conversation surface.
 internal struct StowerBoardView: View {
     @Bindable internal var model: StowerBoardViewModel
-    @State private var selectedRow: StowerBoardRow?
 
     internal var body: some View {
         NavigationStack {
             content
                 .toolbar {
-                    ToolbarItem(placement: .principal) { directionPicker }
                     ToolbarItem(placement: .primaryAction) { presetPicker }
                     ToolbarItem(placement: .primaryAction) { refreshButton }
                 }
-                .navigationDestination(item: $selectedRow) { row in
-                    StowerThreadView(model: model.makeThreadViewModel(for: row))
-                }
+                .overlay(alignment: .bottomTrailing) { composerOverlay }
         }
         .task { model.onAppear() }
         .onDisappear { model.cancel() }
         .onReceive(Self.didBecomeActive) { _ in model.onAppBecameActive() }
-        .onChange(of: model.contactsRevocationToken) {
-            // Contacts access was revoked — close any open thread so a resolved name
-            // captured at tap time can't linger in its title after access is gone.
-            selectedRow = nil
-        }
     }
 
     /// Fires when the app returns to the foreground — the cue to re-check a Contacts
-    /// grant the user may have made in System Settings (the board's `.task` does not
-    /// re-run on an app switch).
+    /// grant the user may have made in System Settings.
+    ///
+    /// The board's `.task` does not re-run on an app switch; the view-model also
+    /// closes the composer here on a revoke (I-ComposerClosesOnContactsRevoke).
     private static let didBecomeActive = NotificationCenter.default.publisher(
         for: NSApplication.didBecomeActiveNotification
     )
@@ -50,32 +44,63 @@ internal struct StowerBoardView: View {
         case .error:
             errorNotice
         case .rows:
-            VStack(spacing: 0) {
-                if model.showsContactsAccessBanner {
-                    StowerContactsAccessBanner(actionTitle: model.contactsBannerActionTitle) {
-                        model.resolveContactsAccess()
-                    }
+            boardSurface
+        }
+    }
+
+    private var boardSurface: some View {
+        VStack(spacing: 0) {
+            if model.showsContactsAccessBanner {
+                StowerContactsAccessBanner(actionTitle: model.contactsBannerActionTitle) {
+                    model.resolveContactsAccess()
                 }
-                rowsList
+            }
+            tabBar
+            tabContent
+        }
+    }
+
+    private var tabBar: some View {
+        Picker("Board tab", selection: $model.selectedTab) {
+            ForEach(StowerBoardTab.allCases) { tab in
+                Text(tab.title).tag(tab)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal)
+        .padding(.vertical, StowerBoardTheme.rowVerticalPadding)
+    }
+
+    @ViewBuilder private var tabContent: some View {
+        switch model.selectedTab {
+        case .yourTurn:
+            lensList(model.board?.rows(for: .neglected) ?? [], emptyMessage: Self.yourTurnEmpty)
+        case .maybeFollowUp:
+            lensList(model.board?.rows(for: .ghosted) ?? [], emptyMessage: Self.followUpEmpty)
+        case .drafts:
+            StowerDraftsList(cards: model.onBoardDrafts) { row in
+                model.openComposer(for: row)
             }
         }
     }
 
-    @ViewBuilder private var rowsList: some View {
-        let rows = model.board?.rows(for: model.direction) ?? []
+    @ViewBuilder private func lensList(
+        _ rows: [StowerBoardRow],
+        emptyMessage: String
+    ) -> some View {
         if rows.isEmpty {
-            StowerBoardNotice(
-                symbol: "tray",
-                title: "Nothing in this list",
-                message: emptyDirectionMessage
-            )
+            StowerBoardNotice(symbol: "tray", title: "Nothing in this list", message: emptyMessage)
         } else {
             List {
                 ForEach(rows) { row in
                     Button {
-                        selectedRow = row
+                        model.openComposer(for: row)
                     } label: {
-                        StowerNoReplyRowView(row: row)
+                        StowerNoReplyRowView(
+                            row: row,
+                            draftPreview: model.drafts[row.draftKey]?.body
+                        )
                     }
                     .buttonStyle(.plain)
                 }
@@ -83,11 +108,25 @@ internal struct StowerBoardView: View {
         }
     }
 
+    @ViewBuilder private var composerOverlay: some View {
+        if let row = model.composerRow, let thread = model.composerThread {
+            StowerDraftComposer(
+                row: row,
+                thread: thread,
+                draft: model.draftBinding(for: row.draftKey),
+                onReplyInMessages: { model.dropIntoMessages(row) },
+                onClose: { model.closeComposer() }
+            )
+            .transition(.move(edge: .trailing).combined(with: .opacity))
+        }
+    }
+
+    /// The calm "all caught up" zero state — no scoreboard, just reassurance.
     private var caughtUpNotice: some View {
         StowerBoardNotice(
             symbol: "checkmark.circle",
-            title: "All caught up",
-            message: "No conversations are waiting on a reply right now."
+            title: "You're all caught up",
+            message: "No one's waiting on a reply right now."
         )
     }
 
@@ -100,16 +139,6 @@ internal struct StowerBoardView: View {
             Button("Retry") { model.retry() }
                 .buttonStyle(.borderedProminent)
         }
-    }
-
-    private var directionPicker: some View {
-        Picker("Direction", selection: $model.direction) {
-            ForEach(StowerBoardDirection.allCases) { direction in
-                Text(direction.title).tag(direction)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
     }
 
     private var presetPicker: some View {
@@ -135,48 +164,8 @@ internal struct StowerBoardView: View {
         .accessibilityLabel("Refresh board")
     }
 
-    private var emptyDirectionMessage: String {
-        switch model.direction {
-        case .neglected: return "No conversations are waiting on your reply in this window."
-        case .ghosted: return "No conversations are waiting on their reply in this window."
-        }
-    }
-}
-
-/// A centered notice for the board's caught-up, error, and per-list-empty states.
-private struct StowerBoardNotice<Action: View>: View {
-    let symbol: String
-    let title: String
-    let message: String
-    @ViewBuilder let action: () -> Action
-
-    init(
-        symbol: String,
-        title: String,
-        message: String,
-        @ViewBuilder action: @escaping () -> Action = { EmptyView() }
-    ) {
-        self.symbol = symbol
-        self.title = title
-        self.message = message
-        self.action = action
-    }
-
-    var body: some View {
-        VStack(spacing: StowerBoardTheme.headerSpacing) {
-            Image(systemName: symbol)
-                .font(.largeTitle)
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            Text(title)
-                .font(.title3.weight(.semibold))
-            Text(message)
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            action()
-        }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
+    private static let yourTurnEmpty =
+        "No conversations are waiting on your reply in this window."
+    private static let followUpEmpty =
+        "No conversations are waiting on their reply in this window."
 }

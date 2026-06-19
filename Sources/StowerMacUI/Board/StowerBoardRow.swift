@@ -18,6 +18,15 @@ internal struct StowerBoardRow: Identifiable, Sendable, Equatable, Hashable {
     /// The counterpart's raw identifier; a display fallback, never a key.
     internal let counterpartHandle: String
 
+    /// The stable, handle-derived key this conversation's draft is stored under.
+    ///
+    /// Computed once at `mapRow` from `counterpartHandle` via the single
+    /// `StowerDraftKey.derive` seam (the app/UI layer never re-derives it). Distinct
+    /// from `chatID`: keyed on the normalized handle so the draft survives a
+    /// chat-GUID flip on an SMS<->iMessage switch. Two same-handle threads share it
+    /// (one draft, by design).
+    internal let draftKey: String
+
     /// One- or two-letter monogram derived from `counterpart`.
     internal let monogram: String
 
@@ -48,6 +57,7 @@ internal struct StowerBoardRow: Identifiable, Sendable, Equatable, Hashable {
         chatID: String,
         counterpart: String,
         counterpartHandle: String,
+        draftKey: String,
         monogram: String,
         summary: StowerLastMessageSummary,
         ageInDays: Int,
@@ -56,6 +66,7 @@ internal struct StowerBoardRow: Identifiable, Sendable, Equatable, Hashable {
         self.chatID = chatID
         self.counterpart = counterpart
         self.counterpartHandle = counterpartHandle
+        self.draftKey = draftKey
         self.monogram = monogram
         self.summary = summary
         self.ageInDays = ageInDays

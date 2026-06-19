@@ -1,4 +1,5 @@
 import Foundation
+import StowerMessages
 import Synchronization
 import Testing
 
@@ -40,6 +41,7 @@ import Testing
                     chatID: "a",
                     counterpart: "+14155550100",
                     counterpartHandle: "+14155550100",
+                    draftKey: StowerDraftKey.derive(forHandle: "+14155550100"),
                     monogram: "1",
                     summary: StowerLastMessageSummary.make(kind: .text, text: "hi"),
                     ageInDays: 1,

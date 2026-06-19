@@ -7,7 +7,8 @@ design anchor not yet built.
 
 ## Ownership / status legend
 
-- **Owned + built** — Stower creates and writes this. The search index only.
+- **Owned + built** — Stower creates and writes this. The search index and the
+  precious drafts store (`drafts.sqlite`).
 - **External, read-only** — Apple's `chat.db`. We snapshot a copy and read it;
   we never write it. Columns shown are only the ones the adapter reads.
 - **Design-only (not built)** — schema fixed on paper for forward-compat; no
@@ -21,6 +22,11 @@ Each entity's first row is a **LIFECYCLE** marker:
 - `TEMPORARY` — the `chat.db` **snapshot**: a throwaway copy at
   `…/stower-msg-<UUID>/chat.db`, deleted when the reader is released and swept
   after one day. Apple's schema, opened read-only.
+- `PERSISTENT_PRECIOUS` — the `StowerDraftStore` database (`drafts.sqlite`). Holds
+  the user's private per-conversation drafts: irreplaceable, never erased to
+  recover. Migrations are additive-only and an unopenable file is quarantined aside
+  (`…corrupt-<ts>`), never deleted — the opposite posture from the rebuildable index
+  and the disposable verdict cache.
 - `NOT_BUILT` — design anchor only; nothing creates or writes it.
 
 > The relationship-debt engine (`StowerMessages`) adds **no tables to the search
@@ -36,6 +42,22 @@ Each entity's first row is a **LIFECYCLE** marker:
 > rather than defaulting to the trusted source. There is no heuristic verdict — a
 > version bump simply erases the cache and the next refresh refills it. It is
 > intentionally absent from the index diagram below; it owns no index table.
+
+> **Owned + built, PRECIOUS:** `StowerDraftStore` persists the user's private
+> per-conversation drafts in its own `drafts.sqlite` under
+> `~/Library/Application Support/Stower/`. One table, `draft`:
+> `draft_key TEXT PRIMARY KEY`, `body TEXT NOT NULL`, `updated_at DATETIME NOT NULL`.
+> The `draft_key` is the conversation's normalized handle via `StowerDraftKey`
+> (`email:<lowercased>` / `e164:<digits, no +>` / `raw:<handle>`), so a draft
+> survives a chat-GUID flip on an SMS↔iMessage switch and a Contacts edit. It is a
+> default rollback-journaled `DatabaseQueue` (NOT WAL — no `-wal`/`-shm` sidecars,
+> only a transient `-journal` during a write) with `synchronous = FULL` pinned, so
+> every committed change is fsync-durable. A blank/whitespace body deletes the row.
+> Unlike the disposable verdict cache, it is **never erased**: migrations are
+> additive-only and a corrupt file is quarantined aside (`…corrupt-<ts>`), never
+> deleted. It is orthogonal to the engine — it never touches verdicts, ranking, the
+> `inputHash`, or the index, and is intentionally absent from the index diagram
+> below; it owns no index table.
 
 ```mermaid
 erDiagram

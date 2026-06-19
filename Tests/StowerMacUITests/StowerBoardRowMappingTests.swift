@@ -165,6 +165,25 @@ import Testing
         #expect(skewed.ageInDays == 0)
     }
 
+    @Test("two rows with the same handle derive the same draftKey (I-SharedHandle)")
+    internal func sharedHandleDerivesOneDraftKey() {
+        // A same-number iMessage thread and SMS thread carry different chatIDs but
+        // one handle — by design they share one draft (A2), so the keys must match.
+        let iMessage = StowerMessagesMapping.mapRow(
+            item(chatID: "imessage-thread"),
+            now: Self.now,
+            contacts: Self.empty
+        )
+        let sms = StowerMessagesMapping.mapRow(
+            item(chatID: "sms-thread"),
+            now: Self.now,
+            contacts: Self.empty
+        )
+        #expect(iMessage.chatID != sms.chatID)
+        #expect(iMessage.draftKey == sms.draftKey)
+        #expect(iMessage.draftKey == "e164:14155550100")
+    }
+
     @Test("the monogram takes up to two initials, uppercased")
     internal func monogram() {
         #expect(StowerBoardRow.monogram(for: "alex rivera") == "AR")
