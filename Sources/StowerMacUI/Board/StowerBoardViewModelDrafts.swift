@@ -12,11 +12,15 @@ import SwiftUI
 extension StowerBoardViewModel {
     /// The board row backing the open composer, or `nil` if none/off-board now.
     ///
-    /// Resolving from the loaded board means a composer whose row vanished on a
-    /// reload (or when the board cleared on a Contacts revoke) simply stops showing.
+    /// Resolves by the stable `chatID` (never `draftKey`), so when two same-number
+    /// threads share a `draftKey` the composer always shows the exact thread that was
+    /// clicked. Re-resolving from the loaded board means a composer whose row vanished
+    /// on a reload (or when the board cleared on a Contacts revoke) simply stops
+    /// showing, and a refresh surfaces the row's fresh age/name.
     internal var composerRow: StowerBoardRow? {
-        guard let composerKey else { return nil }
-        return boardRow(forDraftKey: composerKey)
+        guard let composerChatID, let board else { return nil }
+        return board.neglected.first { $0.chatID == composerChatID }
+            ?? board.ghosted.first { $0.chatID == composerChatID }
     }
 
     /// The on-board conversations that have a draft, one card per `draftKey`.
@@ -43,6 +47,7 @@ extension StowerBoardViewModel {
     internal func openComposer(for row: StowerBoardRow) {
         composerThread?.cancel()
         composerKey = row.draftKey
+        composerChatID = row.chatID
         let thread = makeThreadViewModel(for: row)
         composerThread = thread
         thread.onAppear()
@@ -53,6 +58,7 @@ extension StowerBoardViewModel {
         composerThread?.cancel()
         composerThread = nil
         composerKey = nil
+        composerChatID = nil
     }
 
     /// Merges the persisted drafts into `drafts` after a load.
@@ -123,12 +129,5 @@ extension StowerBoardViewModel {
             // surfaced as an error mid-typing.
             try? await draftStore.upsert(key: key, body: body)
         }
-    }
-
-    /// The loaded board row for `draftKey`, searching both lenses.
-    private func boardRow(forDraftKey key: String) -> StowerBoardRow? {
-        guard let board else { return nil }
-        return board.neglected.first { $0.draftKey == key }
-            ?? board.ghosted.first { $0.draftKey == key }
     }
 }

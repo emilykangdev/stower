@@ -62,6 +62,14 @@ internal final class StowerBoardViewModel {
     /// keep the embedded thread in lockstep.
     internal var composerKey: String?
 
+    /// The stable `chatID` of the row the open composer belongs to, or `nil`.
+    ///
+    /// The composer resolves its row by this — NOT by `composerKey` — because two
+    /// same-number threads (iMessage + SMS) share one `draftKey` but have distinct
+    /// `chatID`s (A2); resolving by `draftKey` could show the other thread's
+    /// header/deep-link. Mutated only via `openComposer`/`closeComposer`.
+    internal var composerChatID: String?
+
     /// The embedded read-only thread the open composer shows, or `nil`.
     ///
     /// Owned here so opening loads it and closing cancels it (I-ComposerThreadLifecycle).

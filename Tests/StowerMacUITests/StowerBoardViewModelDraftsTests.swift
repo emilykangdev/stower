@@ -132,6 +132,25 @@ import Testing
         #expect(model.composerRow?.id == "b")
     }
 
+    @Test("the composer resolves the clicked thread, not its same-handle draftKey sibling")
+    internal func composerResolvesByChatIDNotDraftKey() async {
+        // Same number, two threads (iMessage + SMS) — one shared draftKey, distinct
+        // chatIDs (A2). The composer must show the one that was clicked.
+        let handle = "+15551112222"
+        let iMessage = draftRow(chatID: "imessage", handle: handle)
+        let sms = draftRow(chatID: "sms", handle: handle)
+        #expect(iMessage.draftKey == sms.draftKey)
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [StowerBoardModel(neglected: [iMessage, sms], ghosted: [])]
+        let model = makeViewModel(spy)
+        model.load()
+        await model.loadTaskHandle?.value
+
+        model.openComposer(for: sms)
+        #expect(model.composerRow?.chatID == "sms")
+        #expect(model.composerKey == sms.draftKey)
+    }
+
     @Test("opening loads the embedded thread; closing cancels it (I-ComposerThreadLifecycle)")
     internal func composerThreadLifecycle() async {
         let spy = StowerSpyBoardDataSource()
