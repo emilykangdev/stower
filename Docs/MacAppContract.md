@@ -339,3 +339,58 @@ that with real users; it's a learn-by-shipping question, not a blocker.
 > types, the `StowerStartupState` machine, per-reason routing, and dummy-data
 > scenarios) the app builds against live in `tmp/briefs/macapp-frozen-contract.md`.
 > This doc and that frozen contract describe the same as-built engine.
+
+---
+
+## 9. The in-app boundary pattern (how the app re-wraps the facade)
+
+§2 says the app imports only value types + two actors, never `GRDB` /
+`FoundationModels` / PhotoKit. This section is *how that is enforced inside
+`StowerMacUI`* — and the repeatable shape every engine-backed data source in the
+app follows.
+
+The engine vends a facade (a `public` protocol + `public` value types). The app
+does **not** let its view models and views depend on that facade directly. Instead:
+
+1. The app defines its **own** protocol and its **own** value types (app-owned,
+   `internal` to `StowerMacUI`).
+2. A thin **adapter** — one of exactly **four** files allowed to
+   `import StowerMessages` — wraps the engine type and maps the engine's value
+   types into app value types.
+3. `StowerMessagesComposition` builds the engine objects + adapters once and vends
+   the app-owned types.
+4. View models depend only on the app-owned protocol, so they never import the
+   engine and can be unit-tested against an in-memory fake (no disk, no model).
+
+The wall is mechanical: `Scripts/precheck.sh` step **6b** fails the build if any
+file other than the four engine-coupled ones imports `StowerMessages`. The engine
+import is quarantined to the adapter seam; everything above it (view models, views)
+is engine-free.
+
+**The four engine-coupled files** (the only `import StowerMessages` in the app):
+`StowerMessagesStartupAdapter`, `StowerLiveBoardDataSource`,
+`StowerMessagesComposition`, `StowerMessagesMapping`.
+
+### The shape, with its two instances
+
+| Layer | Board | Drafts |
+|---|---|---|
+| Engine concrete type (`StowerMessages`) | `StowerDebtBoardProvider` | `StowerDraftStore` |
+| App-owned contract (`StowerMacUI`) | `StowerBoardDataSource` | `StowerDraftStoring` |
+| Adapter (one of the four engine-coupled files) | `StowerLiveBoardDataSource` | `StowerLiveDraftStore` (in `StowerMessagesComposition`) |
+| Engine value type → app value type | `StowerDebtItem` → `StowerBoardRow` | `StowerDraftRecord` → `StowerDraftEntry` |
+| What the view model depends on | `any StowerBoardDataSource` | `any StowerDraftStoring` |
+
+### The cost, and why it's paid
+
+The tax is **twin value types + a one-way mapper per seam**
+(`StowerDebtItem`/`StowerBoardRow`, `StowerDraftRecord`/`StowerDraftEntry`). That
+duplication is deliberate: it is what keeps the view layer free of `GRDB`/engine
+types and unit-testable with fakes, and what stops a screen from ever accidentally
+depending on a storage detail. A new engine-backed data source should follow this
+same shape — never let a view model import `StowerMessages`.
+
+> `StowerMessagesComposition` is a **factory** (it constructs + wires the real
+> objects), not a contract. The contract is the app-owned protocol the view model
+> depends on. They are different jobs — a builder and an interface — not two layers
+> doing the same thing.

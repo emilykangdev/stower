@@ -17,13 +17,24 @@ public struct StowerRootView: View {
     private let settings: StowerSystemSettingsOpener
 
     /// Builds the production root wired to the shared engine-backed composition.
-    public init() {
-        let composition = StowerMessagesComposition()
+    ///
+    /// Throws only when an essential store can't be opened (a true disk-level draft
+    /// store failure) — the same posture as any other essential-store startup fault.
+    ///
+    /// - Parameter flusher: Wired to the board's `flushAll()` so the app delegate can
+    ///   drain in-flight draft writes on quit. Optional so previews omit it.
+    /// - Throws: When an essential store (the precious drafts database) can't be
+    ///   opened on a true disk-level fault.
+    public init(flusher: StowerTerminationFlusher? = nil) throws {
+        let composition = try StowerMessagesComposition()
         self.init(
             startup: composition.startup,
             board: composition.board,
+            draftStore: composition.draftStore,
+            dropper: composition.dropper,
             contacts: composition.contacts,
-            settings: StowerSystemSettingsOpener()
+            settings: StowerSystemSettingsOpener(),
+            flusher: flusher
         )
     }
 
@@ -37,19 +48,27 @@ public struct StowerRootView: View {
     internal init(
         startup: any StowerStartupProviding,
         board: any StowerBoardDataSource,
+        draftStore: any StowerDraftStoring = StowerInMemoryDraftStore(),
+        dropper: StowerMessagesDropper = StowerMessagesDropper(
+            perform: { _ in },
+            isAccessibilityTrusted: { false }
+        ),
         contacts: StowerContactsAccess = .denied,
-        settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener()
+        settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
+        flusher: StowerTerminationFlusher? = nil
     ) {
         let startupModel = StowerStartupModel(provider: startup)
         _model = State(initialValue: startupModel)
-        _boardModel = State(
-            initialValue: StowerBoardViewModel(
-                dataSource: board,
-                contacts: contacts,
-                settings: settings,
-                onFailure: { failure in startupModel.handleBoardFailure(failure) }
-            )
+        let boardModel = StowerBoardViewModel(
+            dataSource: board,
+            draftStore: draftStore,
+            dropper: dropper,
+            contacts: contacts,
+            settings: settings,
+            onFailure: { failure in startupModel.handleBoardFailure(failure) }
         )
+        _boardModel = State(initialValue: boardModel)
+        flusher?.onFlush { [weak boardModel] in await boardModel?.flushAll() }
         self.settings = settings
     }
 

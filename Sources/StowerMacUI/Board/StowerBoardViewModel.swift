@@ -44,8 +44,41 @@ internal final class StowerBoardViewModel {
     /// The visible day-filter preset; changing it re-loads (I8).
     internal private(set) var selectedPreset: StowerDayPreset = .default
 
-    /// The visible lens; changing it re-queries nothing (I7).
-    internal var direction: StowerBoardDirection = .neglected
+    /// The visible tab — the single source of truth for the lens (JC-A).
+    ///
+    /// Switching between the two lens tabs re-lenses the loaded board without
+    /// reloading (I7); `.drafts` shows the cross-cutting on-board draft list.
+    internal var selectedTab: StowerBoardTab = .yourTurn
+
+    /// The lens to render, derived from `selectedTab` (never held in parallel).
+    ///
+    /// The Drafts tab carries no lens, so it falls back to `.neglected` (unused there).
+    internal var direction: StowerBoardDirection { selectedTab.direction ?? .neglected }
+
+    /// The open draft composer's key, or `nil` when none is open.
+    ///
+    /// Single-valued (I-ComposerSingle) and the reload-merge guard
+    /// (I-ReloadPreservesEdit). Mutate only via `openComposer`/`closeComposer`, which
+    /// keep the embedded thread in lockstep.
+    internal var composerKey: String?
+
+    /// The stable `chatID` of the row the open composer belongs to, or `nil`.
+    ///
+    /// The composer resolves its row by this — NOT by `composerKey` — because two
+    /// same-number threads (iMessage + SMS) share one `draftKey` but have distinct
+    /// `chatID`s (A2); resolving by `draftKey` could show the other thread's
+    /// header/deep-link. Mutated only via `openComposer`/`closeComposer`.
+    internal var composerChatID: String?
+
+    /// The embedded read-only thread the open composer shows, or `nil`.
+    ///
+    /// Owned here so opening loads it and closing cancels it (I-ComposerThreadLifecycle).
+    internal var composerThread: StowerThreadViewModel?
+
+    /// Drafts by `StowerDraftKey`, merged from the store on load and written through.
+    ///
+    /// Off-board drafts are kept here too — never pruned (I-NeverDelete).
+    internal var drafts: [String: StowerDraftEntry] = [:]
 
     /// The last-synced Contacts authorization, as *observed* state.
     ///
@@ -53,49 +86,58 @@ internal final class StowerBoardViewModel {
     /// `contacts.authorization` wouldn't). Refreshed wherever authorization can move:
     /// on appear, after an in-app prompt resolves (grant *or* deny), and on app
     /// re-activation.
-    internal private(set) var contactsAuthorization: StowerContactsAuthorization
+    internal var contactsAuthorization: StowerContactsAuthorization
 
     /// Bumps whenever Contacts access is *lost* (authorized → not), so the board view
     /// dismisses an open thread before its captured row's resolved name can linger.
     internal private(set) var contactsRevocationToken = 0
 
     private let dataSource: any StowerBoardDataSource
-    private let contacts: StowerContactsAccess
-    private let settings: StowerSystemSettingsOpener
+    // `internal` (not `private`) so the `+Drafts` / `+Contacts` extension files can
+    // reach them — the same split-across-files posture as `StowerDebtBoardProvider`'s
+    // mechanics. The core read-only state (`phase`, `board`, `contactsRevocationToken`)
+    // keeps `private(set)`; its writers stay in this file.
+    internal let draftStore: any StowerDraftStoring
+    internal let dropper: StowerMessagesDropper
+    internal let contacts: StowerContactsAccess
+    internal let settings: StowerSystemSettingsOpener
     private let opener: StowerMessagesLinkOpener
     private let onFailure: @MainActor (StowerStartupFailure) -> Void
-    private let clock: @Sendable () -> Date
+    internal let clock: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
 
     /// Backoff between `.coalesced` retries while cold start is unresolved, so the
     /// re-issue waits for the other in-flight pass instead of busy-spinning.
     private static let coalesceRetryDelay: Duration = .milliseconds(400)
 
+    /// In-flight write-through upserts, per key, chained in issue order so the last
+    /// edit wins. Deliberately OUT of `cancel()`'s reach so the termination flush can
+    /// still drain them (JC2) — a draft must not be lost to the disappear-cancel.
+    internal var inflightWrites: [String: Task<Void, Never>] = [:]
+
     private var loadTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
-    private var contactsTask: Task<Void, Never>?
-    private var loadGeneration = 0
+    internal var contactsTask: Task<Void, Never>?
+    internal var loadGeneration = 0
     private var refreshGeneration = 0
     private var hasResolvedColdStart = false
-    private var isRequestingContacts = false
-    private var awaitingContactsRecovery = false
+    internal var isRequestingContacts = false
+    internal var awaitingContactsRecovery = false
 
     /// Creates the board view-model.
     ///
-    /// - Parameters:
-    ///   - dataSource: The app-owned board boundary (live adapter or a spy).
-    ///   - contacts: The Contacts-access wrapper; defaults to a denied no-op so
-    ///     tests/previews never prompt. Production injects the real access from the
-    ///     composition, so a first-run grant flips rows to names on the next load.
-    ///   - settings: Opens the System Settings → Contacts pane when access was
-    ///     denied (the system never re-prompts; Settings is the only recovery).
-    ///   - opener: The Messages deep-link opener handed to thread view-models.
-    ///   - onFailure: Routes a board failure back to the startup model.
-    ///   - clock: Supplies `now`; injectable so tests are deterministic.
-    ///   - sleep: The coalesced-retry backoff; injectable so tests need no real
-    ///     wall-clock wait. Throwing, because `Task.sleep(for:)` throws.
+    /// `draftStore` defaults to an in-memory store and `dropper` to a no-op, so
+    /// previews/tests never touch the disk, pasteboard, or keystrokes; `contacts`
+    /// defaults to a denied no-op so they never prompt. Production injects the real
+    /// dependencies from the composition. `clock`/`sleep` are injected for test
+    /// determinism.
     internal init(
         dataSource: any StowerBoardDataSource,
+        draftStore: any StowerDraftStoring = StowerInMemoryDraftStore(),
+        dropper: StowerMessagesDropper = StowerMessagesDropper(
+            perform: { _ in },
+            isAccessibilityTrusted: { false }
+        ),
         contacts: StowerContactsAccess = .denied,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
         opener: StowerMessagesLinkOpener = StowerMessagesLinkOpener(),
@@ -106,6 +148,8 @@ internal final class StowerBoardViewModel {
         }
     ) {
         self.dataSource = dataSource
+        self.draftStore = draftStore
+        self.dropper = dropper
         self.contacts = contacts
         self.settings = settings
         self.opener = opener
@@ -117,74 +161,12 @@ internal final class StowerBoardViewModel {
 
     /// Runs the launch sequence on appear: load the cached board, then refresh.
     ///
-    /// Called once per board appearance (SwiftUI's `.task`), so re-entering the
-    /// board after an FDA-recovery round-trip reloads. A redundant call is safe:
-    /// `load()` supersedes via its generation token and `refresh()` is guarded by
-    /// `isRefreshing`.
+    /// Safe to call repeatedly: `load()` supersedes via its generation token and
+    /// `refresh()` is guarded by `isRefreshing`.
     internal func onAppear() {
         syncContactsAuthorization()
         load()
         refresh()
-    }
-
-    /// Mirrors the live Contacts authorization into observed state.
-    ///
-    /// So the banner's visibility and label recompute. Cheap (a bare status read);
-    /// call it wherever authorization can have changed.
-    private func syncContactsAuthorization() {
-        contactsAuthorization = contacts.authorization
-    }
-
-    /// Whether to show the "show real names" banner above the board.
-    ///
-    /// Visible exactly when the board has rows to label and Contacts is not
-    /// authorized — so an unmatched board always carries a durable, in-context way to
-    /// grant access, instead of relying on a one-shot system prompt that, once
-    /// denied, never returns. Empty / caught-up / preparing boards show nothing.
-    internal var showsContactsAccessBanner: Bool {
-        phase == .rows && contactsAuthorization != .authorized
-    }
-
-    /// The banner button's label, matched to the action `resolveContactsAccess` will
-    /// take: a never-asked board can be prompted in-app; a denied one must go to
-    /// Settings, so the label sets that expectation before the tap.
-    internal var contactsBannerActionTitle: String {
-        switch contactsAuthorization {
-        case .denied: return "Open Settings"
-        default: return "Show names"
-        }
-    }
-
-    /// Drives the banner's button: raise the system prompt, or route to Settings.
-    ///
-    /// `.notDetermined` raises the one system prompt (non-blocking) and, on a fresh
-    /// grant, reloads so the per-load resolver rebuilds and rows flip to names with
-    /// no relaunch; re-taps while a request is in flight are ignored so a double-tap
-    /// can't fan out into duplicate requests. `.denied` (or restricted) can't be
-    /// re-prompted, so it opens System Settings → Contacts and arms a recovery
-    /// reload for when the user returns (`onAppBecameActive`). `.authorized` is a
-    /// no-op (the banner is already hidden).
-    internal func resolveContactsAccess() {
-        switch contacts.authorization {
-        case .authorized:
-            return
-        case .denied:
-            awaitingContactsRecovery = true
-            settings.openPane(.contacts)
-        case .notDetermined:
-            guard !isRequestingContacts else { return }
-            isRequestingContacts = true
-            contactsTask = Task { [weak self] in
-                guard let self else { return }
-                defer { isRequestingContacts = false }
-                let granted = await contacts.requestAccessIfNeeded()
-                // Reflect the outcome (grant *or* deny) so the banner updates: a deny
-                // flips the label to "Open Settings"; a grant reloads into names.
-                syncContactsAuthorization()
-                guard granted, !Task.isCancelled else { return }
-                load()
-            }
-        }
     }
 
     /// Re-checks Contacts when the app returns to the foreground.
@@ -202,6 +184,9 @@ internal final class StowerBoardViewModel {
             board = nil
             phase = .preparing
             contactsRevocationToken += 1
+            // Close the composer so a resolved name captured at open can't linger in
+            // it after access is gone (I-ComposerClosesOnContactsRevoke).
+            closeComposer()
         }
         let wasAwaitingRecovery = awaitingContactsRecovery
         awaitingContactsRecovery = false
@@ -230,13 +215,10 @@ internal final class StowerBoardViewModel {
 
     /// Cancels in-flight work when the board view disappears.
     ///
-    /// Supersedes BOTH generations so a cancellation-ignoring load or refresh that
-    /// completes after disappearance is discarded by the generation guards (it
-    /// can't apply stale board state or route a failure into onboarding once the
-    /// board is gone). Also resets `isRefreshing` so the next `onAppear` can start a
-    /// fresh refresh even if the cancelled task hasn't finished unwinding yet —
-    /// without that reset a cancelled-but-not-yet-exited refresh would keep
-    /// `isRefreshing` true and strand cold start in `.preparing`.
+    /// Supersedes BOTH generations so a cancellation-ignoring load/refresh that
+    /// finishes after disappearance is discarded by the generation guards, and resets
+    /// `isRefreshing` so the next `onAppear` can start a fresh refresh even before the
+    /// cancelled task finishes unwinding (otherwise cold start strands in `.preparing`).
     internal func cancel() {
         loadTask?.cancel()
         refreshTask?.cancel()
@@ -296,6 +278,7 @@ internal final class StowerBoardViewModel {
             let model = try await dataSource.loadBoard(config: config, now: clock())
             guard generation == loadGeneration else { return }
             applyLoaded(model)
+            await mergeDrafts(generation: generation)
         } catch is CancellationError {
             // Superseded / dismissed — never a failure.
         } catch let failure as StowerStartupFailure {

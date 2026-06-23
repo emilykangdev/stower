@@ -1,4 +1,5 @@
 import Foundation
+import StowerMessages
 import Testing
 
 @testable import StowerMacUI
@@ -21,6 +22,7 @@ import Testing
             chatID: chatID,
             counterpart: "Alex",
             counterpartHandle: "+14155550100",
+            draftKey: StowerDraftKey.derive(forHandle: "+14155550100"),
             monogram: "A",
             summary: StowerLastMessageSummary.make(kind: .text, text: "hi"),
             ageInDays: 2,
