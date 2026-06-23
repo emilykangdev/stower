@@ -112,23 +112,45 @@ extension StowerBoardViewModel {
 
     /// Updates the local draft and writes the change through to the store.
     private func setDraft(key: String, body: String) {
-        if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            drafts[key] = nil
-        } else {
-            drafts[key] = StowerDraftEntry(body: body, updatedAt: clock())
-        }
-        commitDraft(key: key, body: body)
+        let cleared = body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        drafts[key] = cleared ? nil : StowerDraftEntry(body: body, updatedAt: clock())
+        commitDraft(key: key, body: body, cleared: cleared)
     }
 
     /// Persists one draft change, chained per key so the last edit wins.
-    private func commitDraft(key: String, body: String) {
+    ///
+    /// A cleared body `delete`s the row outright rather than `upsert`-ing an empty one
+    /// (JC3) — explicit, even though the store's `upsert` already treats a blank body
+    /// as a delete; the test locks that contract. A transient write failure retries
+    /// with a bounded backoff: JC2 keeps the failure off the typing path (no error UI
+    /// mid-edit), but the terminal write — the last edit before quit, with no next
+    /// keystroke to retry it — must not silently vanish while the UI shows it saved.
+    private func commitDraft(key: String, body: String, cleared: Bool) {
         let previous = inflightWrites[key]
+        let limit = Self.draftWriteRetryLimit
+        let backoff = Self.draftWriteRetryBackoff
         inflightWrites[key] = Task { [draftStore] in
             await previous?.value
-            // `try?` is intentional (JC2 RPO): the body is already in `drafts`, and a
-            // rare write failure is retried by the next keystroke's commit — never
-            // surfaced as an error mid-typing.
-            try? await draftStore.upsert(key: key, body: body)
+            for attempt in 1...limit {
+                do {
+                    if cleared {
+                        try await draftStore.delete(key: key)
+                    } else {
+                        try await draftStore.upsert(key: key, body: body)
+                    }
+                    return
+                } catch {
+                    guard attempt < limit else { return }
+                    try? await Task.sleep(for: backoff)
+                }
+            }
         }
     }
+
+    /// How many times a write-through draft change retries before giving up.
+    private static let draftWriteRetryLimit = 3
+
+    /// The backoff between write-through retries (rides out a transient lock /
+    /// briefly-full disk without blocking a graceful quit's `flushAll`).
+    private static let draftWriteRetryBackoff: Duration = .milliseconds(50)
 }

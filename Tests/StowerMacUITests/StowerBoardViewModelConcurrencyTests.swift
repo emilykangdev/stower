@@ -60,9 +60,11 @@ import Testing
         model.selectPreset(.twentyEightDays)
         while spy.pendingLoadGateCount < 2 { await Task.yield() }
 
-        // Release the newer load (B) first; it applies.
+        // Release the newer load (B) first; it applies. Await the load task to
+        // settle (the load path now merges drafts — an extra await — before exposing
+        // rows, so a single yield no longer reaches `applyLoaded`).
         spy.releaseLoad(at: 1, with: modelB)
-        await Task.yield()
+        await model.loadTaskHandle?.value
         #expect(model.board?.rows(for: .neglected).map(\.id) == ["fresh"])
 
         // Release the older, superseded load (A) last; its result must be ignored.

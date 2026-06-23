@@ -121,7 +121,7 @@ Then, in the app:
 
 ```bash
 # Did tccd see a Contacts request from the app? (empty = it never asked)
-log show --last 10m --predicate 'process == "tccd"' --info | grep -iE "StowerMac|AddressBook"
+/usr/bin/log show --last 10m --predicate 'process == "tccd"' --info | grep -iE "StowerMac|AddressBook"
 
 # Which binary is actually running, and when was it built?
 for pid in $(pgrep -x StowerMac); do ps -o comm= -p "$pid"; done

@@ -43,7 +43,8 @@ private struct StowerRootContainer: View {
                 systemImage: "externaldrive.badge.exclamationmark",
                 description: Text(
                     "There wasn't enough room or permission to open Stower's storage. "
-                        + "Free some disk space and reopen Stower."
+                        + "Free disk space, verify Stower can access its storage "
+                        + "location, and reopen Stower."
                 )
             )
         }

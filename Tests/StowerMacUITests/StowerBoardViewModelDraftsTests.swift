@@ -83,6 +83,53 @@ import Testing
         #expect(model.drafts[row.draftKey]?.body == "new text")
     }
 
+    @Test("clearing a draft deletes it locally + in the store, and it stays gone after reload")
+    internal func clearedDraftStaysDeletedAcrossReload() async {
+        let store = StowerInMemoryDraftStore()
+        let spy = StowerSpyBoardDataSource()
+        let row = draftRow(chatID: "c1", handle: "alice")
+        let oneRow = StowerBoardModel(neglected: [row], ghosted: [])
+        spy.loadModels = [oneRow, oneRow]
+        let model = makeViewModel(spy, draftStore: store)
+        model.load()
+        await model.loadTaskHandle?.value
+
+        model.draftBinding(for: row.draftKey).wrappedValue = "draft me"
+        await model.flushAll()
+        #expect(await store.all()[row.draftKey]?.body == "draft me")
+
+        // Clear to whitespace — must delete, not persist an empty row that resurrects.
+        model.draftBinding(for: row.draftKey).wrappedValue = "   "
+        await model.flushAll()
+        #expect(model.drafts[row.draftKey] == nil)
+        #expect(await store.all()[row.draftKey] == nil)
+
+        // A later reload must NOT bring the cleared draft back.
+        model.load()
+        await model.loadTaskHandle?.value
+        #expect(model.drafts[row.draftKey] == nil)
+        #expect(await store.all()[row.draftKey] == nil)
+    }
+
+    @Test("a transient write failure is retried, not silently lost (terminal-write durability)")
+    internal func transientWriteFailureIsRetried() async throws {
+        let store = StowerFlakyDraftStore(entries: [:])
+        let spy = StowerSpyBoardDataSource()
+        let row = draftRow(chatID: "c1", handle: "alice")
+        spy.loadModels = [StowerBoardModel(neglected: [row], ghosted: [])]
+        let model = makeViewModel(spy, draftStore: store)
+        model.load()
+        await model.loadTaskHandle?.value
+
+        // The first write attempt throws (transient disk-full / SQLite lock); the
+        // bounded retry must land the body rather than drop it on the floor.
+        await store.setFailNextWrites(1)
+        model.draftBinding(for: row.draftKey).wrappedValue = "must survive"
+        await model.flushAll()
+
+        #expect(try await store.all()[row.draftKey]?.body == "must survive")
+    }
+
     @Test("an off-board draft is never pruned by a load (I-NeverDelete)")
     internal func offBoardDraftPreserved() async {
         let store = StowerInMemoryDraftStore(entries: [
@@ -216,11 +263,13 @@ import Testing
     }
 }
 
-/// A draft store whose reads can be made to fail, to exercise the merge path's
-/// failure handling (a failed read must not wipe local drafts).
+/// A draft store whose reads can be made to fail (to exercise the merge path's
+/// failure handling — a failed read must not wipe local drafts) and whose next N
+/// writes can be made to throw (to exercise the write-through retry).
 private actor StowerFlakyDraftStore: StowerDraftStoring {
     private var entries: [String: StowerDraftEntry]
     private var failReads = false
+    private var failNextWrites = 0
 
     init(entries: [String: StowerDraftEntry]) {
         self.entries = entries
@@ -230,20 +279,34 @@ private actor StowerFlakyDraftStore: StowerDraftStoring {
         self.failReads = failReads
     }
 
+    /// Makes the next `count` write attempts (upsert/delete) throw before succeeding.
+    func setFailNextWrites(_ count: Int) {
+        failNextWrites = count
+    }
+
     func all() throws -> [String: StowerDraftEntry] {
         guard !failReads else { throw StowerFlakyDraftStoreError.readFailed }
         return entries
     }
 
-    func upsert(key: String, body: String) {
+    func upsert(key: String, body: String) throws {
+        try failWriteIfArmed()
         entries[key] = StowerDraftEntry(body: body, updatedAt: Date())
     }
 
-    func delete(key: String) {
+    func delete(key: String) throws {
+        try failWriteIfArmed()
         entries[key] = nil
+    }
+
+    private func failWriteIfArmed() throws {
+        guard failNextWrites > 0 else { return }
+        failNextWrites -= 1
+        throw StowerFlakyDraftStoreError.writeFailed
     }
 }
 
 private enum StowerFlakyDraftStoreError: Error {
     case readFailed
+    case writeFailed
 }

@@ -277,8 +277,13 @@ internal final class StowerBoardViewModel {
         do {
             let model = try await dataSource.loadBoard(config: config, now: clock())
             guard generation == loadGeneration else { return }
-            applyLoaded(model)
+            // Merge persisted drafts BEFORE exposing rows. Once rows are interactive the
+            // user can open the composer (setting `composerKey`), and `mergeDrafts` skips
+            // `composerKey` — so a draft merged after rows appear could be skipped and
+            // then overwritten by the first edit. Merging first closes that window.
             await mergeDrafts(generation: generation)
+            guard generation == loadGeneration else { return }
+            applyLoaded(model)
         } catch is CancellationError {
             // Superseded / dismissed — never a failure.
         } catch let failure as StowerStartupFailure {

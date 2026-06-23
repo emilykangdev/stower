@@ -83,8 +83,15 @@ internal final class StowerThreadViewModel {
     }
 
     /// Cancels an in-flight load when the thread view disappears.
+    ///
+    /// Bumps the generation so a load that returns AFTER cancellation fails `runLoad`'s
+    /// generation guard and can't apply stale `lines`/`phase` — cancelling the task
+    /// alone isn't enough, since a near-complete load may ignore cancellation and still
+    /// commit. Same discipline as the board view-model's `cancel()`.
     internal func cancel() {
+        generation += 1
         loadTask?.cancel()
+        loadTask = nil
     }
 
     /// The in-flight load task, exposed so tests can await it.

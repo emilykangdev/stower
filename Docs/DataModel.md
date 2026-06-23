@@ -1,9 +1,10 @@
 # Stower — Data Model
 
 A map of every table Stower touches, grouped by **ownership** and **status**.
-The point of the grouping is honesty: Stower *persists* exactly one schema (the
-search index). Everything else is either Apple's data we open read-only, or a
-design anchor not yet built.
+The point of the grouping is honesty: Stower *persists* two owned stores today —
+the rebuildable search index and the precious drafts store (`drafts.sqlite`).
+Everything else is either Apple's data we open read-only, or a design anchor not
+yet built.
 
 ## Ownership / status legend
 
