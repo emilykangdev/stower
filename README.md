@@ -27,6 +27,18 @@ them, and they never import each other. This keeps the v3 Photos-only iOS app
 from ever linking the Messages code. See [`Docs/`](Docs/) for per-subsystem
 rationale.
 
+### Many local models, not just Apple's
+
+The on-device model is **not assumed to be Apple's Foundation Models forever.** A
+goal is to experiment with and compare several other **local** models (local
+LLMs/SLMs we can run on the user's machine) — Apple's is simply the first one
+wired up. We carry that assumption *through* the codebase rather than bolting it
+on later: wherever a model produces a result we cache or act on, the **model's
+identity is part of the contract** (e.g. the relationship-debt judge folds a
+`modelIdentity` into its verdict-cache key), so swapping or A/B-ing local models
+stays cheap and never serves a result produced by a different model. The one hard
+constraint is **local** — nothing leaves the Mac.
+
 ### System overview
 
 `①` is the index path (write); `②` is the query path (read). Dashed nodes/edges

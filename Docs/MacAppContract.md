@@ -15,7 +15,7 @@
 > | Availability check | (none) | public `modelAvailability() async -> StowerModelAvailability` |
 > | Refresh summary | `init(changedChatIDs:)` + `changedCount` | `init(changedChatIDs:judgedCount:failedCount:totalCount:)` + public `judgedCount`/`failedCount`/`totalCount`; `changedCount` retained |
 > | Refresh return | `async -> StowerRefreshSummary` | `async throws -> StowerRefreshSummary?` (`nil` = coalesced; throws when unavailable) |
-> | Model identity | (n/a — implicit) | **required** `modelIdentity:` on the `StowerDebtBoardProvider` init (cache-invalidation epoch; no default — the app supplies and bumps it) |
+> | Model identity | (n/a — implicit) | **judge-owned** — the judge folds its own model-identity epoch into the verdict cache; the app supplies no model argument on the `StowerDebtBoardProvider` init |
 > | Cold start | paint immediately | **loading screen** until `judged + failed == total`, then board / "all caught up" |
 >
 > `StowerReplyExpectation` and `StowerReplyJudgeSource` are now `internal` — no public API returns
@@ -89,8 +89,7 @@ let provider = StowerDebtBoardProvider(
     sourceURL: .defaultSourceURL,         // the chat.db to read
     contactsResolver: .live,              // name enrichment; degrades on denial
     cacheURL: .defaultCacheURL,           // verdict cache; nil/fault → empty board until refresh rebuilds
-    windowDays: 180,                      // how far back facts are read (NOT per-call)
-    modelIdentity: "stower-fm-reply-v1"   // REQUIRED, no default — app-owned cache epoch
+    windowDays: 180                       // how far back facts are read (NOT per-call)
 )
 ```
 
@@ -98,13 +97,13 @@ let provider = StowerDebtBoardProvider(
 `unansweredForDays` the app will ask for, or `loadDebtBoard` throws
 `invalidArgument` (fail-loud, by design — widen the window).
 
-`modelIdentity` is a **required** parameter with **no default and no
-engine-provided epoch constant** — each caller supplies its own. It is exposed
-back as a readable `public let modelIdentity: String`. Bump it only when Stower
-intentionally changes the validated judge behavior/prompt/model; a bump
-invalidates every cache hit, so rows disappear until re-judged — treat the first
-load after a bump like a cold start / re-warm (loading screen, not "all caught
-up"). Never derive it from the OS version.
+The app supplies **no model argument** — model and prompt selection are the
+judge's concern. The judge owns its own cache-invalidation epoch (folded with its
+prompt into the verdict-cache `judge_version`); changing the validated judge
+behavior/prompt/model invalidates every cache hit, so rows disappear until
+re-judged — treat the first load after such a change like a cold start / re-warm
+(loading screen, not "all caught up"). The epoch is never derived from the OS
+version, so a silent OS model revision never discards verdicts.
 
 ### The four methods
 
@@ -340,3 +339,58 @@ that with real users; it's a learn-by-shipping question, not a blocker.
 > types, the `StowerStartupState` machine, per-reason routing, and dummy-data
 > scenarios) the app builds against live in `tmp/briefs/macapp-frozen-contract.md`.
 > This doc and that frozen contract describe the same as-built engine.
+
+---
+
+## 9. The in-app boundary pattern (how the app re-wraps the facade)
+
+§2 says the app imports only value types + two actors, never `GRDB` /
+`FoundationModels` / PhotoKit. This section is *how that is enforced inside
+`StowerMacUI`* — and the repeatable shape every engine-backed data source in the
+app follows.
+
+The engine vends a facade (a `public` protocol + `public` value types). The app
+does **not** let its view models and views depend on that facade directly. Instead:
+
+1. The app defines its **own** protocol and its **own** value types (app-owned,
+   `internal` to `StowerMacUI`).
+2. A thin **adapter** — one of exactly **four** files allowed to
+   `import StowerMessages` — wraps the engine type and maps the engine's value
+   types into app value types.
+3. `StowerMessagesComposition` builds the engine objects + adapters once and vends
+   the app-owned types.
+4. View models depend only on the app-owned protocol, so they never import the
+   engine and can be unit-tested against an in-memory fake (no disk, no model).
+
+The wall is mechanical: `Scripts/precheck.sh` step **6b** fails the build if any
+file other than the four engine-coupled ones imports `StowerMessages`. The engine
+import is quarantined to the adapter seam; everything above it (view models, views)
+is engine-free.
+
+**The four engine-coupled files** (the only `import StowerMessages` in the app):
+`StowerMessagesStartupAdapter`, `StowerLiveBoardDataSource`,
+`StowerMessagesComposition`, `StowerMessagesMapping`.
+
+### The shape, with its two instances
+
+| Layer | Board | Drafts |
+|---|---|---|
+| Engine concrete type (`StowerMessages`) | `StowerDebtBoardProvider` | `StowerDraftStore` |
+| App-owned contract (`StowerMacUI`) | `StowerBoardDataSource` | `StowerDraftStoring` |
+| Adapter (one of the four engine-coupled files) | `StowerLiveBoardDataSource` | `StowerLiveDraftStore` (in `StowerMessagesComposition`) |
+| Engine value type → app value type | `StowerDebtItem` → `StowerBoardRow` | `StowerDraftRecord` → `StowerDraftEntry` |
+| What the view model depends on | `any StowerBoardDataSource` | `any StowerDraftStoring` |
+
+### The cost, and why it's paid
+
+The tax is **twin value types + a one-way mapper per seam**
+(`StowerDebtItem`/`StowerBoardRow`, `StowerDraftRecord`/`StowerDraftEntry`). That
+duplication is deliberate: it is what keeps the view layer free of `GRDB`/engine
+types and unit-testable with fakes, and what stops a screen from ever accidentally
+depending on a storage detail. A new engine-backed data source should follow this
+same shape — never let a view model import `StowerMessages`.
+
+> `StowerMessagesComposition` is a **factory** (it constructs + wires the real
+> objects), not a contract. The contract is the app-owned protocol the view model
+> depends on. They are different jobs — a builder and an interface — not two layers
+> doing the same thing.

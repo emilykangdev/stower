@@ -87,8 +87,8 @@ row.
   is judged under a per-record timeout so one hung judge can't stall the pass.
 - **Cache is the trust boundary.** Verdicts land in `StowerReplyVerdictCache`
   (`reply-verdicts.sqlite`), disposable and keyed by `(judge_version,
-  message_guid)` with an `input_hash` over the raw last text. An app-owned
-  `modelIdentity` epoch folds into the judge version, so a model-identity change
+  message_guid)` with an `input_hash` over the raw last text. The judge's own
+  model-identity epoch folds into the judge version, so a model-identity change
   invalidates stale verdicts. Bad payloads are rejected on write; an unknown
   source token is a miss on read.
 

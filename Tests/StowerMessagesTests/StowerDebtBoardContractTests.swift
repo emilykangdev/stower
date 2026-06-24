@@ -56,11 +56,10 @@ internal struct StowerDebtBoardContractTests {
         #expect(summary?.totalCount == 0)
 
         // The concrete provider's public init is part of the same contract — the
-        // app must supply a `modelIdentity` epoch (no default).
+        // app supplies no model argument; the judge owns its model id.
         _ = StowerDebtBoardProvider(
             sourceURL: URL(fileURLWithPath: "/x"),
-            cacheURL: nil,
-            modelIdentity: "contract-epoch-1"
+            cacheURL: nil
         )
     }
 

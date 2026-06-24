@@ -94,3 +94,62 @@ if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[
     echo "ERROR: StowerMessages must not import StowerPhotos" >&2
     exit 1
 fi
+
+# Step 6 — StowerMac app/UI boundary guards (FDA onboarding slice).
+# These greps deliberately also cover StowerMac/StowerMac (the Xcode app's Swift
+# sources) even though the format/lint steps above only target Sources/Tests —
+# the boundary must hold in the app entry too. Standing gate; do not weaken to go
+# green (AGENTS.md). Authored via /harden-guardrail.
+
+# 6a — Engine-INTERNAL modules are NEVER imported by StowerMacUI (permanent ban,
+#      incl. the adapter). The app sees value types + two actors, never GRDB/FM/Photos.
+if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+(GRDB|FoundationModels|Photos|PhotoKit)([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null; then
+    echo "ERROR: StowerMacUI must not import an engine-internal module (GRDB/FoundationModels/Photos/PhotoKit)" >&2
+    exit 1
+fi
+
+# 6b — StowerMessages may be imported by EXACTLY the four engine-coupled files: the
+#      startup adapter, the board adapter, the shared composition, and the shared
+#      engine->app mapping. Closed allowlist (do not weaken/delete to go green);
+#      compared as a SORTED SET so file order/addition can't slip past the gate.
+SM_ALLOWED="$(printf '%s\n' \
+    "Sources/StowerMacUI/Startup/StowerMessagesStartupAdapter.swift" \
+    "Sources/StowerMacUI/Board/StowerLiveBoardDataSource.swift" \
+    "Sources/StowerMacUI/Board/StowerMessagesComposition.swift" \
+    "Sources/StowerMacUI/Board/StowerMessagesMapping.swift" \
+    | LC_ALL=C sort)"
+SM_IMPORTERS="$(grep -RIlE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerMessages([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null | LC_ALL=C sort || true)"
+if [ "$SM_IMPORTERS" != "$SM_ALLOWED" ]; then
+    echo "ERROR: only the four engine-coupled StowerMacUI files may import StowerMessages:" >&2
+    echo "$SM_ALLOWED" | sed 's/^/       allowed: /' >&2
+    echo "       Found:" >&2
+    echo "${SM_IMPORTERS:-<none>}" | sed 's/^/       /' >&2
+    exit 1
+fi
+
+# 6c — This slice has no StowerCore boundary file in StowerMacUI yet (a future
+#      search/index slice adds one and relaxes this — do NOT permanently ban StowerCore).
+if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerCore([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null; then
+    echo "ERROR: StowerMacUI imports no StowerCore in this slice (add a boundary file when a search slice needs it)" >&2
+    exit 1
+fi
+
+# 6d — The app/UI slice never probes the filesystem or DB itself; the engine reads
+#      chat.db behind its facade. Bans direct FileManager/reachability/Data/TCC/sqlite/GRDB.
+if grep -RInE --include="*.swift" -i 'FileManager\.default|checkResourceIsReachable|contentsOfDirectory|isReadableFile|Data\(contentsOf:|(^|[^a-z])tcc([^a-z]|$)|sqlite|grdb' StowerMac/StowerMac Sources/StowerMacUI 2>/dev/null; then
+    echo "ERROR: the StowerMac app/UI slice must not touch the filesystem or DB directly (the engine does)" >&2
+    exit 1
+fi
+
+# 6e — chat.db must not be a literal in production app/UI code: the FDA disclosure
+#      renders the path from the .fullDiskAccessMissing(path:) payload, never a constant.
+if grep -RInE --include="*.swift" 'chat\.db' StowerMac/StowerMac Sources/StowerMacUI 2>/dev/null; then
+    echo "ERROR: chat.db must not appear as a literal in app/UI code — render it from the FDA payload" >&2
+    exit 1
+fi
+
+# 6f — The Xcode app entry imports ONLY SwiftUI + StowerMacUI — never the engine/db.
+if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+(GRDB|FoundationModels|Photos|PhotoKit|StowerMessages|StowerCore)([[:space:]]|$)' StowerMac/StowerMac 2>/dev/null; then
+    echo "ERROR: the StowerMac app entry must import only SwiftUI + StowerMacUI, never the engine/db" >&2
+    exit 1
+fi

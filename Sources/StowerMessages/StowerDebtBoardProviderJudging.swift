@@ -11,7 +11,7 @@ extension StowerDebtBoardProvider {
         judge: StowerReplyExpectationJudge
     ) async -> [StowerJudgedConversation] {
         guard let cache else { return [] }
-        let version = judge.judgeVersion(modelIdentity: modelIdentity)
+        let version = judge.judgeVersion()
         var result: [StowerJudgedConversation] = []
         result.reserveCapacity(records.count)
         for record in records {
@@ -42,7 +42,7 @@ extension StowerDebtBoardProvider {
         judge: StowerReplyExpectationJudge,
         cache: StowerReplyVerdictCaching
     ) async -> StowerRefreshSummary {
-        let version = judge.judgeVersion(modelIdentity: modelIdentity)
+        let version = judge.judgeVersion()
         // Judge most-recently-active threads FIRST so the conversations the user
         // is most likely looking at get a verdict soonest.
         let ordered = records.sorted {

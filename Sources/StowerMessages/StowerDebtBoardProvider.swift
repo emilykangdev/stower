@@ -18,13 +18,6 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     internal let modelAvailabilityResolver: @Sendable () async -> StowerModelAvailability
     internal let cache: StowerReplyVerdictCaching?
     internal let windowDays: Int
-
-    /// The app-owned cache-invalidation epoch this provider keys verdicts under.
-    ///
-    /// Set from the initializer's `modelIdentity:` argument and exposed back so the
-    /// app can read the epoch it supplied. There is no engine-provided default —
-    /// the app bumps it only on a validated judge-behavior change.
-    public let modelIdentity: String
     private var refreshInFlight = false
 
     /// The shared snapshot reader, reused across loads and thread taps.
@@ -75,16 +68,11 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     ///   - cacheURL: Where to persist trusted verdicts; a fault here leaves the
     ///     cache absent and the board empty until refresh can rebuild it (M9).
     ///   - windowDays: How far back to read facts.
-    ///   - modelIdentity: The app-owned cache-invalidation epoch, folded into the
-    ///     judge version. No default — the app supplies and bumps it on a
-    ///     validated model behavior change so a silent OS model revision can't
-    ///     keep stale verdicts.
     public init(
         sourceURL: URL = StowerChatDatabaseReader.defaultSourceURL,
         contactsResolver: StowerContactsResolver = .live(),
         cacheURL: URL? = StowerDebtBoardProvider.defaultCacheURL,
-        windowDays: Int = 180,
-        modelIdentity: String
+        windowDays: Int = 180
     ) {
         readerFactory = {
             try StowerChatDatabaseReader(sourceURL: sourceURL, contactsResolver: contactsResolver)
@@ -96,7 +84,6 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         modelAvailabilityResolver = { StowerLanguageModelAvailability.current() }
         cache = cacheURL.flatMap(Self.openCache)
         self.windowDays = windowDays
-        self.modelIdentity = modelIdentity
     }
 
     /// Creates a provider from injected dependencies, for tests.
@@ -110,7 +97,6 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         languageModelJudge: StowerReplyExpectationJudge?,
         cache: StowerReplyVerdictCaching?,
         windowDays: Int = 180,
-        modelIdentity: String = "test-model-identity",
         languageModelJudgeResolver: (@Sendable () -> StowerReplyExpectationJudge?)? = nil,
         modelAvailabilityResolver: @escaping @Sendable () async -> StowerModelAvailability = {
             .available
@@ -121,7 +107,6 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         self.modelAvailabilityResolver = modelAvailabilityResolver
         self.cache = cache
         self.windowDays = windowDays
-        self.modelIdentity = modelIdentity
     }
 
     /// Whether the on-device language model can serve verdicts right now.
@@ -189,7 +174,8 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         return StowerDebtBoard(neglected: neglected, ghosted: ghosted)
     }
 
-    /// Returns the newest messages of one chat for a tap-through thread view.
+    /// Returns the newest `limit` messages of one chat, ordered oldest-first for
+    /// display, for a tap-through thread view.
     public func recentMessages(chatID: String, limit: Int) async throws -> [StowerThreadMessage] {
         let reader = try sharedReader()
         return try await reader.threadMessages(chatID: chatID, limit: limit)

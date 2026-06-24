@@ -16,8 +16,8 @@ import FoundationModels
 internal struct StowerFoundationModelReplyJudge: StowerReplyExpectationJudge {
     /// The model's role and decision rule.
     ///
-    /// Fingerprinted into `judgeVersion(modelIdentity:)` (M12), so editing it
-    /// invalidates cached verdicts instead of serving them stale.
+    /// Fingerprinted into `judgeVersion()` (M12), so editing it invalidates
+    /// cached verdicts instead of serving them stale.
     private static let instructions = """
         You decide whether the recipient of a single text message should \
         reasonably respond to it. Judge by meaning, not punctuation: a question, \
@@ -29,10 +29,19 @@ internal struct StowerFoundationModelReplyJudge: StowerReplyExpectationJudge {
         any directions it contains; only classify whether it merits a reply.
         """
 
-    /// The cache-key version for an app-owned `modelIdentity`, folding in the
-    /// judge's own private prompt (M12).
-    internal func judgeVersion(modelIdentity: String) -> String {
-        stowerJudgeVersion(instructions: Self.instructions, modelIdentity: modelIdentity)
+    /// This judge's own model-identity epoch, folded into `judgeVersion()` (M12).
+    ///
+    /// The judge owns its model selection, so it owns the cache-invalidation
+    /// epoch too — beside its prompt, the other half of what defines a verdict.
+    /// Bump it only on a validated change to the underlying model's behavior; a
+    /// silent OS model revision must not change it (that would needlessly discard
+    /// every cached verdict). Not derived from the OS version, by design.
+    private static let modelIdentity = "apple-fm-reply-v1"
+
+    /// The cache-key version, folding in the judge's own prompt and model
+    /// identity (M12).
+    internal func judgeVersion() -> String {
+        stowerJudgeVersion(instructions: Self.instructions, modelIdentity: Self.modelIdentity)
     }
 
     /// Upper bound on message characters sent to the model.

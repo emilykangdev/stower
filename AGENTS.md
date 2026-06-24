@@ -51,8 +51,11 @@ Apply the following constraints to every change you make.
 
 ## Out of scope for v1
 
-- Do not write any reply-sending code (AppleScript, IMCore, anything).
-  v1 is recall-only.
+- Do not write any reply-**sending** code: no AppleScript `send`, no IMCore, no
+  synthetic Return/Enter, no programmatic message transmission of any kind.
+  **Populating** the Messages compose field for the user to send manually IS
+  allowed (the drafts feature copies the draft to the clipboard, opens the
+  conversation, and posts a synthetic ⌘V — never a Return). v1 stays send-free.
 - Do not pull in Hummingbird, swift-nio, or any HTTP server dependency.
   v2 territory.
 - Do not read or write face-identity tables in `Photos.sqlite` (ZPERSON,
@@ -68,6 +71,11 @@ Apply the following constraints to every change you make.
   rationale changes — not when the code changes.
 - After each meaningful commit, update `PLAN.md`'s "Status" section so the
   next session can re-enter without re-reading the diff.
+- When writing or editing a plan/spec/doc, refer to real codebase symbols
+  (types, functions, views, state cases) by their **exact names** — e.g.
+  `StowerModelUnavailableView`, not "the model screen". Invented English
+  paraphrases drift out of sync and aren't greppable; exact names are. If the
+  symbol doesn't exist yet, name the one you intend to create, not a vibe.
 
 ## Signal-coding skills
 
