@@ -1,0 +1,132 @@
+name: Codex Signal Review
+
+# Advisory, catalog-keyed PR review by OpenAI Codex. This is the LLM half of
+# signal coding running in CI — it does NOT replace the deterministic gate.
+#
+# Division of labor (do not blur these):
+#   - ci.yml runs Scripts/precheck.sh on every push/PR. That is the HARD GATE:
+#     format, lint, build, test, deno, module boundaries. Green = mechanically
+#     correct. It blocks merge.
+#   - THIS workflow runs `swift-signal-review` against the repo's own pattern
+#     catalog and posts findings as a PR comment. It is ADVISORY: it never fails
+#     the build and never blocks merge. It catches the `judgment` entries the
+#     gate cannot mechanize (over-broad public, IndexedItem bypass, mixed
+#     commits, real user data, catch-and-ignore, naming-by-type).
+#
+# Why Codex and not a generic reviewer: CodeRabbit and the ChatGPT/Codex cloud
+# connector already review PRs for free, but against generic best-practice. The
+# value here is that the prompt points Codex at THIS repo's
+# .claude/skills/SWIFT_PATTERNS.md — the same single source of truth the local
+# skills read — so CI review and local review judge by one rulebook.
+#
+# Tiering: triggers on opened/reopened only, NOT on every push (`synchronize`).
+# A PR happens once; a push happens many times per branch. This matches the same
+# principle Scripts/install-hooks.sh encodes for swift-signal-review. Add
+# `synchronize` to the types below if you want a fresh review on every push
+# (costs one Codex run per push).
+#
+# Security: this uses `pull_request` (NOT `pull_request_target`), so the
+# OPENAI_API_KEY secret is never exposed to PRs from forks. The repo also
+# auto-declines external PRs (decline-external-prs.yml), so in practice only the
+# maintainer's own same-repo PRs reach this. The two-job split below hardens it
+# further: the job that runs Codex over PR code has `contents: read` ONLY and no
+# write power; a separate job receives just the review string and posts it,
+# never touching PR code. Even a prompt-injection in a diff cannot make the
+# review job comment or exfiltrate.
+#
+# Setup: add the secret once with `gh secret set OPENAI_API_KEY`.
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  codex:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      final_message: ${{ steps.run_codex.outputs.final-message }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Check out the PR's merge commit so Codex sees the post-merge tree.
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+
+      - name: Pre-fetch base and head refs
+        run: |
+          git fetch --no-tags origin \
+            ${{ github.event.pull_request.base.ref }} \
+            +refs/pull/${{ github.event.pull_request.number }}/head
+
+      - name: Run Codex
+        id: run_codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          # Read-only: this review only reads the diff and the catalog files.
+          # It never writes the tree, so the network-disabled read-only sandbox
+          # is both sufficient and the safest option.
+          sandbox: read-only
+          safety-strategy: drop-sudo
+          prompt: |
+            You are running Stower's `swift-signal-review` skill on PR
+            #${{ github.event.pull_request.number }} for ${{ github.repository }}.
+            This is NOT a generic code review — review ONLY against this repo's
+            own catalog, by its own rules.
+
+            1. Read `.claude/skills/swift-signal-review/SKILL.md` and follow it.
+            2. Read `.claude/skills/SWIFT_PATTERNS.md` — the single source of
+               truth. The entries marked `gate` are already enforced by
+               Scripts/precheck.sh (and ci.yml); do NOT re-report those. Review
+               the diff against the `judgment` entries that have no automated
+               check: #5 over-broad public access, #9 bypassing IndexedItem,
+               #11 mixed structural + behavioral change in one commit, #12 real
+               Photos/Messages data in fixtures/logs/prompts, #13 catch-and-ignore,
+               #15 naming by type instead of role.
+            3. Reject-on-sight, independent of the catalog: an unexpected loop,
+               functionality nobody asked for, or a test weakened/skipped/deleted
+               to make something pass.
+
+            Review ONLY the changes introduced by this PR:
+              git log --oneline ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
+              git diff ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}
+
+            Output using the SKILL's format exactly:
+              ## swift-signal-review
+              Scope: <N files, M hunks>
+              ### Must fix
+              - file:line — [#entry] one-line issue + one-line fix (note if it recurs)
+              ### Consider
+              - ...
+              ### Verdict
+              <ship | fix-then-ship | reject> — <one sentence>
+
+            This is ADVISORY. Be concise and specific. If the diff is clean
+            against the judgment catalog, say so plainly and give a `ship` verdict.
+
+  post_feedback:
+    runs-on: ubuntu-latest
+    needs: codex
+    # Only post when Codex actually produced a review.
+    if: needs.codex.outputs.final_message != ''
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Post Codex review as a PR comment
+        uses: actions/github-script@v7
+        env:
+          CODEX_FINAL_MESSAGE: ${{ needs.codex.outputs.final_message }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const body = `🔎 **Codex signal review** (advisory — does not block merge)\n\n`
+              + process.env.CODEX_FINAL_MESSAGE
+              + `\n\n---\n_Reviewed against \`.claude/skills/SWIFT_PATTERNS.md\`. `
+              + `The hard gate is \`precheck.sh\` in CI._`;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body,
+            });
