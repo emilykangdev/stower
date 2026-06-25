@@ -8,6 +8,9 @@ internal enum StowerSystemSettingsPane: Sendable {
 
     /// Apple Intelligence & Siri.
     case appleIntelligence
+
+    /// Privacy & Security → Contacts (to recover a denied Contacts grant).
+    case contacts
 }
 
 /// The one isolated opener for every System Settings deep link.
@@ -54,6 +57,8 @@ internal struct StowerSystemSettingsOpener: Sendable {
             return URL(string: fullDiskAccessURLString)
         case .appleIntelligence:
             return URL(string: appleIntelligenceURLString)
+        case .contacts:
+            return URL(string: contactsURLString)
         }
     }
 
@@ -69,6 +74,10 @@ internal struct StowerSystemSettingsOpener: Sendable {
     /// Confirm on macOS 26 — see the opener's QA checklist item in the plan.
     private static let appleIntelligenceURLString =
         "x-apple.systempreferences:com.apple.Siri-Settings.extension"
+
+    /// Confirm on macOS 26 — see the opener's QA checklist item in the plan.
+    private static let contactsURLString =
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Contacts"
 
     private static let generalSettingsURLString = "x-apple.systempreferences:"
 }

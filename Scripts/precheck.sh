@@ -78,6 +78,20 @@ else
     swift test ${SKIP_ARGS[@]+"${SKIP_ARGS[@]}"}
 fi
 
+# Step 4c — Deno tests for the license Edge Function (handlers.ts pure logic).
+# The mint/webhook idempotency, signature, and replay invariants live in
+# supabase/functions/license/index.test.ts. They are hermetic (no network, disk,
+# or env), so they run anywhere Deno does — including CI (ci.yml installs Deno).
+# FAILS if Deno is absent (not a skip): these guard the payment/license path, so
+# "Deno missing" must break the gate loudly, never silently drop coverage.
+if ! command -v deno >/dev/null 2>&1; then
+    echo "ERROR: deno not installed — the license Edge Function tests cannot run" >&2
+    echo "       and the payment/license invariants would ship unverified. Install:" >&2
+    echo "       https://docs.deno.com/runtime/getting_started/installation/ (or: brew install deno)" >&2
+    exit 1
+fi
+( cd supabase/functions/license && deno test )
+
 # Step 5 — module boundary checks.
 # Match only real Swift import declarations (anchored to line start, optional
 # @testable), and only in *.swift files — so a README, comment, or string that
@@ -108,12 +122,22 @@ if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[
     exit 1
 fi
 
-# 6b — StowerMessages may be imported by EXACTLY ONE StowerMacUI file: the adapter.
-SM_IMPORTERS="$(grep -RIlE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerMessages([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null || true)"
-if [ "$SM_IMPORTERS" != "Sources/StowerMacUI/Startup/StowerMessagesStartupAdapter.swift" ]; then
-    echo "ERROR: exactly one StowerMacUI file may import StowerMessages, and it must be" >&2
-    echo "       Sources/StowerMacUI/Startup/StowerMessagesStartupAdapter.swift. Found:" >&2
-    echo "       ${SM_IMPORTERS:-<none>}" >&2
+# 6b — StowerMessages may be imported by EXACTLY the four engine-coupled files: the
+#      startup adapter, the board adapter, the shared composition, and the shared
+#      engine->app mapping. Closed allowlist (do not weaken/delete to go green);
+#      compared as a SORTED SET so file order/addition can't slip past the gate.
+SM_ALLOWED="$(printf '%s\n' \
+    "Sources/StowerMacUI/Startup/StowerMessagesStartupAdapter.swift" \
+    "Sources/StowerMacUI/Board/StowerLiveBoardDataSource.swift" \
+    "Sources/StowerMacUI/Board/StowerMessagesComposition.swift" \
+    "Sources/StowerMacUI/Board/StowerMessagesMapping.swift" \
+    | LC_ALL=C sort)"
+SM_IMPORTERS="$(grep -RIlE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerMessages([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null | LC_ALL=C sort || true)"
+if [ "$SM_IMPORTERS" != "$SM_ALLOWED" ]; then
+    echo "ERROR: only the four engine-coupled StowerMacUI files may import StowerMessages:" >&2
+    echo "$SM_ALLOWED" | sed 's/^/       allowed: /' >&2
+    echo "       Found:" >&2
+    echo "${SM_IMPORTERS:-<none>}" | sed 's/^/       /' >&2
     exit 1
 fi
 
@@ -141,5 +165,15 @@ fi
 # 6f — The Xcode app entry imports ONLY SwiftUI + StowerMacUI — never the engine/db.
 if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+(GRDB|FoundationModels|Photos|PhotoKit|StowerMessages|StowerCore)([[:space:]]|$)' StowerMac/StowerMac 2>/dev/null; then
     echo "ERROR: the StowerMac app entry must import only SwiftUI + StowerMacUI, never the engine/db" >&2
+    exit 1
+fi
+
+# 6g — No logging in StowerMacUI. The license key and the activate response (which
+#      carries customer PII) flow through this module; a stray print/Logger/os_log/
+#      NSLog would leak them. Locks the key-never-logged invariant (authored via
+#      /harden-guardrail). Anchored to real call sites so words like "footprint" or
+#      "Logger" in a comment can't trip it; green today.
+if grep -RInE --include="*.swift" '(^|[^A-Za-z0-9_])(print|NSLog|os_log)[[:space:]]*\(|(^|[^A-Za-z0-9_])Logger[[:space:]]*\(' Sources/StowerMacUI 2>/dev/null; then
+    echo "ERROR: no logging in Sources/StowerMacUI — the license key / activate-response PII must never reach logs (remove the print/Logger/os_log/NSLog call)" >&2
     exit 1
 fi

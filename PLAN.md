@@ -6,6 +6,71 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-18: **License core — fingerprint, lease store, Keygen + mint clients, Supabase function (Bucket A, board-independent).**
+  Ships the trial-and-upgrade machinery as four injected, unit-tested seams plus a Deno Edge Function —
+  nothing wired into the app yet (the gate that composes them is Plan B). `StowerDeviceFingerprint`
+  (`IOPlatformUUID` via IOKit → SHA-256 hex; Keychain-UUID fallback; `nonisolated`, injected readers).
+  `StowerLicenseLeaseStore` (Keychain generic-password seam `StowerLeaseStorage`/`StowerKeychainItem`,
+  `kSecAttrAccessibleAfterFirstUnlock`, no iCloud) verifies a machine-file's Ed25519 signature over
+  `"machine/"+enc` against an embedded public key on every load — a tampered cache loads as `nil` (I7).
+  `StowerKeygenClient` (raw `URLSession` JSON:API to `api.keygen.sh`: activate / check-out(ttl) /
+  validate-key; `Authorization: License <key>`; transport throw surfaced, 5xx → `.server`).
+  `StowerTrialMintClient` (POST fingerprint → `mint-trial` → `.minted`/`.retryShortly`/`.unreachable`,
+  never `{null,null}`). `supabase/`: `device_trials` + `purchases` migrations and a `license` function
+  (`handlers.ts` pure logic + `index.ts` wiring) — `mint-trial` is row-idempotent with crash recovery
+  (I3) and `ls-webhook` verifies the LS HMAC (I9), validates variant, `PUT /policy` trial→paid, records
+  only on success, replay/forged-id safe (I8/I15). Hardened through a Codex ship loop: per-claim
+  token on `device_trials` (a stalled winner can't overwrite a reclaimed row), `created_at`-guarded
+  reclaim, orphan-storm guard (a post-create DB failure keeps the claim), paid upgrade also clears the
+  trial expiry (perpetual), DB-lookup errors 500 (never a silent ack), RLS on both tables, and
+  `config.toml verify_jwt=false` so the webhook + anonymous mint reach the function. 22 Swift tests +
+  20 Deno tests; `Scripts/precheck.sh` green (212 tests). **O2 resolved:** trial = 30d (function),
+  machine-file checkout TTL = 7d
+  (`StowerKeygenClient.machineFileTTL`, the single offline-validity boundary — the gate must read the
+  file's own expiry, not add a second window). **Still open (tracked, out of this slice):** B1 — the
+  `mint-trial` endpoint is unauthenticated; needs an abuse control (Supabase rate-limit / proof-of-work
+  / App Attest) before public launch. Embedded Keygen Ed25519 public key is an all-zero placeholder
+  until Plan B wires the real account key.
+- 2026-06-18: **Lemon Squeezy license-entry gate (activate-once, store, no recurring validate).**
+  Stower is now paid from first launch. After the model-availability check and before the FDA gate,
+  `StowerStartupModel` checks a new `StowerLicenseGating` seam: a stored license (`hasStoredLicense`,
+  pure local `UserDefaults` read) proceeds with zero network; otherwise `.needsLicense(nil)` shows the
+  new `StowerLicenseEntryView` (focused monospaced field, inline error, help row), and `submitLicense`
+  runs `runActivation` under the existing generation token + shared do/catch — `.checkingLicense`
+  spinner, `activate` (pure), then a generation-guarded `persistLicense` so a superseded activation
+  never writes. The only network egress is `StowerLemonSqueezyClient` POSTing once to
+  `/v1/licenses/activate` (percent-encoded form body; decodes `{activated, instance.id,
+  meta.store_id, meta.product_id}` and requires the store/product IDs to match Stower's — a key for
+  any other Lemon Squeezy product is `.invalid`; never decodes `customer_email`/`customer_name`;
+  transport-throw/5xx/undecodable → `.couldNotReach`; 15s timeout). `{key, instance_id}` is
+  stored plaintext in `StowerLicenseStore`; no `clear()`/`/validate` in v1 (next ticket). New states
+  `.checkingLicense` / `.needsLicense(StowerLicenseGateError?)`; `StowerCheckingView` switch is now
+  exhaustive (no `default:`). `StowerTrustBlock` copy owns the one call honestly. `precheck.sh` step
+  6g bans logging in `StowerMacUI` (key/PII). `Scripts/precheck.sh` green. Open / config Emily must set before selling:
+  `StowerLemonSqueezyLicenseGate.expectedStoreID`/`expectedProductID` are PLACEHOLDER `0`s (the
+  product check fails closed — no key activates until set to the real dashboard IDs); the
+  support/product URLs in `StowerLicenseEntryView` are placeholders; O2 `instance_name` is a fixed
+  "Stower" label; O1 paid-vs-trial kept as paid.
+- 2026-06-18: **StowerMac v1 debt-board surface (board slice).** Built the reply-debt board on the
+  merged engine + onboarding slice. New app-owned `Board/` group in `StowerMacUI`: view-models
+  (`StowerBoardRow`/`StowerThreadLine` — `Identifiable` by `chatID`/GUID, no confidence exposed),
+  `StowerBoardModel` (+`StowerBoardDirection`), `StowerDayPreset` (7/14/28/60/90, default 7),
+  `StowerLastMessageKind` mirror + the pure `StowerLastMessageSummary` non-text rule (placeholder
+  italic + angle-bracketed), `StowerBoardRefreshOutcome`, the `StowerBoardDataSource` seam (untyped
+  `throws`), `@MainActor @Observable` `StowerBoardViewModel` (load/refresh split, generation guard on
+  load only, `isRefreshing`-guarded re-issue loop) + `StowerThreadViewModel`, and an injectable
+  `StowerMessagesLinkOpener`. Three new engine-coupled files join the adapter: `StowerMessagesMapping`
+  (shared maps incl. the moved `mapError`/`mapConfig`/`mapReason`/`mapAvailability`),
+  `StowerLiveBoardDataSource`, and `StowerMessagesComposition` (ONE `StowerDebtBoardProvider` injected
+  into both adapters). Views: `StowerBoardView` (toggle + day filter + manual refresh + preparing /
+  rows / caught-up / error), `StowerNoReplyRowView`, `StowerThreadView` (bubbles + Open in Messages).
+  `StowerRootView` renders the board at `.connectedPreparingBoard` via a `@State` board VM whose
+  `onFailure` calls the new `StowerStartupModel.handleBoardFailure` — `StowerStartupState` gains NO
+  board cases. One permitted engine change: doc-comment sweep pinning `recentMessages` "newest
+  `limit`, oldest-first" across the three sibling comments + the `StowerConversationFactsReading`
+  one-reader fix, plus `StowerDebtBoardThreadOrderTests` pinning the order. `precheck.sh` 6b widened
+  to the four engine importers (sorted-set compare). `Scripts/precheck.sh` green (204 tests). The
+  human Xcode shell wiring (Task 5 of the prior slice) is already merged.
 - 2026-06-17: **StowerMac FDA-onboarding slice + judge-owned model id.** Task 0 moved the
   cache-invalidation epoch off the app surface: `StowerDebtBoardProvider` no longer takes or
   exposes `modelIdentity`, and `StowerFoundationModelReplyJudge` owns a `static modelIdentity`

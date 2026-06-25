@@ -3,29 +3,77 @@ import SwiftUI
 
 /// The app's whole composition API: a public, no-argument root view.
 ///
-/// `init()` builds the real `StowerMessagesStartupAdapter` and owns the
-/// `StowerStartupModel`, so the app target (`StowerMac`) imports only
-/// `StowerMacUI` — never the adapter, the provider, or `StowerMessages`. It
-/// switches on the startup state, cross-fading between screens, and reruns the
+/// `init()` builds the shared `StowerMessagesComposition` — ONE
+/// `StowerDebtBoardProvider` injected into both the startup adapter and the board
+/// adapter — and owns the `StowerStartupModel` and `StowerBoardViewModel` as
+/// `@State` so the screen switch never reconstructs them. The app target
+/// (`StowerMac`) imports only `StowerMacUI` — never the adapters, the provider, or
+/// `StowerMessages`. It switches on the startup state, cross-fading between
+/// screens, hands off to the board at `.connectedPreparingBoard`, and reruns the
 /// flow on Check Again.
 public struct StowerRootView: View {
     @State private var model: StowerStartupModel
+    @State private var boardModel: StowerBoardViewModel
+    @State private var licenseKey = ""
     private let settings: StowerSystemSettingsOpener
 
-    /// Builds the production root wired to the real engine-backed provider.
-    public init() {
+    /// Builds the production root wired to the shared engine-backed composition and
+    /// the real Lemon Squeezy license gate.
+    ///
+    /// Throws only when an essential store can't be opened (a true disk-level draft
+    /// store failure) — the same posture as any other essential-store startup fault.
+    ///
+    /// - Parameter flusher: Wired to the board's `flushAll()` so the app delegate can
+    ///   drain in-flight draft writes on quit. Optional so previews omit it.
+    /// - Throws: When an essential store (the precious drafts database) can't be
+    ///   opened on a true disk-level fault.
+    public init(flusher: StowerTerminationFlusher? = nil) throws {
+        let composition = try StowerMessagesComposition()
         self.init(
-            provider: StowerMessagesStartupAdapter(),
-            settings: StowerSystemSettingsOpener()
+            startup: composition.startup,
+            board: composition.board,
+            draftStore: composition.draftStore,
+            dropper: composition.dropper,
+            contacts: composition.contacts,
+            licenseGate: StowerLemonSqueezyLicenseGate(),
+            settings: StowerSystemSettingsOpener(),
+            flusher: flusher
         )
     }
 
-    /// Injects a provider (and optionally a settings opener) for tests/previews.
+    /// Injects both boundaries plus the license gate (and optionally a Contacts
+    /// access + settings opener) for tests and previews; production builds the
+    /// boundaries from the shared composition.
+    ///
+    /// The board's `onFailure` is wired to `StowerStartupModel.handleBoardFailure`,
+    /// so a mid-session board error re-enters onboarding rather than showing an
+    /// empty board. `contacts` defaults to a denied no-op so previews/tests never
+    /// prompt.
     internal init(
-        provider: any StowerStartupProviding,
-        settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener()
+        startup: any StowerStartupProviding,
+        board: any StowerBoardDataSource,
+        draftStore: any StowerDraftStoring = StowerInMemoryDraftStore(),
+        dropper: StowerMessagesDropper = StowerMessagesDropper(
+            perform: { _ in },
+            isAccessibilityTrusted: { false }
+        ),
+        contacts: StowerContactsAccess = .denied,
+        licenseGate: any StowerLicenseGating,
+        settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
+        flusher: StowerTerminationFlusher? = nil
     ) {
-        _model = State(initialValue: StowerStartupModel(provider: provider))
+        let startupModel = StowerStartupModel(provider: startup, licenseGate: licenseGate)
+        _model = State(initialValue: startupModel)
+        let boardModel = StowerBoardViewModel(
+            dataSource: board,
+            draftStore: draftStore,
+            dropper: dropper,
+            contacts: contacts,
+            settings: settings,
+            onFailure: { failure in startupModel.handleBoardFailure(failure) }
+        )
+        _boardModel = State(initialValue: boardModel)
+        flusher?.onFlush { [weak boardModel] in await boardModel?.flushAll() }
         self.settings = settings
     }
 
@@ -40,8 +88,14 @@ public struct StowerRootView: View {
 
     @ViewBuilder private var screen: some View {
         switch model.state {
-        case .checkingModel, .checkingMessages:
+        case .checkingModel, .checkingLicense, .checkingMessages:
             StowerCheckingView(state: model.state)
+        case .needsLicense(let error):
+            StowerLicenseEntryView(
+                key: $licenseKey,
+                error: error,
+                onActivate: { model.submitLicense($0) }
+            )
         case .modelUnavailable(let reason):
             StowerModelUnavailableView(
                 reason: reason,
@@ -53,7 +107,7 @@ public struct StowerRootView: View {
         case .needsFullDiskAccessStillMissing(let path):
             fdaView(path: path, stillMissing: true)
         case .connectedPreparingBoard:
-            StowerConnectedLoadingView()
+            StowerBoardView(model: boardModel)
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
         }

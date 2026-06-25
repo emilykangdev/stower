@@ -9,7 +9,7 @@ let package = Package(
         .library(name: "StowerPhotos", targets: ["StowerPhotos"]),
         .library(name: "StowerMessages", targets: ["StowerMessages"]),
         // The tested StowerMac UI library. The Xcode app links this product (Task
-        // 5); only its one adapter file imports StowerMessages.
+        // 5); only its four engine-coupled files import StowerMessages (precheck 6b).
         .library(name: "StowerMacUI", targets: ["StowerMacUI"]),
         // The target name alone does not name the binary; the explicit executable
         // product is what makes `swift run stower` resolve (eng Codex 6).
@@ -61,9 +61,10 @@ let package = Package(
         .target(
             // The StowerMac app's tested UI library. Depends on the LOCAL
             // StowerMessages target (the app is a client of the engine —
-            // MacAppContract.md §2), not a .product. Only
-            // Startup/StowerMessagesStartupAdapter.swift imports StowerMessages;
-            // every other file talks to the app-owned boundary alone.
+            // MacAppContract.md §2), not a .product. Only the four engine-coupled
+            // files (StowerMessagesStartupAdapter, StowerLiveBoardDataSource,
+            // StowerMessagesComposition, StowerMessagesMapping) import
+            // StowerMessages; every other file talks to the app-owned boundary alone.
             name: "StowerMacUI",
             dependencies: ["StowerMessages"],
             path: "Sources/StowerMacUI"
