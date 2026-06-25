@@ -269,6 +269,31 @@ async function ensureTrialAttached(
   return true;
 }
 
+/**
+ * Enforces the contract's hard invariant that `STOWER_V0` is a license-only
+ * entitlement: it must never be attached to a policy (which would grant the paid
+ * unlock to every license under that policy). The script never attaches it, but a
+ * dashboard mistake or buggy prior run could have — so we actively check both
+ * bootstrapped policies and fail loudly rather than report success over a forbidden
+ * attachment.
+ */
+async function assertV0NotPolicyAttached(
+  client: KeygenClient,
+  policyIDs: string[],
+  v0EntitlementID: string,
+): Promise<void> {
+  for (const policyID of policyIDs) {
+    const attached = (await client.listAll(`policies/${policyID}/entitlements`))
+      .some((e) => e.id === v0EntitlementID);
+    if (attached) {
+      throw new Error(
+        `STOWER_V0 (${v0EntitlementID}) is attached to policy ${policyID} — ` +
+          `it must be license-only; detach it in Keygen, then rerun`,
+      );
+    }
+  }
+}
+
 /** Prints the recorded ids and the manual prod-ops reminders to stderr. */
 function printSummary(deps: BootstrapDeps, output: BootstrapOutput): void {
   deps.stderr("Keygen bootstrap complete (ids also on stdout as JSON):");
@@ -316,6 +341,11 @@ export async function bootstrap(deps: BootstrapDeps): Promise<BootstrapOutput> {
   const v0Entitlement = await findOrCreateEntitlement(
     client,
     V0_ENTITLEMENT_CODE,
+  );
+  await assertV0NotPolicyAttached(
+    client,
+    [trialPolicy.id, paidPolicy.id],
+    v0Entitlement.id,
   );
   await ensureTrialAttached(client, trialPolicy.id, trialEntitlement.id);
 

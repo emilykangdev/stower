@@ -380,6 +380,26 @@ Deno.test("existing product/policies/entitlements are reused, none created", asy
   });
 });
 
+// If STOWER_V0 is already (wrongly) attached to a policy, the bootstrap fails
+// loudly — the contract requires STOWER_V0 to be license-only.
+Deno.test("a forbidden STOWER_V0 policy attachment fails loudly", async () => {
+  const server = new FakeKeygen();
+  seedAll(server);
+  server.policyEntitlements.set("paid-existing", ["v0-ent-existing"]);
+  const captured: Captured = { out: [], err: [] };
+  let threw = false;
+  try {
+    await bootstrap(makeDeps(server, captured));
+  } catch (error) {
+    threw = true;
+    const message = (error as Error).message;
+    assert(message.includes("STOWER_V0"), "error should name STOWER_V0");
+    assert(message.includes("license-only"), "error should explain the invariant");
+  }
+  assert(threw, "a forbidden STOWER_V0 policy attachment must abort the bootstrap");
+  assertEquals(captured.out.length, 0, "no success JSON when STOWER_V0 is mis-attached");
+});
+
 // A reused Stower policy that has drifted from the contract (here: wrong
 // maxMachines) fails loudly rather than being emitted as correctly bootstrapped.
 Deno.test("a drifted reused policy fails loudly", async () => {
