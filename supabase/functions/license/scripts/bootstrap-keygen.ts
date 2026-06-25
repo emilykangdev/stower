@@ -266,6 +266,11 @@ async function ensureTrialAttached(
   const response = await client.send("POST", `${client.base}/${collection}`, {
     data: [{ type: "entitlements", id: trialEntitlementID }],
   });
+  // Consume the body even though we only read the status — an unread response
+  // stream leaks (a connection in the Edge Function; a sanitizer failure under
+  // Deno test). create()/listAll() consume via .json(); this attach path is the
+  // one POST whose body we ignore, so cancel it explicitly.
+  await response.body?.cancel();
   if (!response.ok) {
     throw new Error(`keygen attach trial entitlement ${response.status}`);
   }

@@ -1,0 +1,11 @@
+{
+  // Override config for `deno task test:integration`. It is identical to deno.json
+  // EXCEPT it omits the `test.exclude` of `integration/`. Deno's `test.exclude`
+  // filters explicitly-passed paths too — so `deno test integration/` under the
+  // default config finds "No test modules found". Pointing the integration task at
+  // this exclude-free config is what lets the integration tests run, while bare
+  // `deno test` (precheck, every commit) keeps using deno.json and stays unit-only.
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2"
+  }
+}

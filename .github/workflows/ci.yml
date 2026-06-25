@@ -36,3 +36,30 @@ jobs:
         env:
           STOWER_SKIP_FM_INTEGRATION: "1"
         run: ./Scripts/precheck.sh
+
+  # Licensing integration tier: stands up a real local Keygen CE and runs the Deno
+  # integration suite against it, proving our JSON:API payloads + the offline
+  # machine path for real (the check that would have caught the `page[number]` bug
+  # before it shipped). SEPARATE from the macOS `build` job ON PURPOSE: `keygen/api`
+  # is an x86_64 image, native here on ubuntu but emulated (slow/flaky) on the
+  # macos-15 arm64 runner. This tier is excluded from `precheck` (the per-commit
+  # gate stays fast + Docker-free) and runs only here.
+  #
+  # NOTE: make this a REQUIRED status check in branch protection so nothing touching
+  # the licensing API merges without real-CE regression proof (Emily's payments bar).
+  keygen-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Boot Keygen CE harness
+        run: Scripts/Keygen/up.sh
+      - name: Run licensing integration tests
+        working-directory: supabase/functions/license
+        run: deno task test:integration
+      - name: Tear down harness
+        if: always()
+        run: Scripts/Keygen/down.sh
