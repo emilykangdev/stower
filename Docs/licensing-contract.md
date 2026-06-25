@@ -416,7 +416,7 @@ falls back to the cached signed file only until that file's `meta.expiry`.
 | G5 | `StowerRailwayLicenseGate` implements the machine-file lifecycle in §5b | not started | Plan B (§C) |
 | G6 | Fingerprint fallback deleted (PAR-36) | not started | PAR-36 ticket (not Plan B — Plan B's Non-goals exclude it; must land before selling paid licenses) |
 | G7 | Delete `StowerLemonSqueezyLicenseGate` + `StowerLicenseStore` | not started | Plan B |
-| G8 | Webhook attaches `STOWER_V0` (§B) | not started | Bootstrap plan |
+| G8 | Webhook attaches `STOWER_V0` (§B) | not started | Plan Beta (Railway webhook) |
 | G9 | Bootstrap script creates structures (§A) | not started | Bootstrap plan |
 | G10 | `keygenPublicKeyHex` replaced with real key | not started | Prod ops |
 | G11 | Local Keygen CE harness (regression net) | not started | Plan 2 |
