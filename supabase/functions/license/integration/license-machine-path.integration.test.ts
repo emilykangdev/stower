@@ -23,9 +23,12 @@ import {
   requirePublicKey,
 } from "./harness.ts";
 
-// A fixed, fake device fingerprint — the same value is the machine fingerprint and
-// the validate-key scope, so the scoped validation matches the activated machine.
-const FINGERPRINT = "stower-integration-fingerprint-0001";
+// A unique-per-run fake device fingerprint — the same value is the machine
+// fingerprint and the validate-key scope, so the scoped validation matches the
+// activated machine. Unique per run so the suite is rerunnable against a still-up
+// harness: the policies are UNIQUE_PER_PRODUCT, so a fixed fingerprint would
+// collide on the second activate (the prior run's machine still holds it).
+const FINGERPRINT = `stower-integration-${crypto.randomUUID()}`;
 // Keygen requires a check-out TTL of at least one hour (3600s).
 const CHECKOUT_TTL_SECONDS = 3600;
 // Force an unencrypted, Ed25519-signed machine file so the test can verify the

@@ -182,6 +182,22 @@ function assertConforms(
   }
 }
 
+/**
+ * Fails loudly if the Paid policy carries a `duration`. `assertConforms` only
+ * checks the attributes we set (an allowlist), so a reused or hand-edited Paid
+ * policy with a stray `duration` would pass the drift check — and silently expire
+ * paid licenses, which must be perpetual (I2). `!= null` treats absent and null
+ * alike, so this never false-positives on a correctly perpetual policy.
+ */
+function assertPaidPolicyPerpetual(policy: KeygenResource): void {
+  if (policy.attributes?.duration != null) {
+    throw new Error(
+      `Paid policy ${policy.id} has a duration (${policy.attributes.duration}) — ` +
+        `paid licenses must be perpetual. Clear the duration in Keygen, then rerun`,
+    );
+  }
+}
+
 /** Finds the `stower` product by code, else creates it. */
 async function findOrCreateProduct(
   client: KeygenClient,
@@ -342,6 +358,7 @@ export async function bootstrap(deps: BootstrapDeps): Promise<BootstrapOutput> {
     PAID_POLICY_NAME,
     { transferStrategy: "RESET_EXPIRY" },
   );
+  assertPaidPolicyPerpetual(paidPolicy);
   const trialEntitlement = await findOrCreateEntitlement(
     client,
     TRIAL_ENTITLEMENT_CODE,
