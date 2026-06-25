@@ -26,6 +26,7 @@ interface Stored {
   id: string;
   type: string;
   attributes: Record<string, unknown>;
+  relationships?: Record<string, unknown>;
 }
 
 interface RecordedRequest {
@@ -87,11 +88,13 @@ class FakeKeygen {
       const data = (body?.data ?? {}) as {
         type: string;
         attributes?: Record<string, unknown>;
+        relationships?: Record<string, unknown>;
       };
       const created: Stored = {
         id: `${collection}-${++this.idCounter}`,
         type: data.type,
         attributes: data.attributes ?? {},
+        relationships: data.relationships,
       };
       store.push(created);
       return this.json(201, { data: created });
@@ -158,15 +161,20 @@ function seedAll(server: FakeKeygen): void {
     type: "products",
     attributes: { name: "Stower", code: "stower" },
   });
+  const underProduct = {
+    product: { data: { type: "products", id: "prod-existing" } },
+  };
   server.policies.push({
     id: "trial-existing",
     type: "policies",
     attributes: { name: "STOWER_TRIAL_POLICY" },
+    relationships: underProduct,
   });
   server.policies.push({
     id: "paid-existing",
     type: "policies",
     attributes: { name: "STOWER_PAID_POLICY" },
+    relationships: underProduct,
   });
   server.entitlements.push({
     id: "trial-ent-existing",
@@ -356,6 +364,45 @@ Deno.test("existing product/policies/entitlements are reused, none created", asy
     trialEntitlementId: "trial-ent-existing",
     v0EntitlementId: "v0-ent-existing",
   });
+});
+
+// A same-named policy belonging to a DIFFERENT product must NOT be reused — the
+// script creates Stower's own policy under the Stower product instead.
+Deno.test("a same-named policy under another product is not reused", async () => {
+  const server = new FakeKeygen();
+  server.products.push({
+    id: "prod-stower",
+    type: "products",
+    attributes: { name: "Stower", code: "stower" },
+  });
+  // A foreign product's policy that happens to share the name.
+  server.policies.push({
+    id: "foreign-trial",
+    type: "policies",
+    attributes: { name: "STOWER_TRIAL_POLICY" },
+    relationships: {
+      product: { data: { type: "products", id: "prod-other" } },
+    },
+  });
+  const captured: Captured = { out: [], err: [] };
+  const output = await bootstrap(makeDeps(server, captured));
+
+  assert(
+    output.trialPolicyId !== "foreign-trial",
+    "must not reuse another product's policy",
+  );
+  // A fresh trial policy was created under the Stower product.
+  const created = server.createPostsTo("policies").find((r) => {
+    const data = (r.body as {
+      data: {
+        attributes: Record<string, unknown>;
+        relationships: { product: { data: { id: string } } };
+      };
+    }).data;
+    return data.attributes.name === "STOWER_TRIAL_POLICY" &&
+      data.relationships.product.data.id === "prod-stower";
+  });
+  assert(created !== undefined, "a Stower-scoped trial policy must be created");
 });
 
 // An already-attached Trial entitlement is treated as success: no second attach

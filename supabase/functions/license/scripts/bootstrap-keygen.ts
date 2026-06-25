@@ -59,6 +59,10 @@ interface KeygenResource {
   id: string;
   type: string;
   attributes?: Record<string, unknown>;
+  relationships?: Record<
+    string,
+    { data?: { type?: string; id?: string } | null }
+  >;
 }
 
 interface ListResponse {
@@ -163,7 +167,13 @@ async function findOrCreateProduct(
   });
 }
 
-/** Finds a policy by name, else creates it under the product with exact rules. */
+/**
+ * Finds a policy by name *under this product*, else creates it with exact rules.
+ * The product scope matters: policies belong to a product, so on a shared account
+ * a same-named policy under a different product must NOT be reused — that would
+ * emit another product's policy id as Stower's. (Products and entitlements are
+ * account-level with unique codes, so those match account-wide safely.)
+ */
 async function findOrCreatePolicy(
   client: KeygenClient,
   productID: string,
@@ -171,7 +181,10 @@ async function findOrCreatePolicy(
   variableAttrs: Record<string, unknown>,
 ): Promise<KeygenResource> {
   const existing = (await client.listAll("policies"))
-    .find((p) => p.attributes?.name === name);
+    .find((p) =>
+      p.attributes?.name === name &&
+      p.relationships?.product?.data?.id === productID
+    );
   if (existing) return existing;
   return await client.create("policies", {
     data: {
