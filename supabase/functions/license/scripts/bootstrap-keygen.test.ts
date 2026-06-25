@@ -164,16 +164,30 @@ function seedAll(server: FakeKeygen): void {
   const underProduct = {
     product: { data: { type: "products", id: "prod-existing" } },
   };
+  const sharedPolicyAttrs = {
+    scheme: "ED25519_SIGN",
+    authenticationStrategy: "LICENSE",
+    maxMachines: 1,
+    machineUniquenessStrategy: "UNIQUE_PER_PRODUCT",
+  };
   server.policies.push({
     id: "trial-existing",
     type: "policies",
-    attributes: { name: "STOWER_TRIAL_POLICY" },
+    attributes: {
+      name: "STOWER_TRIAL_POLICY",
+      ...sharedPolicyAttrs,
+      duration: 2_592_000,
+    },
     relationships: underProduct,
   });
   server.policies.push({
     id: "paid-existing",
     type: "policies",
-    attributes: { name: "STOWER_PAID_POLICY" },
+    attributes: {
+      name: "STOWER_PAID_POLICY",
+      ...sharedPolicyAttrs,
+      transferStrategy: "RESET_EXPIRY",
+    },
     relationships: underProduct,
   });
   server.entitlements.push({
@@ -364,6 +378,27 @@ Deno.test("existing product/policies/entitlements are reused, none created", asy
     trialEntitlementId: "trial-ent-existing",
     v0EntitlementId: "v0-ent-existing",
   });
+});
+
+// A reused Stower policy that has drifted from the contract (here: wrong
+// maxMachines) fails loudly rather than being emitted as correctly bootstrapped.
+Deno.test("a drifted reused policy fails loudly", async () => {
+  const server = new FakeKeygen();
+  seedAll(server);
+  const trial = server.policies.find((p) => p.id === "trial-existing")!;
+  trial.attributes.maxMachines = 5; // operator-edited drift
+  const captured: Captured = { out: [], err: [] };
+  let threw = false;
+  try {
+    await bootstrap(makeDeps(server, captured));
+  } catch (error) {
+    threw = true;
+    const message = (error as Error).message;
+    assert(message.includes("drifts"), "error should report drift");
+    assert(message.includes("maxMachines"), "error should name the drifted field");
+  }
+  assert(threw, "a drifted policy must abort the bootstrap");
+  assertEquals(captured.out.length, 0, "no success JSON on drift");
 });
 
 // A same-named policy belonging to a DIFFERENT product must NOT be reused — the

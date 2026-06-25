@@ -152,18 +152,46 @@ function keygenClient(deps: BootstrapDeps, config: Config) {
 
 type KeygenClient = ReturnType<typeof keygenClient>;
 
+/**
+ * Fails loudly when an existing (reused) resource drifts from the attributes the
+ * contract requires. The script must never emit a reused-but-wrong structure as
+ * if it were correctly bootstrapped (Railway would consume the drifted id). We
+ * compare only the attributes we positively set on create; an operator who edited
+ * the resource in the Keygen dashboard must fix or delete it and rerun. We do not
+ * auto-repair — mutating an existing live policy/license is out of this script's
+ * scope.
+ */
+function assertConforms(
+  kind: string,
+  existing: KeygenResource,
+  expected: Record<string, unknown>,
+): void {
+  const drifted = Object.entries(expected)
+    .filter(([key, value]) =>
+      JSON.stringify(existing.attributes?.[key]) !== JSON.stringify(value)
+    )
+    .map(([key]) => key);
+  if (drifted.length > 0) {
+    throw new Error(
+      `existing ${kind} ${existing.id} drifts from the contract on: ` +
+        `${drifted.join(", ")} — fix or delete it in Keygen, then rerun`,
+    );
+  }
+}
+
 /** Finds the `stower` product by code, else creates it. */
 async function findOrCreateProduct(
   client: KeygenClient,
 ): Promise<KeygenResource> {
+  const attributes = { name: PRODUCT.name, code: PRODUCT.code };
   const existing = (await client.listAll("products"))
     .find((p) => p.attributes?.code === PRODUCT.code);
-  if (existing) return existing;
+  if (existing) {
+    assertConforms("product", existing, attributes);
+    return existing;
+  }
   return await client.create("products", {
-    data: {
-      type: "products",
-      attributes: { name: PRODUCT.name, code: PRODUCT.code },
-    },
+    data: { type: "products", attributes },
   });
 }
 
@@ -180,16 +208,20 @@ async function findOrCreatePolicy(
   name: string,
   variableAttrs: Record<string, unknown>,
 ): Promise<KeygenResource> {
+  const attributes = { name, ...SHARED_POLICY_ATTRS, ...variableAttrs };
   const existing = (await client.listAll("policies"))
     .find((p) =>
       p.attributes?.name === name &&
       p.relationships?.product?.data?.id === productID
     );
-  if (existing) return existing;
+  if (existing) {
+    assertConforms("policy", existing, attributes);
+    return existing;
+  }
   return await client.create("policies", {
     data: {
       type: "policies",
-      attributes: { name, ...SHARED_POLICY_ATTRS, ...variableAttrs },
+      attributes,
       relationships: {
         product: { data: { type: "products", id: productID } },
       },
@@ -202,11 +234,15 @@ async function findOrCreateEntitlement(
   client: KeygenClient,
   code: string,
 ): Promise<KeygenResource> {
+  const attributes = { name: code, code };
   const existing = (await client.listAll("entitlements"))
     .find((e) => e.attributes?.code === code);
-  if (existing) return existing;
+  if (existing) {
+    assertConforms("entitlement", existing, attributes);
+    return existing;
+  }
   return await client.create("entitlements", {
-    data: { type: "entitlements", attributes: { name: code, code } },
+    data: { type: "entitlements", attributes },
   });
 }
 
