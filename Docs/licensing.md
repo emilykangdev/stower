@@ -184,3 +184,8 @@ So:
   comes from developer-generated test sets, opt-in feedback through TelemetryDeck which doesn't collect any personal data, and Emily using it herself.
 
 Note to dev: see private repo me/Business/Plans/stower-strategy.md for further details.
+
+> **Engineering contract:** the stable facade shapes, seam contracts, and
+> load-bearing invariants live in [`licensing-contract.md`](./licensing-contract.md).
+> Implementation plans sign against that file by version; this doc is the
+> customer-facing terms.

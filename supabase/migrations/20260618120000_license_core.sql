@@ -1,6 +1,7 @@
 -- License core schema: the two tables that make trial mint idempotent and the
--- Lemon Squeezy upgrade webhook replay-safe. See the reference plan
--- §What Persistence (tmp/ready-plans/2026-06-18-keygen-trial-supabase.md).
+-- Lemon Squeezy upgrade webhook replay-safe. See Docs/licensing-contract.md
+-- and the archived parent plan §What Persistence
+-- (tmp/archive-plans/2026-06-18-keygen-trial-supabase.md).
 
 -- One row per device. The mint-trial idempotency guard (closes B2): a mint that
 -- dies mid-flow neither double-mints nor returns null ids, because the row's
