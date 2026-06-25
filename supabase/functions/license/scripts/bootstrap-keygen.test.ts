@@ -57,6 +57,19 @@ class FakeKeygen {
       "",
     );
     this.requests.push({ method, collection, body });
+    // Mirror real Keygen (caught by the CE spike, 2026-06-24): a list with
+    // `page[size]` but no `page[number]` is a 400. Keeping the fake honest means a
+    // regression that drops `page[number]` fails here instead of only in prod.
+    if (
+      method === "GET" && url.includes("page[size]") &&
+      !url.includes("page[number]")
+    ) {
+      return Promise.resolve(
+        this.json(400, {
+          errors: [{ detail: "page number must be a number greater than 0" }],
+        }),
+      );
+    }
     return Promise.resolve(this.route(method, collection, body));
   };
 

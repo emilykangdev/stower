@@ -120,8 +120,11 @@ function keygenClient(deps: BootstrapDeps, config: Config) {
   // set larger than one page is never silently truncated.
   async function listAll(collection: string): Promise<KeygenResource[]> {
     const out: KeygenResource[] = [];
+    // Keygen 400s on `page[size]` unless `page[number]` is sent too (it defaults
+    // the number to 0, which it rejects). Later pages come from `links.next`,
+    // which already carries the correct params.
     let path: string | null =
-      `${base}/${collection}?page[size]=${LIST_PAGE_SIZE}`;
+      `${base}/${collection}?page[number]=1&page[size]=${LIST_PAGE_SIZE}`;
     while (path) {
       const response = await send("GET", path);
       if (!response.ok) {
