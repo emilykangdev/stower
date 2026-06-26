@@ -132,9 +132,12 @@ public actor StowerInteractionEventStore {
 
     /// The most recent `limit` events, NEWEST FIRST (descending insert order).
     ///
-    /// For tests and developer inspection only — there is no product reader in v1.
+    /// For tests and developer inspection only — there is no product reader in v1. A
+    /// non-positive `limit` clamps to zero: SQLite treats a negative `LIMIT` as
+    /// unbounded, which a dev-inspection call should never accidentally trigger.
     public func recent(limit: Int) throws -> [StowerInteractionEvent] {
-        try databaseQueue.read { database in
+        let boundedLimit = max(0, limit)
+        return try databaseQueue.read { database in
             try Row.fetchAll(
                 database,
                 sql: """
@@ -144,7 +147,7 @@ public actor StowerInteractionEventStore {
                     ORDER BY id DESC
                     LIMIT ?
                     """,
-                arguments: [limit]
+                arguments: [boundedLimit]
             ).map { row in
                 StowerInteractionEvent(
                     eventType: row["eventType"],

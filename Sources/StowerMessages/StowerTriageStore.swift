@@ -111,8 +111,10 @@ public actor StowerTriageStore {
     ///
     /// - Parameter url: Where `triage.sqlite` lives (its directory is created).
     /// - Returns: A working, file-backed store at `url`.
-    /// - Throws: A disk-level error (unwritable directory, disk full) or
-    ///   `StowerTriageStoreError.openFailed` if every lock retry was exhausted.
+    /// - Throws: A disk-level error (unwritable directory, disk full); the underlying
+    ///   `DatabaseError` (the last `SQLITE_BUSY`/`LOCKED`) when every lock retry is
+    ///   exhausted; or `StowerTriageStoreError.openFailed` only as a fallback when no
+    ///   specific lock error was captured.
     public static func open(at url: URL) throws -> StowerTriageStore {
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),

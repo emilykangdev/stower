@@ -86,7 +86,7 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
         to board: StowerDebtBoard,
         now: Date
     ) async -> (neglected: [StowerDebtItem], ghosted: [StowerDebtItem]) {
-        let dismissed: [String: StowerDismissedAnchor]
+        var dismissed: [String: StowerDismissedAnchor]
         let muted: Set<String>
         do {
             dismissed = try await triage.dismissedMessages()
@@ -94,8 +94,13 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
         } catch {
             return (board.neglected, board.ghosted)
         }
-        let neglected = await keep(board.neglected, dismissed: dismissed, muted: muted, now: now)
-        let ghosted = await keep(board.ghosted, dismissed: dismissed, muted: muted, now: now)
+        // `dismissed` is shared (inout) across both passes so a retire in one pass
+        // expires the anchor for the SAME `handleKey` in the other — the transport-flip
+        // case where one person's iMessage + SMS land in different lenses (one newer
+        // message should reveal BOTH this load, not leave the sibling hidden until the
+        // next reload).
+        let neglected = await keep(board.neglected, dismissed: &dismissed, muted: muted, now: now)
+        let ghosted = await keep(board.ghosted, dismissed: &dismissed, muted: muted, now: now)
         return (neglected, ghosted)
     }
 
@@ -106,7 +111,7 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
     /// — at which point the row returns and its stale dismissal is best-effort retired.
     private func keep(
         _ items: [StowerDebtItem],
-        dismissed: [String: StowerDismissedAnchor],
+        dismissed: inout [String: StowerDismissedAnchor],
         muted: Set<String>,
         now: Date
     ) async -> [StowerDebtItem] {
@@ -123,6 +128,10 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
                     anchorTimestamp: anchor.anchorTimestamp,
                     at: now
                 )
+                // Expire it in the working snapshot too, so a same-load sibling row on
+                // the same handle (transport flip) isn't re-checked against the now-
+                // retired anchor.
+                dismissed[handleKey] = nil
             }
             kept.append(item)
         }

@@ -48,5 +48,5 @@ v1 ships the same Select mode with empty checkboxes the user ticks manually.
 Dismiss shows a quiet **draining-line undo bar** ("Dismissed · Undo", ~3s single / ~5s batch,
 pause on hover or keyboard focus, then gone) backed by an app-owned `UndoManager` ⌘Z for the
 session. No persistent undo button and **no dismiss-history screen** — the ephemerality is
-deliberate (protects decision closure). See the plan's JC3 and the cited research at
-`~/Documents/Projects/me/Research/toasts-desktop-placement-and-closure-cited.md`.
+deliberate (protects decision closure). See the plan's JC3 and the toast
+placement/closure research it cites (WCAG 2.2.1 + Gilbert & Ebert decision-closure).

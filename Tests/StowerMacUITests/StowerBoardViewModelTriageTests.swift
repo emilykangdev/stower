@@ -32,11 +32,16 @@ private let triageFixedNow = Date(timeIntervalSince1970: 5_000_000)
     }
 
     /// A row whose handle is unique to `chatID` (distinct dismiss/mute keys per row).
+    ///
+    /// Derived deterministically from the chatID's scalars (fixed-width blocks) — NOT
+    /// Swift's per-process-seeded `hashValue`, which is non-reproducible and whose
+    /// modulo could collide two chatIDs onto one `draftKey` and flake the count asserts.
     private func uniqueRow(_ chatID: String) -> StowerBoardRow {
-        makeRow(
-            chatID: chatID,
-            handle: "+1415555\(String(format: "%04d", abs(chatID.hashValue % 10000)))"
-        )
+        let digits = chatID.unicodeScalars
+            .map { String(format: "%03d", $0.value % 1000) }
+            .joined()
+        let suffix = String((digits + String(repeating: "0", count: 10)).prefix(10))
+        return makeRow(chatID: chatID, handle: "+1\(suffix)")
     }
 
     private func makeViewModel(
