@@ -6,7 +6,7 @@
 > code changes. If a plan describes a seam shape that contradicts this file, the
 > plan is wrong — not this file.
 
-**Version:** 1.13 · **Last updated:** 2026-06-25 · **Canonical home:** this file.
+**Version:** 1.14 · **Last updated:** 2026-06-26 · **Canonical home:** this file.
 
 When the contract changes: edit here, bump the version, record the change in
 §Changelog. Plans reference this file by version number.
@@ -162,7 +162,7 @@ the plan is wrong.
 | Vendor | Role | Issues licenses? |
 |--------|------|-------------------|
 | **Keygen** | License authority — mints, validates, signs machine-files, enforces `maxMachines`, holds entitlements | **Yes** (the sole authority) |
-| **Lemon Squeezy** | Payment processor — takes money, redirects/returns the customer, and sends `order_created` to the Edge Function (`/ls-webhook`) | **No** (payment-only) |
+| **Lemon Squeezy** | Payment processor — takes money, returns the customer to its own web confirmation (no deep link into the Mac app today; see §5b), and sends `order_created` to the Edge Function (`/ls-webhook`) — the webhook, not any browser redirect, is how it tells Stower the payment succeeded | **No** (payment-only) |
 | **Supabase Edge Function** (`supabase/functions/license/`, Deno) | The app-facing licensing **brain** — mints trials (and activates the machine + checks out the signed file), validates/checks in (`/check-in`), checks out Keygen machine files, receives Lemon Squeezy webhooks, reasons over trial expiry/major-extension eligibility/current-latest-major, reads/writes Supabase Postgres, and calls Keygen admin/license APIs. Keygen admin secrets live in its env, never in the app binary | No (orchestrator) |
 | **Supabase** (Postgres) | State store for `device_trials`/`purchases`/`trial_extension_grants`; the Edge Function (above) runs in the same Supabase project | No (state store) |
 
@@ -194,9 +194,12 @@ var.** The code string `STOWER_V0` is hardcoded in three runtimes that must
 agree: the Swift `requiredEntitlementCode` (offline gate), the Deno
 `STOWER_V0_ENTITLEMENT_CODE` constant in `handlers.ts` (used by both the webhook
 attach and the check-in OR), and `bootstrap-keygen.ts`'s `V0_ENTITLEMENT_CODE`.
-The Edge Function **derives** the required code from `appMajor` via the pure
-`entitlementForMajor` (`"v0" → "STOWER_V0"`, JC7) — the app does NOT send a
-`requiredEntitlement`. Only the Keygen entitlement **resource id**
+For v0 the check-in **required** entitlement is simply the `STOWER_V0` constant
+— there is only one product, so the server no longer derives it from any major
+(neither a client-claimed `appMajor` nor a DB `started_major`); the app does NOT
+send a `requiredEntitlement`. The per-major derivation (`STOWER_V${major}`,
+sourced from `purchased_major` for paid users — the only consumers of `required`)
+returns at v1 (JC7). Only the Keygen entitlement **resource id**
 `KEYGEN_V0_ENTITLEMENT` (a UUID) is an env var, because it is account-specific.
 The CI integration test pins all runtimes to the same string.
 
@@ -280,28 +283,35 @@ internal struct StowerTrialMintClient: Sendable {
 **Supabase Edge Function** — `supabase/functions/license/` (the licensing brain;
 landed via Plan Beta). `Deno.serve` routes (`index.ts`):
 
-- `POST /mint-trial` `{fingerprint, appMajor, appBuild}` → mints (or returns the
+- `POST /mint-trial` `{fingerprint}` → mints (or returns the
   existing) Trial-policy license (30d expiry), **activates the machine**, and
   **checks out the signed machine file**, returning
   `{minted, licenseKey, licenseID, machineID, machineFile}` (the reply field was
   renamed from the as-built `key` to **`licenseKey`**). `400` (no fingerprint) /
   `503` (retry) on failure; crash-recoverable claim (I9).
-- `POST /check-in` `{licenseID, fingerprint, appMajor, appBuild}` + signed
+- `POST /check-in` `{licenseID, fingerprint}` + signed
   headers — the reachable-launch gate authority (§5 "/check-in"). Never returns
   the license key.
 - `POST /ls-webhook` — `order_created`: `upgradeToPaid` (PUT policy → Paid +
   PATCH expiry → null), **attaches `STOWER_V0`** via `keygenAdmin.attachV0`
   (license-level), then records `purchased_major`/`entitlement_code` on the
   `purchases` row. Validates/upgrades before recording (B7/I10).
-- `GET /health` → `{status:"ok"}`, no secrets, no DB.
+- `GET /health` → env-aware deploy-readiness canary, no DB, no secret *values* in the
+  body. `200 {status:"ok"}` when every required env var is set; `503
+  {status:"degraded", missingEnv:[...]}` listing the unset required vars by **name
+  only** when any is missing (`missingRequiredEnv` over `REQUIRED_ENV` in
+  `config.ts`: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `KEYGEN_ACCOUNT`,
+  `KEYGEN_TOKEN`, `KEYGEN_V0_ENTITLEMENT`, `KEYGEN_TRIAL_POLICY`,
+  `KEYGEN_PAID_POLICY`, `LS_WEBHOOK_SECRET`, `LS_PAID_VARIANT_ID`). One curl after a
+  deploy surfaces a misconfig before the first mint fails.
 - `KeygenAdmin` (in `index.ts`) holds the admin token from env and never logs it;
   it owns `createTrialLicense`, `upgradeToPaid`, `attachV0`, `activateMachine`,
   `checkoutMachineFile`, `validate`, `effectiveEntitlements`, `currentExpiry`,
   `patchExpiry`.
 - `TrialStore`: `device_trials` (fingerprint PK; `status` lifecycle
   `pending`→`active`; `claim_id` for crash recovery; plus `keygen_machine_id`,
-  `started_major`, `updated_at`, `last_check_in_at`, `observed_major`,
-  `observed_build`) and `trial_extension_grants` (PK `(keygen_license_id, major)`).
+  `started_major`, `updated_at`, `last_check_in_at`) and `trial_extension_grants`
+  (PK `(keygen_license_id, major)`).
 - `PurchaseStore`: `purchases` (`ls_order_id` PK, FK to
   `device_trials.keygen_license_id`, plus `purchased_major`/`entitlement_code`).
 
@@ -309,7 +319,7 @@ landed via Plan Beta). `Deno.serve` routes (`index.ts`):
 
 `/check-in` is the reachable-launch gate authority (`checkIn` in `handlers.ts`,
 wired in `index.ts`). Request: `POST /check-in` with body
-`{licenseID, fingerprint, appMajor, appBuild}` and three headers:
+`{licenseID, fingerprint}` and three headers:
 `X-Stower-Timestamp` (unix seconds), `X-Stower-Nonce`, `X-Stower-Signature`
 (lower-case hex). Status table:
 
@@ -546,7 +556,7 @@ vaporware. Plans must not violate these.
 | I1 | §C must not go live before §A + §B | A gate checking for `STOWER_V0` before the webhook stamps it rejects every paying customer |
 | I2 | Trial and Paid policies are policy-change-compatible | trial→paid `PUT /policy` 422s if they differ on crypto scheme / encrypted / pooled / fingerprint-strategy |
 | I3 | `STOWER_V0` is license-level, not policy-level | License-level is the only shape that lets unlocks "add up" across majors |
-| I4 | The Edge Function applies the online OR (effective entitlements include `STOWER_TRIAL` OR the derived code) and the Mac app applies the offline OR from the signed file | Keygen `scope.entitlements` is AND-only; an AND scope can't express "v0 OR trial". The function derives the required code from `appMajor` via `entitlementForMajor` (JC7) |
+| I4 | The Edge Function applies the online OR (effective entitlements include `STOWER_TRIAL` OR the derived code) and the Mac app applies the offline OR from the signed file | Keygen `scope.entitlements` is AND-only; an AND scope can't express "v0 OR trial". For v0 the required code is the flat `STOWER_V0` constant; the per-major derivation (`STOWER_V${major}`, sourced from `purchased_major`) returns at v1 (JC7) |
 | I5 | The offline path enforces entitlements from the signed file | Otherwise an offline `STOWER_V0` lease could run a future v1 build |
 | I6 | Machine-file signature is verified on every `load()` | A tampered cache must be rejected, not trusted |
 | I7 | The Edge Function's paid-upgrade path fails loudly on missing `KEYGEN_V0_ENTITLEMENT` (throws at boot in `keygenAdmin()`) | A silent skip ships paid licenses with no recorded major — the exact regression this work exists to prevent |
@@ -599,4 +609,6 @@ vaporware. Plans must not violate these.
 | 1.10 | 2026-06-24 | Pinned Stower's machine-file checkout TTL in the intended lifecycle: `ttl=604800` seconds (7 days), matching `StowerKeygenClient.machineFileTTL`. Reachable app opens always validate/check in and check out a fresh 7-day machine file; unreachable/offline opens may use the cached signed file only until its `meta.expiry`. |
 | 1.11 | 2026-06-24 | Inserted Plan Beta before Plan B: a Railway licensing backend now owns request-driven app-open check-in, once-per-major trial extension, and Supabase/Keygen runtime reasoning. Plan B must treat Railway as a landed dependency, not optional "when present" behavior. |
 | 1.12 | 2026-06-24 | Tightened the online boundary: after Plan Beta, the Swift app talks only to Railway for online licensing. Railway owns Keygen validation/activation/machine-file checkout, Supabase state, Lemon Squeezy webhook handling, and checkout URL creation. The Mac app only stores and locally verifies signed Keygen machine files for offline use. |
+| 1.14 | 2026-06-26 | `/health` is now **env-aware** (§5a): was `{status:"ok"}`, now a deploy-readiness canary — `200 {status:"ok"}` when every `REQUIRED_ENV` var is set, else `503 {status:"degraded", missingEnv:[...]}` listing the unset required vars by **name only** (never values), no DB. New `config.ts` (`REQUIRED_ENV` + pure injected `missingRequiredEnv`). Verified all §5a/§5b function names still match source: `KeygenAdmin` (`createTrialLicense`, `upgradeToPaid`, `attachV0`, `activateMachine`, `checkoutMachineFile`, `validate`, `effectiveEntitlements`, `currentExpiry`, `patchExpiry`) and handlers (`mintTrial`, `checkIn`, `handleWebhook`, `applyExtension`, `entitlementForMajor`). Machine-file checkout now uses the **admin** token (the license-scoped token is 403'd from `include=`) — already consistent with `keygenAdmin.checkoutMachineFile` owning the admin token; no seam change. Also tightened the §3 Lemon Squeezy vendor row: LS returns the customer to its own web confirmation (no deep link into the Mac app today — consistent with §5b deferring deep-link return); the `/ls-webhook` webhook, not a browser redirect, is how LS signals "paid". Grounded in `config.ts`, `index.ts` (`/health` route), `handlers.ts`. |
 | 1.13 | 2026-06-25 | **Railway superseded — the licensing brain is the existing Supabase Edge Function** (`supabase/functions/license/`, Deno); Supabase is now brain + Postgres state store, and the app's only online licensing surface is the Edge Function base URL. Swept all ~47 Railway mentions to the Edge Function (vendor split §3, model §2, sequencing, §4, §5a/§5b/§5c, invariants I4/I7/I13). As-built (§5a, landed via Plan Beta): `/mint-trial` now activates the machine + checks out the signed file and renames the wire reply `key`→`licenseKey` (returns `{minted, licenseKey, licenseID, machineID, machineFile}`); NEW `POST /check-in` (gate authority, status table in §5) + NEW `GET /health` (`{status:"ok"}`, no secrets/DB); `/ls-webhook` now attaches `STOWER_V0` via `keygenAdmin.attachV0` and records `purchased_major`/`entitlement_code`. Added the `/check-in` seam shape + status table, the JC5 per-license signature (HMAC over `{METHOD}\n{path}\n{timestamp}\n{nonce}\n{sha256hex(body)}`, header-based, 120s replay bound, committed vector `fixtures/jc5-signature-vector.json`, canonical `CHECK_IN_SIGNING_PATH` `/check-in`), JC7 (server-derived required entitlement via `entitlementForMajor`), and JC9 (entitlement *code* is a per-runtime constant, only `KEYGEN_V0_ENTITLEMENT` UUID is env) to §4. Added the "On-device storage & threat model" note: the lease lives in the macOS Keychain (`StowerKeychainItem`, service `com.stower.license.lease`, account `machine-file`) — Keychain protects the key, the Ed25519 signature protects entitlements+expiry (re-verified every `load()`, I6); a forged lease fails the signature check. New DB (`20260625_license_checkin.sql`): `device_trials` gains `keygen_machine_id/started_major/updated_at/last_check_in_at/observed_major/observed_build`; new `trial_extension_grants` (PK `(keygen_license_id, major)`); `purchases` gains `purchased_major/entitlement_code`. A2 confirmed — entitlements + license expiry live INSIDE the Ed25519-signed machine-file `enc` payload (CI integration test decodes `enc` and asserts). Added invariants I16 (JC5 signature required, header-based, replay-bounded, committed vector), I17 (check-in never returns the key), I18 (secrets never logged), I19 (entitlement code is a pinned constant). `Sources/StowerMacUI/Startup/StowerKeygenClient.swift` **deleted** (server-side now); the wired Swift gate is still `StowerLemonSqueezyLicenseGate` and `StowerTrialMintClient` is still unwired (Plan B rewires). Grounded in `index.ts`, `handlers.ts`, `requestSignature.ts`, `github.ts`, `fixtures/jc5-signature-vector.json`, `20260625_license_checkin.sql`, `StowerLicenseLeaseStore.swift`. |
+| 1.15 | 2026-06-26 | **Deleted the premature version scaffolding** (`appMajor`/`appBuild`) from the licensing backend — YAGNI, two-way door, pre-launch, zero live clients. Wire shrinks: `/mint-trial` body is now `{fingerprint}` and `/check-in` body is `{licenseID, fingerprint}` (both lose `appMajor`/`appBuild`). The check-in `required` entitlement is now the flat `STOWER_V0` constant — the server no longer derives it from any major (deleted `ENTITLEMENT_BY_MAJOR`, `entitlementForMajor`, `StowerUnknownMajorError`, and the `400 bad_request` forged-major path in `handlers.ts`). DB: `device_trials` drops `observed_major`/`observed_build` (write-only, never read; deleted from `20260625_license_checkin.sql` in place — nothing applied yet) and `TrialStore.recordObservedVersion` is gone. The JC5 parity vector (`fixtures/jc5-signature-vector.json`) was regenerated to the post-cleanup `/check-in` body via the same algorithm (`requestSignature.test.ts` parity still passes). Entitlement gate behavior is **unchanged today** (`required` is `STOWER_V0` either way). The per-major derivation (`STOWER_V${major}`, sourced from `purchased_major` for paid users — the only consumers of `required`) returns at v1; `purchased_major` is KEPT (the future entitlement source). Grounded in `handlers.ts`, `index.ts`, `index.test.ts`, `20260625_license_checkin.sql`, `fixtures/jc5-signature-vector.json`. |

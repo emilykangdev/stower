@@ -5,7 +5,7 @@
   "path": "/check-in",
   "timestamp": "1700000000",
   "nonce": "fixed-test-nonce-0123456789abcdef",
-  "body": "{\"licenseID\":\"lic-test-0001\",\"fingerprint\":\"fp-test-abc\",\"appMajor\":\"v0\",\"appBuild\":\"1\"}",
-  "bodyHash": "ac851fa067340254d3fc60c1224fd013f5449fa8dadd5730f4d382d89814970d",
-  "signature": "fa21c55fa0d33de03f88b9bf013897f3d2cc972b9ba9b283c769bd41e037d32f"
+  "body": "{\"licenseID\":\"lic-test-0001\",\"fingerprint\":\"fp-test-abc\"}",
+  "bodyHash": "60f97ca89af8e67d4e9546044f1cb89c34452423385edc577e2fdbd83a629447",
+  "signature": "2ebb652663b36ba38d61a70b1adf37a890a010bfceae3d8f495eff0cbf3856b4"
 }

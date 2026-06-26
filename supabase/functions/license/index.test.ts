@@ -69,8 +69,6 @@ class FakeTrials implements TrialStore {
   grants = new Map<string, ExtensionGrant>(); // `${licenseID}:${major}`
   claimNowMs = T0;
   activateError: Error | null = null;
-  observed: Array<{ licenseID: string; appMajor: string; appBuild: string }> =
-    [];
   machineSets: Array<{ licenseID: string; machineID: string }> = [];
   checkIns: string[] = [];
   private claimCounter = 0;
@@ -136,14 +134,6 @@ class FakeTrials implements TrialStore {
         this.rows.set(fp, { ...row, keygen_machine_id: machineID });
       }
     }
-    return Promise.resolve();
-  }
-  recordObservedVersion(
-    licenseID: string,
-    appMajor: string,
-    appBuild: string,
-  ): Promise<void> {
-    this.observed.push({ licenseID, appMajor, appBuild });
     return Promise.resolve();
   }
   extendedMajors(licenseID: string): Promise<string[]> {
@@ -288,7 +278,7 @@ function mintDeps(
   };
 }
 function mintReq(fingerprint: string): MintRequest {
-  return { fingerprint, appMajor: "v0", appBuild: "1" };
+  return { fingerprint };
 }
 
 function webhookDeps(
@@ -714,8 +704,6 @@ function checkInReq(overrides: Partial<CheckInRequest> = {}): CheckInRequest {
   return {
     licenseID: LICENSE_ID,
     fingerprint: "fp-ci",
-    appMajor: "v0",
-    appBuild: "1",
     ...overrides,
   };
 }
@@ -983,13 +971,4 @@ Deno.test("check-in propagates a transient activate error (not a false seat conf
     threw,
     "a transient activate error must propagate, not become a false fingerprint_mismatch",
   );
-});
-
-Deno.test("check-in rejects an unknown major (400)", async () => {
-  const trials = trialsWith(activeRow());
-  const result = await checkIn(
-    checkInDeps(trials, new FakeKeygen()),
-    checkInReq({ appMajor: "v999" }),
-  );
-  assertEquals(result.status, 400);
 });

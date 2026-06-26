@@ -165,17 +165,6 @@ function trialStore(db: SupabaseClient): TrialStore {
         .eq("keygen_license_id", licenseID);
       if (error) throw new Error(`set machine failed: ${error.code}`);
     },
-    async recordObservedVersion(licenseID, appMajor, appBuild) {
-      const { error } = await db
-        .from("device_trials")
-        .update({
-          observed_major: appMajor,
-          observed_build: appBuild,
-          updated_at: nowIso(),
-        })
-        .eq("keygen_license_id", licenseID);
-      if (error) throw new Error(`record observed failed: ${error.code}`);
-    },
     async extendedMajors(licenseID) {
       const { data, error } = await db
         .from("trial_extension_grants")
@@ -682,11 +671,7 @@ Deno.serve(async (request: Request) => {
 
   if (request.method === "POST" && path.endsWith("/mint-trial")) {
     const body = await readJson(request);
-    const req: MintRequest = {
-      fingerprint: String(body.fingerprint ?? ""),
-      appMajor: String(body.appMajor ?? "v0"),
-      appBuild: String(body.appBuild ?? ""),
-    };
+    const req: MintRequest = { fingerprint: String(body.fingerprint ?? "") };
     try {
       return jsonResponse(await mintTrial(mintDeps(), req));
     } catch (_error) {
@@ -705,8 +690,6 @@ Deno.serve(async (request: Request) => {
     const req: CheckInRequest = {
       licenseID: String(parsed.licenseID ?? ""),
       fingerprint: String(parsed.fingerprint ?? ""),
-      appMajor: String(parsed.appMajor ?? ""),
-      appBuild: String(parsed.appBuild ?? ""),
     };
     try {
       return jsonResponse(await checkIn(checkInDeps(request, rawBody), req));

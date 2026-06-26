@@ -61,12 +61,6 @@ export interface TrialStore {
   reclaimStale(fingerprint: string, olderThanMs: number): Promise<void>;
   /** Stores the activated machine id (repairs a null after activation). Writes `updated_at`. */
   setMachine(licenseID: string, machineID: string): Promise<void>;
-  /** Records the major/build observed on this check-in (support + diagnostics). Writes `updated_at`. */
-  recordObservedVersion(
-    licenseID: string,
-    appMajor: string,
-    appBuild: string,
-  ): Promise<void>;
   /**
    * `SELECT major FROM trial_extension_grants WHERE keygen_license_id = $1 AND
    * patched_at IS NOT NULL` — the majors with a CONFIRMED (patched) extension. It
@@ -181,11 +175,9 @@ export interface MintDeps {
   reclaimWindowMs: number;
 }
 
-/** The mint request body. `appMajor`/`appBuild` are accepted for the wire shape; v0 trials rely on the `started_major` DB default. */
+/** The mint request body — only the device fingerprint hash. */
 export interface MintRequest {
   fingerprint: string;
-  appMajor: string;
-  appBuild: string;
 }
 
 /** Injected dependencies for `handleWebhook`. */
@@ -202,8 +194,6 @@ export interface WebhookDeps {
 export interface CheckInRequest {
   licenseID: string;
   fingerprint: string;
-  appMajor: string;
-  appBuild: string;
 }
 
 /** Injected dependencies for `checkIn`. */
@@ -224,10 +214,6 @@ export const STOWER_V0_ENTITLEMENT_CODE = "STOWER_V0";
 export const STOWER_TRIAL_ENTITLEMENT_CODE = "STOWER_TRIAL";
 /** The major a v0 paid order records. */
 const PURCHASED_MAJOR_V0 = "v0";
-/** Maps an app major to its required entitlement code (JC7). Server-owned, pure, no DB. */
-const ENTITLEMENT_BY_MAJOR: Record<string, string> = {
-  v0: STOWER_V0_ENTITLEMENT_CODE,
-};
 /** A flat +7-day extension (I12: adds to the current expiry, never restarts). */
 const EXTENSION_DAYS = 7;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -243,16 +229,6 @@ const MACHINE_MISSING_CODES = [
 ];
 /** Codes that mean the license is administratively blocked. */
 const SUSPENDED_CODES = ["SUSPENDED", "BANNED"];
-
-/** A forged/unknown major in a check-in (attacker-influenced) — fail closed (400). */
-export class StowerUnknownMajorError extends Error {}
-
-/** Server-side derivation of the required entitlement from the app's major (JC7). */
-export function entitlementForMajor(appMajor: string): string {
-  const code = ENTITLEMENT_BY_MAJOR[appMajor];
-  if (!code) throw new StowerUnknownMajorError(appMajor);
-  return code;
-}
 
 const RETRY_REPLY: Reply = { status: 503, body: { error: "retry" } };
 const MINT_CLAIM_ATTEMPTS = 2;
@@ -388,7 +364,7 @@ async function mintSuccessReply(
 
 /**
  * Reachable-launch check-in (the gate authority). Verifies the per-license
- * signature, records the observed version, applies an at-most-one-per-major +7d
+ * signature, applies an at-most-one-per-major +7d
  * extension (record-before-patch, idempotent — I11), validates with Keygen +
  * repairs a missing machine, applies the entitlement OR in code (I4), checks out a
  * fresh signed file (I13), and NEVER returns `keygen_license_key`.
@@ -410,18 +386,7 @@ export async function checkIn(
   const signature = await deps.verifySignature(row.keygen_license_key);
   if (!signature.ok) return reply(401, { status: "bad_signature" });
 
-  let required: string;
-  try {
-    required = entitlementForMajor(req.appMajor);
-  } catch {
-    return reply(400, { status: "bad_request" });
-  }
-
-  await deps.trials.recordObservedVersion(
-    row.keygen_license_id,
-    req.appMajor,
-    req.appBuild,
-  );
+  const required = STOWER_V0_ENTITLEMENT_CODE; // v0 is the only product today
 
   const latest = await deps.github.currentLatestMajor(); // null on failure (never throws)
   const extension = await applyExtension(deps, row, latest);

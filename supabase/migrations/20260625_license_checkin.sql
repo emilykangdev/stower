@@ -10,14 +10,12 @@
 -- device_trials grows the state check-in reads and writes: the activated machine
 -- (so checkout can reuse it), the major the trial started under (extension
 -- eligibility), an explicit updated_at (written by every mutator — no trigger),
--- and the last observed check-in/version for support + diagnostics.
+-- and the last check-in time for support + diagnostics.
 alter table device_trials
   add column if not exists keygen_machine_id   text,
   add column if not exists started_major       text not null default 'v0',
   add column if not exists updated_at           timestamptz not null default now(),
-  add column if not exists last_check_in_at     timestamptz,
-  add column if not exists observed_major       text,
-  add column if not exists observed_build       text;
+  add column if not exists last_check_in_at     timestamptz;
 
 -- One row per (license, major) extension grant. The PK caps each major at exactly
 -- one +7d (JC8 / I11). The grant is recorded BEFORE the Keygen expiry patch, to a

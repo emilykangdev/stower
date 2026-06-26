@@ -18,7 +18,8 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
   New modules: `github.ts` (current-latest-stable-major for the +7d decision; 5-min cache; null-on-failure),
   `requestSignature.ts` (JC5 verifier via Web Crypto, 120s window, committed parity vector in `fixtures/`).
   Migration `20260625_license_checkin.sql` (additive: `device_trials` columns + `trial_extension_grants`
-  + `purchases` columns). JC7 server-derives the required entitlement from `appMajor`; JC9 keeps the
+  + `purchases` columns). JC7 for v0: the required entitlement is the flat `STOWER_V0` constant (no major
+  derivation yet; per-major `STOWER_V${major}` from `purchased_major` returns at v1); JC9 keeps the
   `STOWER_V0` *code* a per-runtime constant (only the `KEYGEN_V0_ENTITLEMENT` UUID is env). **A2 resolved
   (one-way door):** Keygen's `include=` entitlements + license expiry live INSIDE the Ed25519-signed `enc`
   payload — the CI integration test now decodes `enc` and asserts it. Deleted the dead, unwired
