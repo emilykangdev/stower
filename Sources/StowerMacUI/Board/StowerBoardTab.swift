@@ -35,4 +35,15 @@ internal enum StowerBoardTab: Sendable, Equatable, CaseIterable, Identifiable {
     internal var title: String {
         direction?.title ?? "Drafts"
     }
+
+    /// The stable snake-case token recorded on a `message_dismissed` interaction
+    /// event's `boardTab` field, so the local memory log stays greppable and stable
+    /// across UI copy changes (never the localized `title`).
+    internal var eventToken: String {
+        switch self {
+        case .yourTurn: return "your_turn"
+        case .maybeFollowUp: return "maybe_follow_up"
+        case .drafts: return "drafts"
+        }
+    }
 }

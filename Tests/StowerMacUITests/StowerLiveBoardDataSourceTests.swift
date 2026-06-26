@@ -250,6 +250,7 @@ import Testing
         #expect(board.neglected.count == 1)
         #expect(board.ghosted.count == 1)
     }
+
 }
 
 /// A triage store whose reads always throw — proves `loadBoard` degrades to the

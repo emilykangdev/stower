@@ -13,9 +13,27 @@ import SwiftUI
 struct StowerMacApp: App {
     @NSApplicationDelegateAdaptor(StowerAppDelegate.self) private var appDelegate
 
+    /// The app-owned `UndoManager` (A4): ONE instance shared between the board's
+    /// dismiss/undo registrations and the ⌘Z / ⌘⇧Z menu commands below, so the undo
+    /// stack survives a board reload (unlike `@Environment(\.undoManager)`, which
+    /// rebinds when the list rebuilds). The board view-model flips `groupsByEvent` off
+    /// so each dismiss is exactly one undo step (I6).
+    private let undoManager = UndoManager()
+
     var body: some Scene {
         WindowGroup {
-            StowerRootContainer(flusher: appDelegate.flusher)
+            StowerRootContainer(flusher: appDelegate.flusher, undoManager: undoManager)
+        }
+        .commands {
+            // Bind ⌘Z / ⌘⇧Z to the app-owned manager via the native `.undoRedo`
+            // group — NO AppKit responder-chain bridge (A4 spike resolved). The board's
+            // draining-bar Undo button calls the same `undo()`.
+            CommandGroup(replacing: .undoRedo) {
+                Button("Undo") { undoManager.undo() }
+                    .keyboardShortcut("z", modifiers: .command)
+                Button("Redo") { undoManager.redo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+            }
         }
     }
 }
@@ -29,8 +47,12 @@ struct StowerMacApp: App {
 private struct StowerRootContainer: View {
     @State private var root: Result<StowerRootView, Error>
 
-    init(flusher: StowerTerminationFlusher) {
-        _root = State(initialValue: Result { try StowerRootView(flusher: flusher) })
+    init(flusher: StowerTerminationFlusher, undoManager: UndoManager) {
+        _root = State(
+            initialValue: Result {
+                try StowerRootView(flusher: flusher, undoManager: undoManager)
+            }
+        )
     }
 
     var body: some View {

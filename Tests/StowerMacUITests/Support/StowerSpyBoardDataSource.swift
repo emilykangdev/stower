@@ -32,6 +32,9 @@ internal final class StowerSpyBoardDataSource: StowerBoardDataSource {
     /// When set, every `thread` throws this.
     internal var threadError: StowerStartupFailure?
 
+    /// The muted senders `mutedSenders()` returns (the test scripts this directly).
+    internal var mutedSendersResult: [StowerMutedSender] = []
+
     /// When `true`, `loadBoard` suspends on a gate the test releases explicitly.
     internal var gateLoads = false
 
@@ -89,6 +92,10 @@ internal final class StowerSpyBoardDataSource: StowerBoardDataSource {
             return try await withCheckedThrowingContinuation { refreshGates.append($0) }
         }
         return dequeue(&refreshOutcomes) ?? .coalesced
+    }
+
+    internal func mutedSenders() async -> [StowerMutedSender] {
+        mutedSendersResult
     }
 
     /// Resumes a gated load with `model`.

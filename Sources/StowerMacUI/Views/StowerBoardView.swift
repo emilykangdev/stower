@@ -9,17 +9,47 @@ import SwiftUI
 /// Both lens lists come from one `loadBoard`, so a lens tab never re-queries (I7);
 /// changing the preset re-loads (I8). Clicking a row docks the `StowerDraftComposer`
 /// in the lower-right corner — the only conversation surface.
+///
+/// Triage (Phase B/C) lives here too: a hover-reveal + context-menu dismiss with a
+/// draining-bar undo, a batch Select mode, a `Muted Senders…` toolbar popover, and a
+/// conditional zero-state line — every surface gated to stay calm at rest.
 internal struct StowerBoardView: View {
     @Bindable internal var model: StowerBoardViewModel
+
+    /// The row hovered right now, so only its trailing dismiss control is revealed
+    /// (the list stays clean at rest). `internal` so the `+Triage` view extension reads it.
+    @State internal var hoveredRowID: String?
+
+    /// The row pending a first-time mute confirmation, or `nil`.
+    ///
+    /// Once the user has confirmed once (`hasConfirmedMute`), mute is immediate.
+    @State internal var muteCandidate: StowerBoardRow?
+
+    /// Whether the user has seen the one-time mute explainer (persisted).
+    ///
+    /// After the first confirmation, Mute Sender acts without a dialog.
+    @AppStorage("stower.board.hasConfirmedMute") internal var hasConfirmedMute = false
 
     internal var body: some View {
         NavigationStack {
             content
-                .toolbar {
-                    ToolbarItem(placement: .primaryAction) { presetPicker }
-                    ToolbarItem(placement: .primaryAction) { refreshButton }
-                }
+                .toolbar { toolbarContent }
                 .overlay(alignment: .bottomTrailing) { composerOverlay }
+                .overlay(alignment: .bottom) { undoBarOverlay }
+        }
+        .animation(.easeInOut(duration: Self.undoBarFade), value: model.undoBar?.id)
+        .confirmationDialog(
+            "Mute this sender?",
+            isPresented: muteConfirmationBinding,
+            presenting: muteCandidate
+        ) { row in
+            Button("Mute Sender") { confirmMute(row) }
+            Button("Cancel", role: .cancel) { muteCandidate = nil }
+        } message: { _ in
+            Text(
+                "They'll be hidden from this board, not from Messages. "
+                    + "Unmute anytime from Muted Senders in the toolbar."
+            )
         }
         .task { model.onAppear() }
         .onDisappear { model.cancel() }
@@ -90,19 +120,19 @@ internal struct StowerBoardView: View {
         emptyMessage: String
     ) -> some View {
         if rows.isEmpty {
-            StowerBoardNotice(symbol: "tray", title: "Nothing in this list", message: emptyMessage)
+            StowerBoardNotice(
+                symbol: "tray",
+                title: "Nothing in this list",
+                message: emptyMessage
+            ) {
+                mutedHiddenNotice
+            }
+        } else if model.isSelecting {
+            selectableList(rows)
         } else {
             List {
                 ForEach(rows) { row in
-                    Button {
-                        model.openComposer(for: row)
-                    } label: {
-                        StowerNoReplyRowView(
-                            row: row,
-                            draftPreview: model.drafts[row.draftKey]?.body
-                        )
-                    }
-                    .buttonStyle(.plain)
+                    dismissableRow(row)
                 }
             }
         }
@@ -121,13 +151,16 @@ internal struct StowerBoardView: View {
         }
     }
 
-    /// The calm "all caught up" zero state — no scoreboard, just reassurance.
+    /// The calm "all caught up" zero state — no scoreboard, just reassurance, plus the
+    /// honest muted line when the board is empty *because* people are muted (I12).
     private var caughtUpNotice: some View {
         StowerBoardNotice(
             symbol: "checkmark.circle",
             title: "You're all caught up",
             message: "No one's waiting on a reply right now."
-        )
+        ) {
+            mutedHiddenNotice
+        }
     }
 
     private var errorNotice: some View {
@@ -141,7 +174,7 @@ internal struct StowerBoardView: View {
         }
     }
 
-    private var presetPicker: some View {
+    internal var presetPicker: some View {
         let binding = Binding(
             get: { model.selectedPreset },
             set: { model.selectPreset($0) }
@@ -153,7 +186,7 @@ internal struct StowerBoardView: View {
         }
     }
 
-    private var refreshButton: some View {
+    internal var refreshButton: some View {
         Button {
             model.refresh()
         } label: {
@@ -168,4 +201,5 @@ internal struct StowerBoardView: View {
         "No conversations are waiting on your reply in this window."
     private static let followUpEmpty =
         "No conversations are waiting on their reply in this window."
+    private static let undoBarFade: Double = 0.2
 }

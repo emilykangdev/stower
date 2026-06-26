@@ -34,6 +34,14 @@ internal struct StowerBoardRow: Identifiable, Sendable, Equatable, Hashable {
     /// strictly newer one arrives. Carried from the engine through `mapRow`.
     internal let lastMessageGUID: String
 
+    /// The timestamp of this row's last act — the dismiss self-expiry anchor.
+    ///
+    /// Distinct from the display-only `ageInDays`: a dismiss stores this absolute
+    /// time so the row returns only when a STRICTLY-newer message arrives
+    /// (`current.lastMessageTimestamp > anchorTimestamp`, A1). Carried from the
+    /// engine's `StowerDebtItem.lastMessageTimestamp` through `mapRow`.
+    internal let lastMessageTimestamp: Date
+
     /// One- or two-letter monogram derived from `counterpart`.
     internal let monogram: String
 
@@ -66,6 +74,7 @@ internal struct StowerBoardRow: Identifiable, Sendable, Equatable, Hashable {
         counterpartHandle: String,
         draftKey: String,
         lastMessageGUID: String,
+        lastMessageTimestamp: Date,
         monogram: String,
         summary: StowerLastMessageSummary,
         ageInDays: Int,
@@ -76,6 +85,7 @@ internal struct StowerBoardRow: Identifiable, Sendable, Equatable, Hashable {
         self.counterpartHandle = counterpartHandle
         self.draftKey = draftKey
         self.lastMessageGUID = lastMessageGUID
+        self.lastMessageTimestamp = lastMessageTimestamp
         self.monogram = monogram
         self.summary = summary
         self.ageInDays = ageInDays

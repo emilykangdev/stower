@@ -93,6 +93,7 @@ internal enum StowerMessagesMapping {
             counterpartHandle: item.counterpartHandle,
             draftKey: StowerDraftKey.derive(forHandle: item.counterpartHandle),
             lastMessageGUID: item.lastMessageGUID,
+            lastMessageTimestamp: item.lastMessageTimestamp,
             monogram: StowerBoardRow.monogram(for: counterpart),
             summary: StowerLastMessageSummary.make(kind: kind, text: item.lastMessageText),
             ageInDays: StowerBoardRow.ageInDays(from: item.lastMessageTimestamp, to: now),

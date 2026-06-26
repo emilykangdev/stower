@@ -21,17 +21,25 @@ public struct StowerRootView: View {
     /// Throws only when an essential store can't be opened (a true disk-level draft
     /// store failure) — the same posture as any other essential-store startup fault.
     ///
-    /// - Parameter flusher: Wired to the board's `flushAll()` so the app delegate can
-    ///   drain in-flight draft writes on quit. Optional so previews omit it.
+    /// - Parameters:
+    ///   - flusher: Wired to the board's `flushAll()` so the app delegate can drain
+    ///     in-flight draft writes on quit. Optional so previews omit it.
+    ///   - undoManager: The app-owned `UndoManager` (A4) the app target also binds ⌘Z
+    ///     to; defaults to a fresh instance so previews/tests need not supply one.
     /// - Throws: When an essential store (the precious drafts database) can't be
     ///   opened on a true disk-level fault.
-    public init(flusher: StowerTerminationFlusher? = nil) throws {
+    public init(
+        flusher: StowerTerminationFlusher? = nil,
+        undoManager: UndoManager = UndoManager()
+    ) throws {
         let composition = try StowerMessagesComposition()
         self.init(
             startup: composition.startup,
             board: composition.board,
             draftStore: composition.draftStore,
             interactions: composition.interactions,
+            triage: composition.triageStore,
+            undoManager: undoManager,
             dropper: composition.dropper,
             contacts: composition.contacts,
             settings: StowerSystemSettingsOpener(),
@@ -51,6 +59,8 @@ public struct StowerRootView: View {
         board: any StowerBoardDataSource,
         draftStore: any StowerDraftStoring = StowerInMemoryDraftStore(),
         interactions: any StowerInteractionRecording = StowerNoOpInteractionRecorder(),
+        triage: any StowerTriageStoring = StowerInMemoryTriageStore(),
+        undoManager: UndoManager = UndoManager(),
         dropper: StowerMessagesDropper = StowerMessagesDropper(
             perform: { _ in },
             isAccessibilityTrusted: { false }
@@ -65,6 +75,8 @@ public struct StowerRootView: View {
             dataSource: board,
             draftStore: draftStore,
             interactions: interactions,
+            triage: triage,
+            undoManager: undoManager,
             dropper: dropper,
             contacts: contacts,
             settings: settings,

@@ -129,6 +129,33 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
         return kept
     }
 
+    internal func mutedSenders() async -> [StowerMutedSender] {
+        let mutedKeys: Set<String>
+        let dismissed: [String: StowerDismissedAnchor]
+        do {
+            mutedKeys = try await triage.muted()
+            dismissed = try await triage.dismissedMessages()
+        } catch {
+            // Degrade to empty (I4 posture): never surface a triage read error to the
+            // popover. A transient failure self-heals on the next open.
+            return []
+        }
+        guard !mutedKeys.isEmpty else { return [] }
+        // Built once (not per key): `.live()` enumerates the whole address book.
+        let contacts = makeContactsResolver()
+        return mutedKeys.map { key in
+            StowerMutedSender(
+                key: key,
+                displayName: contacts.displayName(forKey: key),
+                hasResolvedName: contacts.hasName(forKey: key),
+                isActivelyDismissed: dismissed[key] != nil
+            )
+        }
+        .sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
     internal func thread(chatID: String, limit: Int) async throws -> [StowerThreadLine] {
         do {
             let messages = try await engine.recentMessages(chatID: chatID, limit: limit)

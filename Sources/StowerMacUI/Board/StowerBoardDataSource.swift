@@ -1,5 +1,30 @@
 import Foundation
 
+/// One muted sender, name-resolved, for the `Muted Senders…` management popover.
+///
+/// App-owned (the view never imports the engine): the engine-coupled data source
+/// reads the muted handle keys, resolves each to a Contacts name (falling back to a
+/// readable handle), and flags whether the same handle is ALSO actively dismissed —
+/// so the popover can show a quiet "Dismissed" pill, telling the user *before* they
+/// unmute that the person stays hidden by an active dismissal.
+internal struct StowerMutedSender: Identifiable, Sendable, Equatable {
+    /// The normalized handle key — the unmute target and the row identity.
+    internal let key: String
+
+    /// The resolved Contacts name, or a readable handle fallback.
+    internal let displayName: String
+
+    /// Whether a real Contacts name resolved (vs a handle fallback) — drives the
+    /// avatar (initials vs a generic person glyph), like `StowerBoardRow`.
+    internal let hasResolvedName: Bool
+
+    /// Whether this muted handle also has an active dismissal (drives the pill).
+    internal let isActivelyDismissed: Bool
+
+    /// The SwiftUI list identity: the stable handle key.
+    internal var id: String { key }
+}
+
 /// The app-owned board boundary the SwiftUI layer depends on.
 ///
 /// Parallel to `StowerStartupProviding`: it speaks only app-owned types, so the
@@ -44,4 +69,14 @@ internal protocol StowerBoardDataSource: Sendable {
         config: StowerStartupDebtConfig,
         now: Date
     ) async throws -> StowerBoardRefreshOutcome
+
+    /// The muted senders for the management popover — name-resolved and sorted
+    /// alphabetically, each flagged if also actively dismissed.
+    ///
+    /// Non-throwing by contract: a triage read failure degrades to an empty list
+    /// (the popover shows nothing) rather than surfacing an error — consistent with
+    /// the board's degrade-never-crash triage posture (I4). Name resolution lives
+    /// here (the engine-coupled layer owns the Contacts resolver); the view-model
+    /// only stores and renders the result.
+    func mutedSenders() async -> [StowerMutedSender]
 }
