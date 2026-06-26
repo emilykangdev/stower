@@ -31,6 +31,7 @@ public struct StowerRootView: View {
             startup: composition.startup,
             board: composition.board,
             draftStore: composition.draftStore,
+            interactions: composition.interactions,
             dropper: composition.dropper,
             contacts: composition.contacts,
             settings: StowerSystemSettingsOpener(),
@@ -49,6 +50,7 @@ public struct StowerRootView: View {
         startup: any StowerStartupProviding,
         board: any StowerBoardDataSource,
         draftStore: any StowerDraftStoring = StowerInMemoryDraftStore(),
+        interactions: any StowerInteractionRecording = StowerNoOpInteractionRecorder(),
         dropper: StowerMessagesDropper = StowerMessagesDropper(
             perform: { _ in },
             isAccessibilityTrusted: { false }
@@ -62,6 +64,7 @@ public struct StowerRootView: View {
         let boardModel = StowerBoardViewModel(
             dataSource: board,
             draftStore: draftStore,
+            interactions: interactions,
             dropper: dropper,
             contacts: contacts,
             settings: settings,

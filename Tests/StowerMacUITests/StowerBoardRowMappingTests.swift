@@ -36,7 +36,8 @@ import Testing
             lastMessageText: text,
             lastMessageTimestamp: timestamp,
             deepLink: deepLink,
-            replyExpectationConfidence: confidence
+            replyExpectationConfidence: confidence,
+            lastMessageGUID: "guid-\(chatID)"
         )
     }
 

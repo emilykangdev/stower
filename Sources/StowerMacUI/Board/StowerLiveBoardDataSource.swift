@@ -13,13 +13,16 @@ import StowerMessages
 /// failure).
 internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
     private let engine: any StowerDebtBoardProviding
+    private let triage: any StowerTriageStoring
     private let makeContactsResolver: @Sendable () -> StowerContactsResolver
 
-    /// Injects the shared engine conformer and the contacts-resolver factory.
+    /// Injects the shared engine conformer, the triage store, and the resolver factory.
     ///
     /// - Parameters:
     ///   - engine: The shared engine conformer (the real provider in production, a
     ///     fake engine in adapter tests).
+    ///   - triage: The app-owned triage boundary (dismiss + mute). Defaults to an
+    ///     empty in-memory store so previews/older tests apply no filter.
     ///   - makeContactsResolver: Builds the handle→name resolver; defaults to
     ///     `StowerContactsResolver.live()`, which re-reads Contacts authorization on
     ///     every call, so a post-grant reload self-heals to names with no rebuild
@@ -27,9 +30,11 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
     ///     a counting/empty factory.
     internal init(
         engine: any StowerDebtBoardProviding,
+        triage: any StowerTriageStoring = StowerInMemoryTriageStore(),
         makeContactsResolver: @escaping @Sendable () -> StowerContactsResolver = { .live() }
     ) {
         self.engine = engine
+        self.triage = triage
         self.makeContactsResolver = makeContactsResolver
     }
 
@@ -42,27 +47,86 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
                 config: StowerMessagesMapping.mapConfig(config),
                 now: now
             )
+            // Apply the user's app-local triage (mute + self-expiring dismiss) as a
+            // display-time post-filter, so the engine stays a pure projection of the
+            // Messages database (JC4). Done before the empty-check so an all-muted
+            // board skips the resolver too.
+            let (neglected, ghosted) = await applyTriage(to: board, now: now)
             // No rows to label — skip building the resolver entirely. `.live()`
             // enumerates the whole address book, and the cold-start / caught-up path
             // loads an empty board repeatedly; enumerating Contacts for zero rows is
             // pure waste.
-            guard !board.neglected.isEmpty || !board.ghosted.isEmpty else {
+            guard !neglected.isEmpty || !ghosted.isEmpty else {
                 return StowerBoardModel(neglected: [], ghosted: [])
             }
             // Built once per load (not per row): calling `.live()` inside the row map
             // would be O(rows × contacts).
             let contacts = makeContactsResolver()
             return StowerBoardModel(
-                neglected: board.neglected.map {
+                neglected: neglected.map {
                     StowerMessagesMapping.mapRow($0, now: now, contacts: contacts)
                 },
-                ghosted: board.ghosted.map {
+                ghosted: ghosted.map {
                     StowerMessagesMapping.mapRow($0, now: now, contacts: contacts)
                 }
             )
         } catch let error as StowerMessagesError {
             throw StowerMessagesMapping.mapError(error)
         }
+    }
+
+    /// Filters both lenses by the user's triage, retiring self-expired dismissals.
+    ///
+    /// ALL-OR-NOTHING (I4): if reading either triage set fails, the board degrades to
+    /// the fully UNFILTERED board — every mute/dismissal applied, or none — never a
+    /// confusing partial filter, never a crash. The retire MOVE is best-effort
+    /// (`try?`): a failed retire still shows the row (a newer message already proved
+    /// it) and self-heals next load; it must never fail the board load.
+    private func applyTriage(
+        to board: StowerDebtBoard,
+        now: Date
+    ) async -> (neglected: [StowerDebtItem], ghosted: [StowerDebtItem]) {
+        let dismissed: [String: StowerDismissedAnchor]
+        let muted: Set<String>
+        do {
+            dismissed = try await triage.dismissedMessages()
+            muted = try await triage.muted()
+        } catch {
+            return (board.neglected, board.ghosted)
+        }
+        let neglected = await keep(board.neglected, dismissed: dismissed, muted: muted, now: now)
+        let ghosted = await keep(board.ghosted, dismissed: dismissed, muted: muted, now: now)
+        return (neglected, ghosted)
+    }
+
+    /// Keeps the items that are neither muted nor still-actively dismissed.
+    ///
+    /// A muted handle is hidden regardless of anchor. A dismissed handle stays hidden
+    /// until a STRICTLY-newer message arrives (`lastMessageTimestamp > anchorTimestamp`)
+    /// — at which point the row returns and its stale dismissal is best-effort retired.
+    private func keep(
+        _ items: [StowerDebtItem],
+        dismissed: [String: StowerDismissedAnchor],
+        muted: Set<String>,
+        now: Date
+    ) async -> [StowerDebtItem] {
+        var kept: [StowerDebtItem] = []
+        kept.reserveCapacity(items.count)
+        for item in items {
+            let handleKey = StowerDraftKey.derive(forHandle: item.counterpartHandle)
+            if muted.contains(handleKey) { continue }
+            if let anchor = dismissed[handleKey] {
+                if item.lastMessageTimestamp <= anchor.anchorTimestamp { continue }
+                try? await triage.retireDismissal(
+                    handleKey: handleKey,
+                    messageGUID: anchor.messageGUID,
+                    anchorTimestamp: anchor.anchorTimestamp,
+                    at: now
+                )
+            }
+            kept.append(item)
+        }
+        return kept
     }
 
     internal func thread(chatID: String, limit: Int) async throws -> [StowerThreadLine] {

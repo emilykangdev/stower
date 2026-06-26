@@ -36,6 +36,7 @@ import Testing
             counterpart: handle,
             counterpartHandle: handle,
             draftKey: StowerDraftKey.derive(forHandle: handle),
+            lastMessageGUID: "guid-\(chatID)",
             monogram: "?",
             summary: StowerLastMessageSummary.make(kind: .text, text: "hi"),
             ageInDays: 1,

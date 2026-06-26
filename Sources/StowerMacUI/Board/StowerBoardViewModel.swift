@@ -98,6 +98,11 @@ internal final class StowerBoardViewModel {
     // mechanics. The core read-only state (`phase`, `board`, `contactsRevocationToken`)
     // keeps `private(set)`; its writers stay in this file.
     internal let draftStore: any StowerDraftStoring
+    /// Records semantic triage events (dismiss/mute/unmute) as user interaction memory.
+    ///
+    /// Non-blocking: a recording failure never blocks the action. The producers are the
+    /// dismiss/mute/unmute action methods (added in later phases).
+    internal let interactions: any StowerInteractionRecording
     internal let dropper: StowerMessagesDropper
     internal let contacts: StowerContactsAccess
     internal let settings: StowerSystemSettingsOpener
@@ -134,6 +139,7 @@ internal final class StowerBoardViewModel {
     internal init(
         dataSource: any StowerBoardDataSource,
         draftStore: any StowerDraftStoring = StowerInMemoryDraftStore(),
+        interactions: any StowerInteractionRecording = StowerNoOpInteractionRecorder(),
         dropper: StowerMessagesDropper = StowerMessagesDropper(
             perform: { _ in },
             isAccessibilityTrusted: { false }
@@ -149,6 +155,7 @@ internal final class StowerBoardViewModel {
     ) {
         self.dataSource = dataSource
         self.draftStore = draftStore
+        self.interactions = interactions
         self.dropper = dropper
         self.contacts = contacts
         self.settings = settings

@@ -31,6 +31,7 @@ import Testing
             counterpart: "Alex",
             counterpartHandle: "+14155550100",
             draftKey: StowerDraftKey.derive(forHandle: "+14155550100"),
+            lastMessageGUID: "guid-chat-1",
             monogram: "A",
             summary: StowerLastMessageSummary.make(kind: .text, text: "hi"),
             ageInDays: 1,
