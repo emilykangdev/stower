@@ -1,14 +1,24 @@
 # Stower — License Lifecycle & Runtime Topology
 
-> **What this doc is.** The settled runtime shape of Stower's licensing: who talks
-> to whom, who is allowed to reason, and how a license moves through its life
+> **What this doc is.** The **intended** runtime shape of Stower's licensing: who
+> talks to whom, who is allowed to reason, and how a license moves through its life
 > (trial → paid → offline). Customer-facing terms live in [`licensing.md`](./licensing.md);
 > the seam-by-seam engineering contract lives in
 > [`licensing-contract.md`](./licensing-contract.md). This doc is the **topology +
 > lifecycle** view that sits above both, and is consistent with the contract
 > (≥ v1.12) — it does not introduce a different model, it draws the picture.
+>
+> **⚠️ This is the target design, not a reflection of the current codebase.** The
+> Edge Function side (`/mint-trial`, `/check-in`, `/ls-webhook`, `/health`) is built
+> (Plan Beta), but **the Mac app is not yet wired to it.** Today's shipping gate is
+> `StowerLemonSqueezyLicenseGate`, and the as-built purchase flow is **buy → Lemon
+> Squeezy emails a license key → paste it into `StowerLicenseEntryView` → the app
+> calls Lemon Squeezy `/v1/licenses/activate` directly** — no Edge Function, no
+> webhook, no `/check-in` in today's purchase loop. The webhook + `/check-in` flow
+> drawn below is **Plan B work, not live.** The contract's §5a (as-built) vs §5b
+> (intended) split is the source of truth for what exists today.
 
-**Version:** 1.1 · **Last updated:** 2026-06-25 · **Status:** brain = Supabase Edge Function (`supabase/functions/license/`). The Edge Function `mint-trial` / `check-in` / `ls-webhook` is implemented (Plan Beta landed); the Swift gate rewire is Plan B.
+**Version:** 1.2 · **Last updated:** 2026-06-26 · **Status:** **Intended design (not as-built).** Brain = Supabase Edge Function (`supabase/functions/license/`); its `mint-trial` / `check-in` / `ls-webhook` / `health` routes are implemented (Plan Beta landed). The Swift gate rewire that points the app at them is Plan B and **not yet built** — today's wired gate is `StowerLemonSqueezyLicenseGate` (key-by-email + paste).
 
 ---
 
@@ -48,7 +58,7 @@ These are firm (Emily, 2026-06-25). A plan or commit that contradicts one is wro
 | **Supabase Edge Function** (`supabase/functions/license/`) | The licensing brain. The only orchestrator. Serves `/mint-trial`, `/check-in`, `/ls-webhook`, `/health`. Receives the Lemon Squeezy webhook. Holds the Keygen admin token in its env. | **Yes** — all runtime license reasoning lives here. |
 | **Keygen** (CE/cloud) | The license authority. Mints, validates, signs machine-files, holds entitlements, enforces `maxMachines`. | Authority only — it has no rules/scheduling engine. |
 | **Supabase Postgres** | The state store the Edge Function reads/writes: `device_trials`, `purchases`, `trial_extension_grants`. | **No** — storage, not logic. The reasoning lives in the Edge Function. |
-| **Lemon Squeezy** | Payment processor. Takes money, redirects the customer back, and sends `order_created` **to the Edge Function** (`…/ls-webhook`). | No — payment only. |
+| **Lemon Squeezy** | Payment processor. Takes money, shows its own web confirmation (no deep link back into the Mac app), and sends `order_created` **to the Edge Function** (`…/ls-webhook`) — that webhook is how it tells Stower the payment succeeded. | No — payment only. |
 
 ---
 
@@ -61,9 +71,9 @@ flowchart LR
     EF -->|validate / activate /<br/>checkout machine-file /<br/>attach entitlement<br/>(admin token in EF env)| Keygen
     EF -->|read / write trial + purchase state| PG[("Supabase Postgres<br/>(state store)")]
     EF -->|+7d "latest major" signal| GH["GitHub releases"]
-    Customer((Customer)) -->|checkout| LS["Lemon Squeezy"]
-    LS -->|order_created webhook<br/>…/ls-webhook| EF
-    LS -.->|redirect back| App
+    Customer((Customer)) -->|checkout in browser| LS["Lemon Squeezy"]
+    LS -->|order_created webhook<br/>…/ls-webhook<br/>(how LS tells the EF "paid")| EF
+    Customer -.->|reopens the app manually<br/>(no deep link today)| App
 
     classDef store fill:#eee,stroke:#999,color:#333;
     class PG store;
@@ -81,10 +91,20 @@ only to it" invariant made visual.
 
 ## 4. Purchase → paid: webhook to the Edge Function
 
+> **Intended (Plan B), not as-built.** The steps below are the target webhook +
+> `Re-check` flow. Today's shipping purchase is different: Lemon Squeezy emails a
+> license key and the user pastes it into `StowerLicenseEntryView` (see the banner
+> at the top). The Edge Function `/ls-webhook` itself is built; the app's
+> participation in this flow is not.
+
 A purchase becomes a paid license when the **Edge Function** receives the Lemon
 Squeezy `order_created` webhook (at `…/ls-webhook`) and acts on it.
 
-1. Customer clicks Buy → the Edge Function returns a Lemon Squeezy checkout URL.
+1. Customer clicks Buy → the app opens the Lemon Squeezy checkout in a browser,
+   carrying the device's license id so the webhook can match the order to the
+   license (the checkout id comes from `.trialEnded(licenseID:)` /
+   `.upgradeRequired(licenseID:)`; there is no Edge Function "make a checkout URL"
+   route).
 2. Customer pays at Lemon Squeezy.
 3. Lemon Squeezy sends `order_created` **to the Edge Function** (`…/ls-webhook`).
    The Edge Function verifies the HMAC signature, replay-checks the order, checks
@@ -96,18 +116,23 @@ Squeezy `order_created` webhook (at `…/ls-webhook`) and acts on it.
      `entitlement_code`).
    **This webhook is the authoritative mutation** — it is the only thing that
    flips trial → paid.
-4. Lemon Squeezy also **redirects the customer back** to the app. The app does
-   **not** infer "paid" from that redirect. Instead the app calls the Edge
-   Function (`Re-check` via `/check-in`), which validates the same Keygen license,
-   and if the webhook has already attached `STOWER_V0` the app advances off the
-   paywall.
+4. After paying, the customer **returns to the Mac app themselves.** Lemon Squeezy
+   shows its own web confirmation; there is **no deep link back into the Mac app
+   today** (a `stower://` return scheme that would auto-foreground the app is a
+   future improvement, not built). The app never learns "paid" from the browser.
+   Instead, the next time the app is open, its `Re-check` action calls the Edge
+   Function (`/check-in`), which validates the same Keygen license; if the webhook
+   has already attached `STOWER_V0`, the app advances off the paywall. Step 3's
+   `order_created` webhook is exactly how Lemon Squeezy tells the Edge Function the
+   payment succeeded — the app needs no redirect to find out.
 5. If the webhook hasn't landed yet, `Re-check` leaves the user on the paywall;
    they press it again and it completes once the webhook has been processed.
 
-Why the app re-checks instead of trusting the redirect: the redirect is a UI
-event the user could reach without paying; the webhook is the signed,
-server-to-server truth. Background polling / deep-link auto-advance are
-deferred — `Re-check` is the manual trigger.
+Why the app re-checks instead of trusting the browser: a web confirmation page is
+a UI event the user could reach without paying; the webhook is the signed,
+server-to-server truth, and the only thing that flips trial → paid. Background
+polling and a deep-link (`stower://`) return that would auto-advance the app are
+deferred — for v0, `Re-check` is the manual trigger.
 
 > Seam-level detail (endpoints, idempotency, `KEYGEN_V0_ENTITLEMENT` fail-loud)
 > lives in `licensing-contract.md` §5b "Purchase webhook extension" and invariants
@@ -144,11 +169,11 @@ sequenceDiagram
     EF-->>App: gate status + machine-file (NEVER the key)
 
     Note over App,LS: Purchase → paid (webhook to the Edge Function, §4)
-    App->>LS: checkout (URL from the Edge Function)
-    LS->>EF: order_created webhook → …/ls-webhook (authoritative)
+    App->>LS: open Lemon Squeezy checkout in browser (carries license id)
+    LS->>EF: order_created webhook → …/ls-webhook (authoritative — how LS tells the EF "paid")
     EF->>K: upgrade to paid + attach STOWER_V0 + clear expiry to null
     EF->>S: record purchase (purchased_major + entitlement_code)
-    LS-->>App: redirect back
+    Note over App,LS: customer reopens the app themselves (no deep link back into the Mac app today)
     App->>EF: Re-check (POST /check-in)
     EF->>K: validate same license (now holds STOWER_V0?)
     EF-->>App: gate status = paid + machine-file
@@ -178,15 +203,24 @@ prescribes. (An earlier draft of this doc routed the brain and webhook through a
 Railway service; **Railway was considered and superseded** — there is no separate
 Railway compute.)
 
-The drift that remains is **code, not topology**:
+The drift that remains is **code, not topology** — i.e. this whole doc is the
+intended design (see the banner at the top), and the Mac-app half is not built yet:
 
 - **Swift gate rewire (Plan B)** is what makes the app talk to the Edge Function's
   `/check-in` as the reachable-launch authority and verify the cached signed
   machine-file offline. Until it lands, the as-built Swift gate has not yet been
   pointed at the new `/check-in` route.
+- **As-built purchase is key-by-email, not webhook + Re-check.** Today the user buys
+  on Lemon Squeezy, receives a license key by email, and pastes it into
+  `StowerLicenseEntryView`; the app calls Lemon Squeezy `/v1/licenses/activate`
+  directly (`StowerLemonSqueezyLicenseGate`). The §4/§5 webhook + `/check-in`
+  purchase flow is the Plan B target. The Edge Function `/ls-webhook` exists; the
+  app does not yet rely on it. (Contract §5a as-built vs §5b intended is canonical.)
 
-`licensing.md` §2 (customer-facing) describes the webhook flipping the license to
-paid without naming where it's hosted, so it stays accurate as written.
+`licensing.md` (customer-facing) now names the Edge Function and its routes
+(`/mint-trial`, `/check-in`, `/ls-webhook`) and handler functions in its technical
+parentheticals (§2, §4, §5), consistent with this topology — the app's only online
+licensing surface is the Edge Function, which calls Keygen.
 
 ---
 

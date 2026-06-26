@@ -74,8 +74,11 @@ Plain version, with the exact pieces in parentheses.
 
 - **Each Mac gets one free 30-day trial.** The first time Stower opens, it asks Stower's
   server for a trial tied to that Mac, so the same machine can't keep starting new
-  trials. (The `mint-trial` function creates a Keygen license with a 30-day expiry,
-  one per device, keyed to a hashed hardware ID in `device_trials`.)
+  trials. (Stower's **Supabase Edge Function** — `supabase/functions/license/`,
+  route `POST /mint-trial`, handler `mintTrial` in `handlers.ts` — creates a Keygen
+  license with a 30-day expiry, one per device, keyed to a hashed hardware ID in the
+  `device_trials` table. The app talks only to this Edge Function, never to Keygen
+  directly; the Edge Function is the only thing holding Keygen admin secrets.)
 
 - **The trial runs the *latest* version, not a fixed one.** During your 30 days you
   can use whatever the newest major is. (The trial license carries a generic unlock,
@@ -83,10 +86,11 @@ Plain version, with the exact pieces in parentheses.
 
 - **Buying upgrades the license you already have — nothing to re-enter.** Your
   purchase turns your trial into a paid license: the expiry is removed so it never
-  runs out, and the version you bought gets unlocked. (The Lemon Squeezy
-  `order_created` webhook clears the license's expiry to `null` and attaches that
-  major's unlock — e.g. `STOWER_V0` — picked from the purchased `ls_variant_id`.
-  Same license id and key throughout.)
+  runs out, and the version you bought gets unlocked. (Lemon Squeezy sends its
+  `order_created` webhook to the Edge Function's `POST /ls-webhook` route — handler
+  `handleWebhook` in `handlers.ts` — which clears the license's expiry to `null` and
+  attaches that major's unlock — e.g. `STOWER_V0` — picked from the purchased
+  `ls_variant_id`. Same license id and key throughout.)
 
 - **Buying another major later just adds it to the same license.** Own v0 and later
   buy v1? Stower adds v1's unlock to your existing license — you keep both, still one
@@ -124,8 +128,10 @@ version if it holds that version's unlock.
   you didn't.
 - **Each Stower build checks for its own unlock at startup.** The v0 app needs
   `STOWER_V0` (or `STOWER_TRIAL`); a future v1 app needs `STOWER_V1` (or
-  `STOWER_TRIAL`). No matching unlock → it asks you to buy or upgrade. This is done with
-  Keygen's `validate-key`.
+  `STOWER_TRIAL`). No matching unlock → it asks you to buy or upgrade. Online, the
+  app's `POST /check-in` call (handler `checkIn` in `handlers.ts`) has the Edge
+  Function run Keygen's `validate-key` and read the license's entitlements; offline,
+  the app reads the same unlock from the locally-cached Keygen-signed machine file.
 - **This is built from v0, not bolted on later.** Even though v0 is the only version
   today, the v0 app already checks for its unlock. That keeps the promise honest from
   day one, and makes a future v1 a one-line change instead of a new system rushed out
@@ -142,8 +148,11 @@ version if it holds that version's unlock.
   runs only if you hold a valid license with the right version unlock. The download
   is free; the right to *run* a major is what you're buying.
 - **Two ways the check happens, both signed by Keygen so they can't be faked:**
-  - **Online:** the app asks Keygen "is this license valid for this version?" (needs
-    internet).
+  - **Online:** the app calls Stower's licensing service — the Supabase Edge
+    Function (`supabase/functions/license/`, `POST /check-in`) — which asks Keygen
+    "is this license valid for this version?" and returns Keygen's signed answer plus
+    a fresh signed machine file (needs internet). The app's only online licensing
+    surface is this Edge Function.
   - **Offline:** the app keeps a Keygen-signed file on your Mac and verifies it
     locally, so it works on a plane. You can't edit that file to fake "paid" — the
     signature won't match.
@@ -186,6 +195,9 @@ So:
 Note to dev: see private repo me/Business/Plans/stower-strategy.md for further details.
 
 > **Engineering contract:** the stable facade shapes, seam contracts, and
-> load-bearing invariants live in [`licensing-contract.md`](./licensing-contract.md).
-> Implementation plans sign against that file by version; this doc is the
+> load-bearing invariants live in [`licensing-contract.md`](./licensing-contract.md);
+> the runtime topology (who talks to whom — app → Edge Function → Keygen/Supabase/Lemon
+> Squeezy, with diagrams) lives in [`Lifecycle.md`](./Lifecycle.md). The Edge Function
+> code is `supabase/functions/license/` (`index.ts` routes → `handlers.ts` brain).
+> Implementation plans sign against the contract file by version; this doc is the
 > customer-facing terms.
