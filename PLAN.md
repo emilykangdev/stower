@@ -6,6 +6,26 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-25: **Supabase licensing backend — the Edge Function is now the licensing brain (mint + check-in + webhook).**
+  Decision (Emily, firm, 2-way door): the licensing brain is the existing `supabase/functions/license/`
+  Edge Function, **not** a new Railway service (Railway plan superseded). Extended the function in place:
+  `/mint-trial` now activates the Keygen machine + checks out a 7-day signed machine file and returns
+  `{minted, licenseKey, licenseID, machineID, machineFile}` (wire field renamed `key`→`licenseKey`);
+  NEW `POST /check-in` (reachable-launch gate authority — per-license JC5 signature, once-per-major +7d
+  extension via record-before-patch to a frozen target (I11, idempotent under crash/retry), validate +
+  machine repair, entitlement OR in code (I4), fresh signed-file checkout (I13), never returns the key);
+  NEW `GET /health`; `/ls-webhook` now attaches `STOWER_V0` + records `purchased_major`/`entitlement_code`.
+  New modules: `github.ts` (current-latest-stable-major for the +7d decision; 5-min cache; null-on-failure),
+  `requestSignature.ts` (JC5 verifier via Web Crypto, 120s window, committed parity vector in `fixtures/`).
+  Migration `20260625_license_checkin.sql` (additive: `device_trials` columns + `trial_extension_grants`
+  + `purchases` columns). JC7 server-derives the required entitlement from `appMajor`; JC9 keeps the
+  `STOWER_V0` *code* a per-runtime constant (only the `KEYGEN_V0_ENTITLEMENT` UUID is env). **A2 resolved
+  (one-way door):** Keygen's `include=` entitlements + license expiry live INSIDE the Ed25519-signed `enc`
+  payload — the CI integration test now decodes `enc` and asserts it. Deleted the dead, unwired
+  `StowerKeygenClient.swift` (+ its test) — that surface is server-side now. Contract → v1.13, `Docs/Lifecycle.md`
+  reversed (brain = Edge Function), both diagrams updated. 55 Deno tests green; `swift build` green.
+  **Still open:** mint rate-limiting (risk #8), explicit outbound-fetch timeouts (item B), `pg_cron` orphan
+  sweep (item C), and the ops cutover (point the LS webhook at `…/ls-webhook`, set Plan B's base URL).
 - 2026-06-18: **License core — fingerprint, lease store, Keygen + mint clients, Supabase function (Bucket A, board-independent).**
   Ships the trial-and-upgrade machinery as four injected, unit-tested seams plus a Deno Edge Function —
   nothing wired into the app yet (the gate that composes them is Plan B). `StowerDeviceFingerprint`

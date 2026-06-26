@@ -6,7 +6,7 @@
 > code changes. If a plan describes a seam shape that contradicts this file, the
 > plan is wrong — not this file.
 
-**Version:** 1.12 · **Last updated:** 2026-06-24 · **Canonical home:** this file.
+**Version:** 1.13 · **Last updated:** 2026-06-25 · **Canonical home:** this file.
 
 When the contract changes: edit here, bump the version, record the change in
 §Changelog. Plans reference this file by version number.
@@ -16,7 +16,7 @@ When the contract changes: edit here, bump the version, record the change in
 ```
 Plan A ✓ (done, superseded) → bootstrap plan (Keygen structures script)
   → Plan 2 (local Keygen CE harness)
-  → Plan Beta (Railway licensing backend)
+  → Plan Beta ✓ (Edge Function licensing brain: mint + check-in + webhook)
   → Plan B (gate + entitlement check + LS deletion)
   → PAR-36 Slice A (fail-hard fingerprint + unidentifiable-Mac UX)
   → PAR-36 Slice B (self-service migration)
@@ -25,19 +25,22 @@ Plan A ✓ (done, superseded) → bootstrap plan (Keygen structures script)
 ```
 
 Plan A is merged (license core exists). The bootstrap plan stamps paid
-licenses with their major. Plan 2 is the regression net. Plan Beta creates the
-Railway licensing backend that owns runtime license reasoning. Plan B is the
-facade rewrite that makes the gate enforce entitlements and consume the Railway
-backend. PAR-36 lands after Plan B (both slices need the gate to route through)
-and before paid sales (protects identity integrity + makes `maxMachines: 1`
-humane). Prod ops wires the real account; then sales open.
+licenses with their major. Plan 2 is the regression net. Plan Beta is the
+**Supabase Edge Function** (`supabase/functions/license/`, Deno) — the licensing
+**brain** that owns runtime license reasoning (mint-with-machine, `/check-in`,
+LS webhook handling, the once-per-major +7d extension, Keygen admin calls). The
+**Railway** plan was cancelled/superseded — Supabase is now brain + state store.
+Plan B is the facade rewrite that makes the gate enforce entitlements and consume
+the Edge Function. PAR-36 lands after Plan B (both slices need the gate to route
+through) and before paid sales (protects identity integrity + makes
+`maxMachines: 1` humane). Prod ops wires the real account; then sales open.
 
 Each slice lands on its own branch in order. Plan B starts from `main` only
 after the bootstrap script branch, Plan 2, and Plan Beta have landed, so
 Plan B treats `STOWER_TRIAL` policy setup, `STOWER_V0` webhook stamping, and the
-Railway licensing backend as landed dependencies, not work it owns. The Mac app
-does not call Keygen or Supabase directly for online licensing after Plan Beta;
-its online licensing surface is Railway only.
+Edge Function licensing brain as landed dependencies, not work it owns. The Mac
+app does not call Keygen or Supabase Postgres directly for online licensing; its
+only online licensing surface is the Edge Function base URL.
 
 The old Lemon Squeezy license-entry plan
 (`tmp/archive-plans/2026-06-17-license-entry-screen.md`) is superseded history,
@@ -129,12 +132,13 @@ the plan is wrong.
   version is released during a user's 30-day trial, the trial is extended by a
   flat 7 days so the user has time to try it. One extension per new major —
   the trial does not restart. **Keygen cannot enforce this** (it has no
-  rules/scheduling engine), so the extension is **backend runtime logic**: a
-  Railway-hosted licensing service that, on trial check-in, reads Supabase
-  state, compares the major the trial started under against a backend "current
-  latest major" config, and once per new major `PATCH`es the Keygen license
-  `expiry += 7d`. New state on `device_trials` (`extended_for_majors`) keeps it
-  idempotent and capped at once per major. See §5b "Trial-extension service."
+  rules/scheduling engine), so the extension is **backend runtime logic**: the
+  Supabase Edge Function (`supabase/functions/license/`) that, on trial
+  `/check-in`, reads Supabase state, compares the major the trial started under
+  against the current latest stable major (derived from GitHub releases), and
+  once per new major `PATCH`es the Keygen license expiry forward by 7 days. The
+  `trial_extension_grants` table (PK `(keygen_license_id, major)`) keeps it
+  idempotent and capped at once per major. See §5 "/check-in" and §5a.
 - **Per-major paid unlock, perpetual, adds up.** Buying v0 attaches
   `STOWER_V0` to the license. Buying v1 later attaches `STOWER_V1` to the same
   license. You keep every major you paid for; nothing you didn't.
@@ -144,10 +148,10 @@ the plan is wrong.
 - **The gate checks version possession at launch.** A build runs only if its
   license holds that build's major unlock (`STOWER_V0` for the v0 app) **OR**
   `STOWER_TRIAL`. No matching unlock → buy/upgrade screen.
-- **Online + offline enforcement, both signed.** Online: the Mac app calls
-  Railway, and Railway calls Keygen/Supabase/Lemon Squeezy as needed. Offline:
-  the Mac app verifies a Keygen-signed machine-file locally (Ed25519). You can't
-  edit the file to fake "paid" — the signature won't match.
+- **Online + offline enforcement, both signed.** Online: the Mac app calls the
+  Edge Function, and the Edge Function calls Keygen/Supabase/Lemon Squeezy as
+  needed. Offline: the Mac app verifies a Keygen-signed machine-file locally
+  (Ed25519). You can't edit the file to fake "paid" — the signature won't match.
 - **Downloading is free; *running* is what's licensed.** The repo is open and
   the app is shareable. The right to *run* a major is what you're buying.
 
@@ -158,9 +162,9 @@ the plan is wrong.
 | Vendor | Role | Issues licenses? |
 |--------|------|-------------------|
 | **Keygen** | License authority — mints, validates, signs machine-files, enforces `maxMachines`, holds entitlements | **Yes** (the sole authority) |
-| **Lemon Squeezy** | Payment processor — takes money, redirects/returns the customer, and sends `order_created` to Railway | **No** (payment-only) |
-| **Railway** | The app-facing licensing backend — mints trials, validates/checks in, checks out Keygen machine files, creates checkout URLs, receives Lemon Squeezy webhooks, reasons over trial expiry/major-extension eligibility/current-latest-major config, reads/writes Supabase, and calls Keygen admin/license APIs | No (orchestrator) |
-| **Supabase** | Postgres state store for `device_trials`/`purchases`; legacy/current Edge Function host only until Plan Beta moves/wraps those routes behind Railway | No (state store) |
+| **Lemon Squeezy** | Payment processor — takes money, redirects/returns the customer, and sends `order_created` to the Edge Function (`/ls-webhook`) | **No** (payment-only) |
+| **Supabase Edge Function** (`supabase/functions/license/`, Deno) | The app-facing licensing **brain** — mints trials (and activates the machine + checks out the signed file), validates/checks in (`/check-in`), checks out Keygen machine files, receives Lemon Squeezy webhooks, reasons over trial expiry/major-extension eligibility/current-latest-major, reads/writes Supabase Postgres, and calls Keygen admin/license APIs. Keygen admin secrets live in its env, never in the app binary | No (orchestrator) |
+| **Supabase** (Postgres) | State store for `device_trials`/`purchases`/`trial_extension_grants`; the Edge Function (above) runs in the same Supabase project | No (state store) |
 
 Keygen is used in **both** phases (trial + paid), not "only during the trial."
 
@@ -175,14 +179,26 @@ Keygen is used in **both** phases (trial + paid), not "only during the trial."
 | `STOWER_V1` | License (future) | v1 paid unlock |
 
 **Keygen `validate-key` `scope.entitlements` is AND-semantics** — it cannot
-express "v0 OR trial" in one scoped call. Railway must validate plain
+express "v0 OR trial" in one scoped call. The Edge Function must validate plain
 (fingerprint scope), read the license's entitlements, and apply the online OR
-server-side. The Mac app also applies the same OR locally when it is offline,
-using only entitlement codes from the signed machine file.
+server-side (I4; `checkIn` in `handlers.ts`). The Mac app also applies the same
+OR locally when it is offline, using only entitlement codes from the signed
+machine file.
 
 The build's required code is a named Swift constant on the gate
 (`requiredEntitlementCode = "STOWER_V0"`; v1 build uses `"STOWER_V1"`), not a
 literal.
+
+**JC9 — the entitlement *code* is a per-runtime constant, not a Supabase env
+var.** The code string `STOWER_V0` is hardcoded in three runtimes that must
+agree: the Swift `requiredEntitlementCode` (offline gate), the Deno
+`STOWER_V0_ENTITLEMENT_CODE` constant in `handlers.ts` (used by both the webhook
+attach and the check-in OR), and `bootstrap-keygen.ts`'s `V0_ENTITLEMENT_CODE`.
+The Edge Function **derives** the required code from `appMajor` via the pure
+`entitlementForMajor` (`"v0" → "STOWER_V0"`, JC7) — the app does NOT send a
+`requiredEntitlement`. Only the Keygen entitlement **resource id**
+`KEYGEN_V0_ENTITLEMENT` (a UUID) is an env var, because it is account-specific.
+The CI integration test pins all runtimes to the same string.
 
 ---
 
@@ -194,8 +210,11 @@ behind it.** Two states are documented below: what exists in code today
 
 ### 5a. As-built (what exists in code today)
 
-The wired gate is **Lemon Squeezy**, not Keygen. The Keygen seams exist but are
-**unwired** (no conformer, no startup integration).
+The wired Swift gate is still **Lemon Squeezy**, not Keygen
+(`StowerLemonSqueezyLicenseGate()` at `StowerRootView.swift:38`). The
+Edge-Function licensing brain (`supabase/functions/license/`) is **built and
+landed** (Plan Beta), but the Swift seams that consume it (`StowerTrialMintClient`,
+the Keygen-backed gate) are **unwired** — Plan B rewires them.
 
 **The startup license seam** — `Sources/StowerMacUI/Startup/StowerLicenseGating.swift`
 
@@ -213,24 +232,16 @@ internal protocol StowerLicenseGating: Sendable {
 - Consumed by: `StowerStartupModel` (`:157,200,204` — calls `hasStoredLicense`,
   `activate`, `persistLicense`)
 
-**Keygen client** — `Sources/StowerMacUI/Startup/StowerKeygenClient.swift`
-
-```swift
-internal struct StowerKeygenClient: Sendable {
-    func activate(licenseKey: String, licenseID: String, fingerprint: String) async throws -> StowerKeygenActivation
-    func checkOutMachineFile(machineID: String, licenseKey: String) async throws -> String
-    func validate(licenseKey: String, fingerprint: String) async throws -> StowerKeygenValidation
-}
-```
-
-- `StowerKeygenActivation`: `.activated(machineID:)` | `.limitReached`
-- `StowerKeygenValidation`: `.valid` | `.invalid(code: String)` — decodes **only** `meta.valid` + `meta.code`. **Does not surface entitlement codes.**
-- `machineFileTTL`: 7 days (`:216`)
+The Swift `StowerKeygenClient` (machine activate/checkout/validate) has been
+**DELETED** — that surface now lives server-side in the Edge Function's
+`keygenAdmin` (`index.ts`: `activateMachine`, `checkoutMachineFile`, `validate`,
+`createTrialLicense`, `upgradeToPaid`, `attachV0`, `effectiveEntitlements`,
+`currentExpiry`, `patchExpiry`).
 
 **Lease store** — `Sources/StowerMacUI/Startup/StowerLicenseLeaseStore.swift`
 
 ```swift
-internal struct StowerLicenseLease: Codable {
+internal struct StowerLicenseLease: Sendable, Equatable, Codable {
     let licenseKey: String
     let licenseID: String
     let machineFile: String
@@ -238,10 +249,14 @@ internal struct StowerLicenseLease: Codable {
 }
 ```
 
-- **No entitlement codes in the lease.**
+- **No entitlement codes in the lease yet** (Plan B adds them — §5b).
+- Stored in the macOS **Keychain** as a generic-password item (`StowerKeychainItem`,
+  service `com.stower.license.lease`, account `machine-file`). See "On-device
+  storage & threat model" below.
 - `keygenPublicKeyHex`: all-zeros placeholder (`:210-211`) — no production
   verification runs yet.
-- Verifies Ed25519 signature on every `load()`.
+- Verifies the machine-file's Ed25519 signature on every `load()` (I6); the
+  signed payload is `"machine/" + enc`.
 
 **Device fingerprint** — `Sources/StowerMacUI/Startup/StowerDeviceFingerprint.swift`
 
@@ -258,15 +273,103 @@ internal struct StowerTrialMintClient: Sendable {
 ```
 
 - `StowerTrialMint`: `.minted(key:licenseID:)` | `.retryShortly` | `.unreachable`
+- Still decodes the wire field `key` (Plan B rewires it to the renamed
+  `licenseKey` + the new `machineFile`/`machineID` fields the Edge Function now
+  returns — §5b). **Unwired** today (no startup integration).
 
-**Supabase Edge Function** — `supabase/functions/license/`
+**Supabase Edge Function** — `supabase/functions/license/` (the licensing brain;
+landed via Plan Beta). `Deno.serve` routes (`index.ts`):
 
-- `KeygenAdmin.createTrialLicense()` → POST license under Trial policy, 30d expiry
-- `KeygenAdmin.upgradeToPaid(licenseID)` → PUT policy (→ Paid) + PATCH expiry (→ null). **No entitlement attach.**
-- `TrialStore`: `device_trials` table (fingerprint PK, `status` lifecycle: `pending`→`active`, `claim_id` for crash recovery)
-- `PurchaseStore`: `purchases` table (`ls_order_id` PK, FK to `device_trials.keygen_license_id`)
+- `POST /mint-trial` `{fingerprint, appMajor, appBuild}` → mints (or returns the
+  existing) Trial-policy license (30d expiry), **activates the machine**, and
+  **checks out the signed machine file**, returning
+  `{minted, licenseKey, licenseID, machineID, machineFile}` (the reply field was
+  renamed from the as-built `key` to **`licenseKey`**). `400` (no fingerprint) /
+  `503` (retry) on failure; crash-recoverable claim (I9).
+- `POST /check-in` `{licenseID, fingerprint, appMajor, appBuild}` + signed
+  headers — the reachable-launch gate authority (§5 "/check-in"). Never returns
+  the license key.
+- `POST /ls-webhook` — `order_created`: `upgradeToPaid` (PUT policy → Paid +
+  PATCH expiry → null), **attaches `STOWER_V0`** via `keygenAdmin.attachV0`
+  (license-level), then records `purchased_major`/`entitlement_code` on the
+  `purchases` row. Validates/upgrades before recording (B7/I10).
+- `GET /health` → `{status:"ok"}`, no secrets, no DB.
+- `KeygenAdmin` (in `index.ts`) holds the admin token from env and never logs it;
+  it owns `createTrialLicense`, `upgradeToPaid`, `attachV0`, `activateMachine`,
+  `checkoutMachineFile`, `validate`, `effectiveEntitlements`, `currentExpiry`,
+  `patchExpiry`.
+- `TrialStore`: `device_trials` (fingerprint PK; `status` lifecycle
+  `pending`→`active`; `claim_id` for crash recovery; plus `keygen_machine_id`,
+  `started_major`, `updated_at`, `last_check_in_at`, `observed_major`,
+  `observed_build`) and `trial_extension_grants` (PK `(keygen_license_id, major)`).
+- `PurchaseStore`: `purchases` (`ls_order_id` PK, FK to
+  `device_trials.keygen_license_id`, plus `purchased_major`/`entitlement_code`).
 
-### 5b. Intended (the Railway-backed Keygen redesign — not yet implemented)
+### 5 (cont). The `/check-in` seam shape (as-built, server-side)
+
+`/check-in` is the reachable-launch gate authority (`checkIn` in `handlers.ts`,
+wired in `index.ts`). Request: `POST /check-in` with body
+`{licenseID, fingerprint, appMajor, appBuild}` and three headers:
+`X-Stower-Timestamp` (unix seconds), `X-Stower-Nonce`, `X-Stower-Signature`
+(lower-case hex). Status table:
+
+| HTTP | `status` | extra fields | → `StowerLicenseStatus` (Plan B) |
+|------|----------|--------------|----------------------------------|
+| 200 | `ok` | `trialExtended, extendedForMajor, currentLatestMajor, licenseID, machineFile` | `.valid` |
+| 200 | `wrong_version` | `licenseID, currentLatestMajor` | `.wrongVersion(licenseID:)` |
+| 200 | `expired` | `licenseID` | `.expired(licenseID:)` |
+| 401 | `bad_signature` | — (non-secret diagnostic logged) | `.couldNotReach` |
+| 404 | `unknown_license` | — | `.needsTrialOnline` |
+| 409 | `fingerprint_mismatch` | `licenseID` | device changed (PAR-36) |
+| 503 | `retry_shortly` / `unreachable` | — | `.couldNotReach` |
+
+Check-in **never returns `keygen_license_key`**. On the `ok` path it returns a
+freshly checked-out signed `machineFile` (I13).
+
+**JC5 per-license request signature** (`requestSignature.ts`): the app signs each
+check-in with the license's own secret key. The signature is HTTP-header-based,
+not body-embedded (a body-embedded signature is circular — you can't re-serialize
+the body canonically to re-hash it). The signed message is:
+
+```text
+sig = HMAC-SHA256(key = keygen_license_key,
+                  msg = "{METHOD}\n{path}\n{timestamp}\n{nonce}\n{sha256hex(rawBody)}")
+```
+
+- `METHOD` upper-case; `path` is the canonical constant `"/check-in"`
+  (`CHECK_IN_SIGNING_PATH` in `index.ts`) — NOT the raw request pathname, which
+  carries Supabase's function prefix.
+- `timestamp` is unix seconds; the server rejects `|now − ts| > 120s` (replay
+  bound).
+- `signature` is lower-case hex; verified constant-time.
+- Implemented with Web Crypto (`crypto.subtle`), never `node:crypto`.
+- Committed parity vector: `supabase/functions/license/fixtures/jc5-signature-vector.json`.
+  Plan B's Swift signer must reproduce `signature` byte-for-byte.
+
+### 5 (cont). On-device storage & threat model (as-built)
+
+The license lease (`StowerLicenseLease`: `licenseKey`, `licenseID`,
+`machineFile`, `validatedAt`) is stored in the macOS **Keychain** as a
+generic-password item — `StowerKeychainItem`, service `com.stower.license.lease`,
+account `machine-file` (`StowerLicenseLeaseStore.swift`). Stored with
+`kSecAttrAccessibleAfterFirstUnlock` and `kSecAttrSynchronizable: false`
+(device-bound, never roams to iCloud).
+
+Two **independent** guarantees protect different things:
+
+- The **Keychain** protects the license *key* — a bearer secret — from theft by
+  other processes/users.
+- The **Ed25519 signature** protects the *entitlements + expiry* from tampering;
+  it is re-verified on every `load()` (I6), against the embedded
+  `keygenPublicKeyHex`.
+
+These compose so that editing the Keychain lease to fake "paid / never-expires"
+gains nothing: the forged blob fails the signature check and `load()` returns
+`nil`. A user can only **delete** their own lease (which forces a reconnect) or
+**read** their own key. The Keygen **admin** secret never ships in the binary —
+it lives only in the Edge Function env.
+
+### 5b. Intended (the Edge-Function-backed Keygen redesign — not yet implemented)
 
 The facade the plans describe. **None of this exists in code yet.**
 
@@ -286,21 +389,22 @@ internal protocol StowerLicenseGating: Sendable {
   - `.upgradeRequired` is the entry-screen context `.wrongVersion` routes to. It carries the `licenseID` so the buy screen can build the upgrade checkout URL. Distinct from `.trialEnded` (first-time purchase vs. cross-major upgrade — different copy, different checkout target).
 - `StowerCheckingLicenseReason`: `.startingTrial` | `.activating` | `.revalidating`
 - `StowerLicenseActivation`: `.activated` | `.invalid` | `.couldNotReach` (no `instanceID`)
-- New conformer: `StowerRailwayLicenseGate` (composes the Plan-A local seams and
-  talks to Railway for online licensing)
+- New conformer: an Edge-Function-backed `StowerLicenseGate` (composes the Plan-A
+  local seams and talks to the Edge Function for online licensing)
 - Delete: `StowerLemonSqueezyLicenseGate`, `StowerLicenseStore`, `StowerLemonSqueezyClient`
 
-**Railway client** (§C):
+**Check-in client** (§C):
 
-- `StowerRailwayLicenseClient` is the only online licensing client used by the
-  Mac app. It calls Railway endpoints for trial mint, reachable launch check-in,
+- `StowerLicenseCheckInClient` (Plan B; built on the unwired `StowerTrialMintClient`
+  base) is the only online licensing client used by the Mac app. It calls the
+  Edge Function for trial mint, reachable-launch `/check-in` (JC5-signed),
   checkout URL creation, manual key activation fallback, and Re-check after
   purchase.
-- Railway validates with Keygen, reads effective entitlements, applies the OR
-  rule, activates machines, and checks out signed machine files using
-  `include=license.entitlements,license.policy,license`.
-- Railway returns the signed machine file and minimal gate status to the Mac app.
-  The app does not call Keygen directly on the online path.
+- The Edge Function (server-side, already built) validates with Keygen, reads
+  effective entitlements, applies the OR rule, activates machines, and checks out
+  signed machine files using `include=license.entitlements,license.policy,license`.
+- The Edge Function returns the signed machine file and minimal gate status to the
+  Mac app. The app does not call Keygen directly on the online path.
 
 **Lease extension** (§C):
 
@@ -310,9 +414,11 @@ internal protocol StowerLicenseGating: Sendable {
 **Machine-file lifecycle** (§C):
 
 Keygen validation and Keygen machine-file checkout are separate operations.
-`validate-key` does not automatically return a signed offline lease. Railway
-must explicitly check out a signed machine file whenever the app needs refreshed
-offline authority, then return that signed file to the Mac app for storage.
+`validate-key` does not automatically return a signed offline lease. The Edge
+Function must explicitly check out a signed machine file whenever the app needs
+refreshed offline authority, then return that signed file to the Mac app for
+storage. (Server-side this is already built: `mintTrial` and `checkIn` both call
+`keygenAdmin.checkoutMachineFile`; the Plan B work is the Swift consumption.)
 
 **Offline boundary = the machine file's TTL (`meta.expiry`), for both trial and
 paid.** This follows Keygen's official guidance: assert `meta.expiry > now` on
@@ -323,23 +429,24 @@ No grace window beyond the TTL. The license's own expiry
 perpetual). The TTL is the offline gate; the license expiry is server-side
 state that propagates through fresh check-outs.
 
-Stower uses a **7-day machine-file TTL** (`604800` seconds). Keygen's checkout
-API takes `ttl` in seconds and uses it to calculate `meta.expiry`; Railway must
-keep passing `ttl=604800`. The TTL is not a refresh heuristic. If the app can
-reach Railway when it opens, Railway validates/checks in with Keygen and checks
-out a fresh 7-day machine file every time. If the app cannot reach Railway, it
-falls back to the cached signed file only until that file's `meta.expiry`.
+Stower uses a **7-day machine-file TTL** (`604800` seconds —
+`MACHINE_FILE_TTL_SECONDS` in `index.ts`). Keygen's checkout API takes `ttl` in
+seconds and uses it to calculate `meta.expiry`. The TTL is not a refresh
+heuristic. If the app can reach the Edge Function when it opens, the function
+validates/checks in with Keygen and checks out a fresh 7-day machine file every
+time. If the app cannot reach the Edge Function, it falls back to the cached
+signed file only until that file's `meta.expiry`.
 
-1. **First trial start (online):** the app calls Railway; Railway mints or
-   returns the trial license, validates/activates the Keygen license for the
-   device, explicitly checks out a signed machine file with
+1. **First trial start (online):** the app calls the Edge Function (`/mint-trial`);
+   the function mints or returns the trial license, activates the Keygen machine,
+   checks out a signed machine file with
    `include=license.entitlements,license.policy,license`, and returns the signed
    file for local storage.
-2. **App open while online/reachable (trial or paid):** the app calls Railway;
-   Railway validates the license with Keygen, applies any trial-extension logic,
-   then checks out and returns a fresh signed machine file with `ttl=604800`
-   before the app proceeds. The cached file is refreshed on every reachable
-   launch.
+2. **App open while online/reachable (trial or paid):** the app calls the Edge
+   Function (`/check-in`); the function validates the license with Keygen, applies
+   any trial-extension logic, then checks out and returns a fresh signed machine
+   file with `ttl=604800` before the app proceeds. The cached file is refreshed on
+   every reachable launch.
 3. **App open while offline/unreachable (trial or paid):** verify the local signed machine
    file's Ed25519 signature, assert `meta.expiry > now` (TTL not expired), and
    check the signed entitlements include `STOWER_TRIAL` or the build's required
@@ -351,25 +458,26 @@ falls back to the cached signed file only until that file's `meta.expiry`.
 - `StowerDeviceFingerprint` fails hard when `IOPlatformUUID` is absent; the
   Keychain fallback is deleted.
 
-**Purchase webhook extension** (Plan Beta Railway backend):
+**Purchase webhook extension** (Edge Function `/ls-webhook` — built server-side):
 
-- Railway's paid-upgrade path adds a third step: `POST /licenses/{id}/entitlements` with
-  `KEYGEN_V0_ENTITLEMENT`. 400 "already attached" → success (idempotent).
-- Missing `KEYGEN_V0_ENTITLEMENT` → fail loudly (never ship a paid license
-  with no major stamp).
+- The paid-upgrade path attaches `STOWER_V0` via `keygenAdmin.attachV0`
+  (`POST /licenses/{id}/entitlements` with `KEYGEN_V0_ENTITLEMENT`). 422/409
+  "already attached" → success (idempotent).
+- Missing `KEYGEN_V0_ENTITLEMENT` → fail loudly at boot (I7; never ship a paid
+  license with no major stamp).
 
 **v0 purchase detection**:
 
 - Checkout targets the existing device license id carried by
   `.trialEnded(licenseID:)` / `.upgradeRequired(licenseID:)`.
-- The Lemon Squeezy webhook handled by Railway is the only component that mutates
-  the license to paid: policy → Paid, expiry → `null`, direct `STOWER_V0`
-  entitlement attached.
+- The Lemon Squeezy webhook handled by the Edge Function is the only component
+  that mutates the license to paid: policy → Paid, expiry → `null`, direct
+  `STOWER_V0` entitlement attached.
 - The app does not infer purchase completion from Lemon Squeezy UI state. For
-  v0, the paywall exposes an explicit Re-check action; that action calls
-  Railway. Railway validates the same Keygen license, reads effective
-  entitlements, observes `STOWER_V0`, checks out a fresh signed machine file,
-  and returns it to the app.
+  v0, the paywall exposes an explicit Re-check action; that action calls the Edge
+  Function (`/check-in`). The function validates the same Keygen license, reads
+  effective entitlements, observes `STOWER_V0`, checks out a fresh signed machine
+  file, and returns it to the app.
 - If the webhook has not completed yet, Re-check leaves the user on the paywall
   with retry copy. Background polling, deep-link return, and automatic checkout
   completion detection are future UX improvements, not required for v0.
@@ -382,25 +490,28 @@ falls back to the cached signed file only until that file's `meta.expiry`.
   `duration` + `RESET_EXPIRY`), entitlements `STOWER_TRIAL` (→ Trial policy) +
   `STOWER_V0` (unattached). Prints JSON ids to stdout.
 
-**Trial-extension service** (Plan Beta Railway backend):
+**Trial-extension service** (Edge Function `/check-in` — built server-side):
 
 - **Why it exists:** `licensing.md` promises a +7-day trial extension when a
   new major ships during a user's trial. Keygen has no rules/scheduling engine,
-  so this is Railway backend runtime logic, not a Keygen capability and not app
+  so this is Edge Function runtime logic, not a Keygen capability and not app
   logic.
-- **What it does:** on trial check-in, Railway reads Supabase trial state,
-  compares the major the trial started under against a backend "current latest
-  major" config; once per new major, it `PATCH`es the Keygen license
-  `expiry += 7d`.
-- **State required:** new column on `device_trials` (`extended_for_majors`,
-  e.g. `text[]`) in Supabase to keep the extension idempotent and capped at
-  once per major.
-- **New app→backend seam:** today the app calls Supabase only once
-  (`mint-trial`); the extension requires a Railway check-in call during trial
-  launches. The primary trigger is request-driven app-open check-in, not cron:
-  the Mac app opens, calls Railway, Railway reads Supabase and patches Keygen if
-  the once-per-major extension applies. Cron can be a later reconciliation tool,
-  but it is not the load-bearing expiry mechanism.
+- **What it does:** on `/check-in`, the function (`applyExtension` in
+  `handlers.ts`) reads Supabase trial state, compares the major the trial started
+  under against the current latest stable major (derived from GitHub releases),
+  and once per new major patches the Keygen license expiry forward by 7 days
+  (target-state PATCH to a frozen absolute expiry, not a `+= 7d` delta).
+- **State required:** the `trial_extension_grants` table (PK
+  `(keygen_license_id, major)`; `previous_expires_at`, `target_expires_at`,
+  `patched_at`, `created_at`) keeps the extension idempotent and capped at once
+  per major. Recorded BEFORE the Keygen patch so a crash re-converges to +7
+  exactly once (I11).
+- **App→backend seam:** the extension is driven by the app's request-driven
+  app-open `/check-in` call, not cron: the Mac app opens, calls the Edge
+  Function, the function reads Supabase and patches Keygen if the once-per-major
+  extension applies. (The Swift `/check-in` caller is Plan B; the server logic is
+  built.) Cron can be a later reconciliation tool, not the load-bearing expiry
+  mechanism.
 - **Does not restart the trial.** The extension adds 7 days to the existing
   expiry; it does not reset the clock. A trial that's day-25 of 30 becomes
   day-25 of 37, not day-0 of 7.
@@ -409,19 +520,19 @@ falls back to the cached signed file only until that file's `meta.expiry`.
 
 | # | What | Status | Owned by |
 |---|------|--------|----------|
-| G1 | Facade rewrite (`StowerLicenseGating` → Railway-backed Keygen shape) | not started | Plan B |
-| G2 | `StowerRailwayLicenseGate` (new conformer + §C entitlement check) | not started | Plan B |
-| G3 | `StowerRailwayLicenseClient` returns gate status + signed machine file from Railway | not started | Plan B (§C) |
+| G1 | Facade rewrite (`StowerLicenseGating` → Edge-Function-backed Keygen shape) | not started | Plan B |
+| G2 | Edge-Function-backed `StowerLicenseGate` (new conformer + §C entitlement check) | not started | Plan B |
+| G3 | `StowerLicenseCheckInClient` returns gate status + signed machine file from the Edge Function | not started | Plan B (§C) |
 | G4 | `StowerLicenseLease` carries entitlements | not started | Plan B (§C) |
-| G5 | `StowerRailwayLicenseGate` implements the machine-file lifecycle in §5b | not started | Plan B (§C) |
+| G5 | The new gate implements the machine-file lifecycle in §5b | not started | Plan B (§C) |
 | G6 | Fingerprint fallback deleted (PAR-36) | not started | PAR-36 ticket (not Plan B — Plan B's Non-goals exclude it; must land before selling paid licenses) |
 | G7 | Delete `StowerLemonSqueezyLicenseGate` + `StowerLicenseStore` | not started | Plan B |
-| G8 | Webhook attaches `STOWER_V0` (§B) | not started | Plan Beta (Railway webhook) |
+| G8 | Webhook attaches `STOWER_V0` (§B) | **done** | Plan Beta (Edge Function `/ls-webhook`) |
 | G9 | Bootstrap script creates structures (§A) | not started | Bootstrap plan |
 | G10 | `keygenPublicKeyHex` replaced with real key | not started | Prod ops |
 | G11 | Local Keygen CE harness (regression net) | not started | Plan 2 |
-| G12 | Railway licensing backend service (runtime check-in + backend +7d on new major) | briefed | Plan Beta |
-| G13 | `device_trials.extended_for_majors` Supabase state + idempotent once-per-major cap | briefed | Plan Beta |
+| G12 | Edge Function licensing brain (runtime `/check-in` + server +7d on new major + `/health`) | **done** | Plan Beta |
+| G13 | `trial_extension_grants` Supabase state + idempotent once-per-major cap | **done** | Plan Beta |
 
 ---
 
@@ -435,25 +546,29 @@ vaporware. Plans must not violate these.
 | I1 | §C must not go live before §A + §B | A gate checking for `STOWER_V0` before the webhook stamps it rejects every paying customer |
 | I2 | Trial and Paid policies are policy-change-compatible | trial→paid `PUT /policy` 422s if they differ on crypto scheme / encrypted / pooled / fingerprint-strategy |
 | I3 | `STOWER_V0` is license-level, not policy-level | License-level is the only shape that lets unlocks "add up" across majors |
-| I4 | Railway applies the online OR and the Mac app applies the offline OR from the signed file | Keygen `scope.entitlements` is AND-only; an AND scope can't express "v0 OR trial" |
+| I4 | The Edge Function applies the online OR (effective entitlements include `STOWER_TRIAL` OR the derived code) and the Mac app applies the offline OR from the signed file | Keygen `scope.entitlements` is AND-only; an AND scope can't express "v0 OR trial". The function derives the required code from `appMajor` via `entitlementForMajor` (JC7) |
 | I5 | The offline path enforces entitlements from the signed file | Otherwise an offline `STOWER_V0` lease could run a future v1 build |
 | I6 | Machine-file signature is verified on every `load()` | A tampered cache must be rejected, not trusted |
-| I7 | Railway's paid-upgrade path fails loudly on missing `KEYGEN_V0_ENTITLEMENT` | A silent skip ships paid licenses with no recorded major — the exact regression this work exists to prevent |
+| I7 | The Edge Function's paid-upgrade path fails loudly on missing `KEYGEN_V0_ENTITLEMENT` (throws at boot in `keygenAdmin()`) | A silent skip ships paid licenses with no recorded major — the exact regression this work exists to prevent |
 | I8 | One license per device (born Trial, flipped to Paid in place) | Same license id/key throughout; the paywall needs the `licenseID` to build the upgrade URL |
 | I9 | `device_trials` claim is crash-recoverable | A mint that dies mid-flow neither double-mints nor returns nulls |
 | I10 | Webhook validates before marking processed | A bad variant is never recorded; a transient Keygen failure stays retryable |
-| I11 | The +7-day extension is idempotent and capped at once per new major | Without `extended_for_majors` state, a check-in could double-extend or extend every launch |
+| I11 | The +7-day extension is idempotent and capped at once per new major | Without the `trial_extension_grants` PK `(keygen_license_id, major)` + record-before-patch to a frozen target, a check-in could double-extend or extend every launch |
 | I12 | The extension adds to the existing expiry; it does not restart the trial | A restart would break the "one trial per device" promise and let a user reset their clock by downloading a new major |
-| I13 | Online validation and machine-file checkout stay separate inside Railway | `validate-key` is not an offline lease; without explicit checkout, offline launch decisions use stale or missing signed state |
+| I13 | Online validation and machine-file checkout stay separate inside the Edge Function | `validate-key` is not an offline lease; without explicit checkout, offline launch decisions use stale or missing signed state |
 | I14 | The machine file TTL (`meta.expiry`) is the hard offline boundary for both trial and paid — no grace | Per Keygen's guidance: assert `meta.expiry > now`; expired file → blocked, must reconnect. A grace window (Plan B's `paidGraceAllows`) would let revoked/suspended licenses run indefinitely offline and enable clock-tampering to extend use |
 | I15 | The license's own expiry (`included[license].attributes.expiry`) is NOT the offline boundary | The TTL gates offline access; the license expiry is server-side state (30-day trial clock / `null` perpetual) that propagates through fresh check-outs, not a second offline clock the app honors independently |
+| I16 | `/check-in` requires a valid JC5 per-license signature (HMAC-SHA256 over `{METHOD}\n{path}\n{timestamp}\n{nonce}\n{sha256hex(body)}`, key = `keygen_license_key`), carried in the `X-Stower-*` headers (not the body), and replay-bounded to `|now − ts| ≤ 120s` | An unsigned/forged check-in could let an attacker impersonate a device; a body-embedded signature is non-canonical; without the replay bound a captured request replays forever. The committed `fixtures/jc5-signature-vector.json` keeps the Swift signer and Deno verifier byte-for-byte identical |
+| I17 | `/check-in` NEVER returns `keygen_license_key` | The key is a bearer secret already on the device; echoing it on every launch widens its exposure for no benefit |
+| I18 | The Edge Function never logs secrets, even on error paths | Signature diagnostics carry only a nonce prefix + skew; bad-signature/DB/Keygen failures log ids and verdicts, never the key, body, or full signature |
+| I19 | The entitlement *code* `STOWER_V0` is a per-runtime constant pinned across Swift / Deno / bootstrap; only the Keygen entitlement *resource id* `KEYGEN_V0_ENTITLEMENT` (a UUID) is env (JC9) | A code drift between the offline gate, the webhook attach, and the check-in OR would silently mis-gate; the resource id is account-specific so it must stay env |
 
 ---
 
 ## 7. How plans sign against this
 
 1. A plan opens with the exact contract version it signs against, e.g.
-   "Signs against `licensing-contract.md` v1.12."
+   "Signs against `licensing-contract.md` v1.13."
 2. A plan may build behind the facade (internal impl) or migrate the facade
    (seam shape change). A facade migration is a **one-way door** — deliberate,
    versioned, and updates every downstream consumer in the same pass.
@@ -484,3 +599,4 @@ vaporware. Plans must not violate these.
 | 1.10 | 2026-06-24 | Pinned Stower's machine-file checkout TTL in the intended lifecycle: `ttl=604800` seconds (7 days), matching `StowerKeygenClient.machineFileTTL`. Reachable app opens always validate/check in and check out a fresh 7-day machine file; unreachable/offline opens may use the cached signed file only until its `meta.expiry`. |
 | 1.11 | 2026-06-24 | Inserted Plan Beta before Plan B: a Railway licensing backend now owns request-driven app-open check-in, once-per-major trial extension, and Supabase/Keygen runtime reasoning. Plan B must treat Railway as a landed dependency, not optional "when present" behavior. |
 | 1.12 | 2026-06-24 | Tightened the online boundary: after Plan Beta, the Swift app talks only to Railway for online licensing. Railway owns Keygen validation/activation/machine-file checkout, Supabase state, Lemon Squeezy webhook handling, and checkout URL creation. The Mac app only stores and locally verifies signed Keygen machine files for offline use. |
+| 1.13 | 2026-06-25 | **Railway superseded — the licensing brain is the existing Supabase Edge Function** (`supabase/functions/license/`, Deno); Supabase is now brain + Postgres state store, and the app's only online licensing surface is the Edge Function base URL. Swept all ~47 Railway mentions to the Edge Function (vendor split §3, model §2, sequencing, §4, §5a/§5b/§5c, invariants I4/I7/I13). As-built (§5a, landed via Plan Beta): `/mint-trial` now activates the machine + checks out the signed file and renames the wire reply `key`→`licenseKey` (returns `{minted, licenseKey, licenseID, machineID, machineFile}`); NEW `POST /check-in` (gate authority, status table in §5) + NEW `GET /health` (`{status:"ok"}`, no secrets/DB); `/ls-webhook` now attaches `STOWER_V0` via `keygenAdmin.attachV0` and records `purchased_major`/`entitlement_code`. Added the `/check-in` seam shape + status table, the JC5 per-license signature (HMAC over `{METHOD}\n{path}\n{timestamp}\n{nonce}\n{sha256hex(body)}`, header-based, 120s replay bound, committed vector `fixtures/jc5-signature-vector.json`, canonical `CHECK_IN_SIGNING_PATH` `/check-in`), JC7 (server-derived required entitlement via `entitlementForMajor`), and JC9 (entitlement *code* is a per-runtime constant, only `KEYGEN_V0_ENTITLEMENT` UUID is env) to §4. Added the "On-device storage & threat model" note: the lease lives in the macOS Keychain (`StowerKeychainItem`, service `com.stower.license.lease`, account `machine-file`) — Keychain protects the key, the Ed25519 signature protects entitlements+expiry (re-verified every `load()`, I6); a forged lease fails the signature check. New DB (`20260625_license_checkin.sql`): `device_trials` gains `keygen_machine_id/started_major/updated_at/last_check_in_at/observed_major/observed_build`; new `trial_extension_grants` (PK `(keygen_license_id, major)`); `purchases` gains `purchased_major/entitlement_code`. A2 confirmed — entitlements + license expiry live INSIDE the Ed25519-signed machine-file `enc` payload (CI integration test decodes `enc` and asserts). Added invariants I16 (JC5 signature required, header-based, replay-bounded, committed vector), I17 (check-in never returns the key), I18 (secrets never logged), I19 (entitlement code is a pinned constant). `Sources/StowerMacUI/Startup/StowerKeygenClient.swift` **deleted** (server-side now); the wired Swift gate is still `StowerLemonSqueezyLicenseGate` and `StowerTrialMintClient` is still unwired (Plan B rewires). Grounded in `index.ts`, `handlers.ts`, `requestSignature.ts`, `github.ts`, `fixtures/jc5-signature-vector.json`, `20260625_license_checkin.sql`, `StowerLicenseLeaseStore.swift`. |

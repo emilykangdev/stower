@@ -36,6 +36,10 @@ const CHECKOUT_TTL_SECONDS = 3600;
 // be explicit rather than rely on the scheme-derived default).
 const MACHINE_FILE_ALGORITHM = "base64+ed25519";
 const TRIAL_ENTITLEMENT_CODE = "STOWER_TRIAL";
+// The relationship data the Edge Function checks out (A2): entitlements + policy +
+// license, baked INTO the signed payload so the app's offline OR-check reads
+// tamper-proof entitlements + expiry.
+const MACHINE_FILE_INCLUDE = "license.entitlements,license.policy,license";
 const MACHINE_FILE_PREFIX = "-----BEGIN MACHINE FILE-----";
 const MACHINE_FILE_SUFFIX = "-----END MACHINE FILE-----";
 // Keygen signs machine files over the string `machine/` + the `enc` payload.
@@ -189,10 +193,12 @@ Deno.test("trial license offline machine path verifies an Ed25519 machine file",
     `trial license did not validate: ${JSON.stringify(validation.json.meta)}`,
   );
 
-  // 5. Check out a signed machine file (license-key auth, pinned Ed25519 algorithm).
+  // 5. Check out a signed machine file (license-key auth, pinned Ed25519 algorithm),
+  // with the SAME `include=` the Edge Function uses, so this proves the offline path.
   const checkoutQuery = new URLSearchParams({
     ttl: String(CHECKOUT_TTL_SECONDS),
     algorithm: MACHINE_FILE_ALGORITHM,
+    include: MACHINE_FILE_INCLUDE,
   });
   const checkout = await send(
     "POST",
@@ -227,4 +233,27 @@ Deno.test("trial license offline machine path verifies an Ed25519 machine file",
   tampered[0] ^= 0xff;
   const tamperedVerified = await verifyMachineFile(machineFile, publicKeyHex, tampered);
   assert(!tamperedVerified, "a corrupted signature verified — the check is not real");
+
+  // 9. A2 LOCK-IN: the `include=` relationship data must live INSIDE the signed
+  // `enc` payload (not an unsigned envelope) — otherwise an offline OR-check would
+  // read tamper-able entitlements. Decode the signed enc and assert STOWER_TRIAL +
+  // the license expiry are present in the snapshot the signature covers.
+  const payload = JSON.parse(
+    new TextDecoder().decode(bytesFromBase64(machineFile.enc)),
+  ) as {
+    included?: Array<{ type?: string; attributes?: Record<string, unknown> }>;
+  };
+  const included = Array.isArray(payload.included) ? payload.included : [];
+  const signedEntitlements = included
+    .filter((r) => r.type === "entitlements")
+    .map((r) => r.attributes?.code);
+  assert(
+    signedEntitlements.includes(TRIAL_ENTITLEMENT_CODE),
+    `A2: ${TRIAL_ENTITLEMENT_CODE} is NOT inside the signed machine-file payload (got ${JSON.stringify(signedEntitlements)})`,
+  );
+  const signedLicense = included.find((r) => r.type === "licenses");
+  assert(
+    signedLicense !== undefined && "expiry" in (signedLicense.attributes ?? {}),
+    "A2: the license expiry is NOT inside the signed machine-file payload",
+  );
 });

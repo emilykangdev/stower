@@ -12,7 +12,17 @@ This folder is the single home for **everything Keygen**: the CE Docker harness,
 the `bootstrap-keygen.ts` provisioning script, and its Deno tests (hermetic unit +
 real-CE integration). It is a self-contained Deno project (`deno.json`).
 
-## Usage
+## Do NOT run this locally on Apple Silicon — it runs on CI
+
+The `keygen/api` image is **x86_64 only** (`platform: linux/amd64`). On CI's
+x86_64 ubuntu runners it boots natively; on an Apple Silicon (M-series) Mac it runs
+under **QEMU emulation**, where the first boot is so slow it is effectively unusable
+(it times out pulling + booting before the proxy serves). **CI is the source of
+truth for the integration suite — don't try to boot the harness on a Mac.** When you
+need to prove a Keygen wire-shape locally, ground it against the docs + the hermetic
+unit tests and let CI's `keygen-integration` job run the real-CE assertions.
+
+## Usage (CI, or x86_64 hosts only)
 
 ```bash
 Scripts/Keygen/up.sh        # boot CE, provision, mint admin token → .runtime.env
@@ -64,7 +74,10 @@ absent — a missing harness is a hard error, never a silent skip.
   "...admins.first.tokens.create(name:).raw"` (the entrypoint has no bare `rails`,
   and echoes `Running command:` to stdout — so `up.sh` greps the `admin-` prefix).
 - **Architecture:** the `keygen/api` image is x86_64 (`platform: linux/amd64`):
-  **native on CI's ubuntu runners, emulated (slower first boot) on Apple Silicon.**
-  CI is the source of truth; local arm64 runs are on-demand under emulation.
+  **native on CI's ubuntu runners; on Apple Silicon it runs under QEMU emulation,
+  where the first boot is too slow to be usable in practice (it times out before the
+  proxy serves).** CI is the source of truth — do NOT boot the harness on an M-series
+  Mac; ground local work against the docs + hermetic unit tests and let CI run the
+  real-CE integration assertions.
 - **`.env` is committed and throwaway** because the DB is ephemeral (`down.sh -v`
   wipes it). The only secret-bearing file is `.runtime.env`, which is gitignored.

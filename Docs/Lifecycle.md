@@ -8,7 +8,7 @@
 > lifecycle** view that sits above both, and is consistent with the contract
 > (≥ v1.12) — it does not introduce a different model, it draws the picture.
 
-**Version:** 1.0 · **Last updated:** 2026-06-25 · **Status:** decision locked, code not yet migrated.
+**Version:** 1.1 · **Last updated:** 2026-06-25 · **Status:** brain = Supabase Edge Function (`supabase/functions/license/`). The Edge Function `mint-trial` / `check-in` / `ls-webhook` is implemented (Plan Beta landed); the Swift gate rewire is Plan B.
 
 ---
 
@@ -16,23 +16,27 @@
 
 These are firm (Emily, 2026-06-25). A plan or commit that contradicts one is wrong.
 
-1. **The Mac app talks to Railway and nothing else for online licensing.** No
-   direct Keygen calls, no direct Supabase calls. Railway is the single
-   app-facing surface.
-2. **Railway is the only component that reasons.** It owns all runtime license
-   logic: mint trial, validate / check in, trial-extension math, machine-file
-   checkout, and flipping a trial to paid. Keygen is the authority it calls;
-   Supabase is the memory it reads/writes.
-3. **Supabase is dumb storage.** Postgres tables only (`device_trials`,
-   `purchases`). **No Edge Functions, no webhooks, no logic.** It records what
-   happened; it never decides anything.
-4. **Webhooks go to Railway, never to Supabase.** The Lemon Squeezy
-   `order_created` webhook is received by **Railway**, which acts on it (attaches
-   the major's entitlement, clears expiry). Supabase receives no webhooks — that
-   is the one and only "no webhook" rule.
+1. **The Mac app's only online licensing surface is the Edge Function base URL.**
+   No direct Keygen calls, no direct Supabase Postgres calls. The Supabase Edge
+   Function (`supabase/functions/license/`) is the single app-facing surface; the
+   app talks only to it for online licensing.
+2. **The Edge Function is the only component that reasons.** It owns all runtime
+   license logic: mint trial, validate / check in, trial-extension math,
+   machine-file checkout, and flipping a trial to paid. Keygen is the authority it
+   calls; Supabase Postgres is the memory it reads/writes.
+3. **Supabase is brain + state store.** The Edge Function (`supabase/functions/license/`)
+   is the brain; Postgres (`device_trials`, `purchases`, `trial_extension_grants`)
+   is the state store. There is **no separate Railway compute** — Railway was
+   considered and superseded.
+4. **The Lemon Squeezy webhook points at the Edge Function `…/ls-webhook`.** The
+   `order_created` webhook is received by the **Edge Function**, which acts on it
+   (upgrades the license to paid, attaches the major's entitlement, clears expiry,
+   records the purchase). All licensing reasoning — webhook included — lives in the
+   Edge Function.
 5. **Keygen stays the sole license authority.** It mints, signs (Ed25519),
-   validates, holds entitlements, and enforces `maxMachines`. Railway never
-   reimplements that — it orchestrates it.
+   validates, holds entitlements, and enforces `maxMachines`. The Edge Function
+   never reimplements that — it orchestrates it. Keygen admin secrets live in the
+   Edge Function env, never in the app binary.
 
 ---
 
@@ -40,11 +44,11 @@ These are firm (Emily, 2026-06-25). A plan or commit that contradicts one is wro
 
 | Actor | What it is | Allowed to reason? |
 |-------|-----------|--------------------|
-| **Mac app** (`Stower`) | The client. Calls Railway when online; verifies a signed Keygen machine-file locally when offline. | No — it asks and enforces, it doesn't decide. |
-| **Railway** | The licensing backend. The only orchestrator. Receives the Lemon Squeezy webhook. | **Yes** — all runtime license reasoning lives here. |
+| **Mac app** (`Stower`) | The client. Calls the Edge Function when online; verifies a signed Keygen machine-file locally when offline. | No — it asks and enforces, it doesn't decide. |
+| **Supabase Edge Function** (`supabase/functions/license/`) | The licensing brain. The only orchestrator. Serves `/mint-trial`, `/check-in`, `/ls-webhook`, `/health`. Receives the Lemon Squeezy webhook. Holds the Keygen admin token in its env. | **Yes** — all runtime license reasoning lives here. |
 | **Keygen** (CE/cloud) | The license authority. Mints, validates, signs machine-files, holds entitlements, enforces `maxMachines`. | Authority only — it has no rules/scheduling engine. |
-| **Supabase** | Postgres state store: `device_trials`, `purchases`. | **No** — dumb storage, no webhooks. |
-| **Lemon Squeezy** | Payment processor. Takes money, redirects the customer back, and sends `order_created` **to Railway**. | No — payment only. |
+| **Supabase Postgres** | The state store the Edge Function reads/writes: `device_trials`, `purchases`, `trial_extension_grants`. | **No** — storage, not logic. The reasoning lives in the Edge Function. |
+| **Lemon Squeezy** | Payment processor. Takes money, redirects the customer back, and sends `order_created` **to the Edge Function** (`…/ls-webhook`). | No — payment only. |
 
 ---
 
@@ -52,43 +56,51 @@ These are firm (Emily, 2026-06-25). A plan or commit that contradicts one is wro
 
 ```mermaid
 flowchart LR
-    App["Mac app (Stower)"] -->|online licensing only| Railway
+    App["Mac app (Stower)"] -->|online licensing only| EF["Edge Function<br/>(supabase/functions/license)"]
     App -.->|offline: verify signed<br/>machine-file locally| MF[("Keygen-signed<br/>machine file (on disk)")]
-    Railway -->|validate / activate /<br/>checkout machine-file /<br/>attach entitlement| Keygen
-    Railway -->|read / write trial + purchase state| Supabase[("Supabase<br/>(dumb storage)")]
+    EF -->|validate / activate /<br/>checkout machine-file /<br/>attach entitlement<br/>(admin token in EF env)| Keygen
+    EF -->|read / write trial + purchase state| PG[("Supabase Postgres<br/>(state store)")]
+    EF -->|+7d "latest major" signal| GH["GitHub releases"]
     Customer((Customer)) -->|checkout| LS["Lemon Squeezy"]
-    LS -->|order_created webhook| Railway
+    LS -->|order_created webhook<br/>…/ls-webhook| EF
     LS -.->|redirect back| App
 
-    classDef dumb fill:#eee,stroke:#999,color:#333;
-    class Supabase dumb;
+    classDef store fill:#eee,stroke:#999,color:#333;
+    class PG store;
 ```
 
-Read the arrows: every online arrow from the app points at **Railway**. Railway
-is the only thing that fans out to Keygen and Supabase, and the only thing the
-Lemon Squeezy webhook hits. Supabase has **no inbound arrow except from
-Railway** — that's the "dumb storage, no webhooks" invariant made visual.
+Read the arrows: every online arrow from the app points at the **Edge Function** —
+the app's single online edge. The Edge Function is the only thing that fans out to
+Keygen, Supabase Postgres, and GitHub releases, and the only thing the Lemon
+Squeezy `…/ls-webhook` hits. Supabase Postgres has **no inbound arrow except from
+the Edge Function**, and the Keygen admin token lives only in the Edge Function —
+never in the app binary. That's the "the Edge Function is the brain; the app talks
+only to it" invariant made visual.
 
 ---
 
-## 4. Purchase → paid: webhook to Railway
+## 4. Purchase → paid: webhook to the Edge Function
 
-A purchase becomes a paid license when **Railway** receives the Lemon Squeezy
-`order_created` webhook and acts on it. The webhook hits Railway, not Supabase.
+A purchase becomes a paid license when the **Edge Function** receives the Lemon
+Squeezy `order_created` webhook (at `…/ls-webhook`) and acts on it.
 
-1. Customer clicks Buy → Railway returns a Lemon Squeezy checkout URL.
+1. Customer clicks Buy → the Edge Function returns a Lemon Squeezy checkout URL.
 2. Customer pays at Lemon Squeezy.
-3. Lemon Squeezy sends `order_created` **to Railway**. Railway validates the
-   event, maps the variant to the Stower major, then on the Keygen license:
+3. Lemon Squeezy sends `order_created` **to the Edge Function** (`…/ls-webhook`).
+   The Edge Function verifies the HMAC signature, replay-checks the order, checks
+   the variant is the paid variant, proves it minted the referenced license, then
+   on the Keygen license:
+   - swaps the policy to Paid and clears the license expiry to `null` (perpetual),
    - attaches the major's entitlement (`STOWER_V0`),
-   - clears the license expiry to `null` (perpetual),
-   - records the purchase row in Supabase (audit only).
+   - records the purchase row in Supabase Postgres (with `purchased_major` +
+     `entitlement_code`).
    **This webhook is the authoritative mutation** — it is the only thing that
    flips trial → paid.
 4. Lemon Squeezy also **redirects the customer back** to the app. The app does
-   **not** infer "paid" from that redirect. Instead the app calls Railway
-   (`Re-check`), Railway validates the same Keygen license, and if the webhook
-   has already attached `STOWER_V0` the app advances off the paywall.
+   **not** infer "paid" from that redirect. Instead the app calls the Edge
+   Function (`Re-check` via `/check-in`), which validates the same Keygen license,
+   and if the webhook has already attached `STOWER_V0` the app advances off the
+   paywall.
 5. If the webhook hasn't landed yet, `Re-check` leaves the user on the paywall;
    they press it again and it completes once the webhook has been processed.
 
@@ -99,7 +111,9 @@ deferred — `Re-check` is the manual trigger.
 
 > Seam-level detail (endpoints, idempotency, `KEYGEN_V0_ENTITLEMENT` fail-loud)
 > lives in `licensing-contract.md` §5b "Purchase webhook extension" and invariants
-> I7 / I10. This section is the topology; the contract is the contract.
+> I7 / I10. This section is the topology; the contract is the contract. The
+> as-built handler is `handleWebhook` in `supabase/functions/license/handlers.ts`,
+> wired in `index.ts`'s `…/ls-webhook` route.
 
 ---
 
@@ -108,60 +122,68 @@ deferred — `Re-check` is the manual trigger.
 ```mermaid
 sequenceDiagram
     participant App as Mac app
-    participant R as Railway
+    participant EF as Edge Function<br/>(supabase/functions/license)
     participant K as Keygen
-    participant S as Supabase
+    participant S as Supabase Postgres
     participant LS as Lemon Squeezy
 
-    Note over App,S: First launch (online) — mint trial
-    App->>R: mint trial (hashed hardware fingerprint)
-    R->>S: claim device_trials row (one per Mac)
-    R->>K: create 30-day license under STOWER_TRIAL policy
-    R->>K: checkout signed machine-file
-    R-->>App: gate status = trial + signed machine-file
+    Note over App,S: First launch (online) — POST /mint-trial
+    App->>EF: POST /mint-trial (hashed hardware fingerprint)
+    EF->>S: claim device_trials row (one per Mac)
+    EF->>K: create 30-day license under STOWER_TRIAL policy
+    EF->>K: activate machine + checkout signed machine-file
+    EF-->>App: {minted, licenseKey, licenseID, machineID, machineFile}
+    App->>App: store signed machine-file in Keychain
 
-    Note over App,S: App open (online) — validate, refresh, maybe extend
-    App->>R: check in
-    R->>K: validate license
-    R->>S: read trial state (extended_for_majors)
-    R->>K: if new major & not yet extended: expiry += 7d (once per major)
-    R->>K: checkout fresh signed machine-file
-    R-->>App: gate status + machine-file
+    Note over App,S: Reachable launch (online) — POST /check-in
+    App->>EF: POST /check-in (per-license signature)
+    EF->>K: validate license + repair missing machine
+    EF->>S: read trial state (extended majors)
+    EF->>K: if new major & not yet extended: expiry += 7d (once per major)
+    EF->>K: entitlement OR-check, then checkout fresh 7-day signed machine-file
+    EF-->>App: gate status + machine-file (NEVER the key)
 
-    Note over App,LS: Purchase → paid (webhook to Railway, §4)
-    App->>LS: checkout (URL from Railway)
-    LS->>R: order_created webhook (authoritative)
-    R->>K: attach STOWER_V0 + clear expiry to null
-    R->>S: record purchase (audit only)
+    Note over App,LS: Purchase → paid (webhook to the Edge Function, §4)
+    App->>LS: checkout (URL from the Edge Function)
+    LS->>EF: order_created webhook → …/ls-webhook (authoritative)
+    EF->>K: upgrade to paid + attach STOWER_V0 + clear expiry to null
+    EF->>S: record purchase (purchased_major + entitlement_code)
     LS-->>App: redirect back
-    App->>R: Re-check
-    R->>K: validate same license (now holds STOWER_V0?)
-    R-->>App: gate status = paid + machine-file
+    App->>EF: Re-check (POST /check-in)
+    EF->>K: validate same license (now holds STOWER_V0?)
+    EF-->>App: gate status = paid + machine-file
 
-    Note over App,K: App open (offline) — local verify only
-    App->>App: verify signed machine-file (Ed25519, expiry in future, entitlement allows build)
+    Note over App,K: Offline launch — local verify only
+    App->>App: verify cached signed machine-file (Ed25519 signature, assert meta.expiry > now, entitlement allows build)
 ```
 
-The offline path never touches the network: the app trusts only a Keygen-signed
-machine-file whose `meta.expiry` is still in the future and whose entitlements
-allow the running major. It cannot mint, extend, or flip to paid offline — those
-are Railway-only and require reachability.
+The offline path never touches the network: the app trusts only a cached
+Keygen-signed machine-file whose Ed25519 signature verifies, whose `meta.expiry`
+is still in the future (TTL assertion), and whose entitlements allow the running
+major. It cannot mint, extend, or flip to paid offline — those are Edge-Function-only
+and require reachability.
 
 ---
 
 ## 6. Relationship to the contract & current drift
 
 This doc is **consistent with `licensing-contract.md` (≥ v1.12)** — the webhook
-already targets Railway there (vendor table, §5b, gap item **G8** "Webhook
+targets the Edge Function there (vendor table, §5b, gap item **G8** "Webhook
 attaches `STOWER_V0`"). Nothing in the contract needs to change for this doc.
 
-The drift that remains is **code, not contract**:
+The brain is now correctly **`supabase/functions/license/`** in both doc and code:
+the Edge Function hosts `mint-trial`, `check-in`, `ls-webhook`, and `health`, and
+the Lemon Squeezy webhook hits the Edge Function — exactly what decision #4
+prescribes. (An earlier draft of this doc routed the brain and webhook through a
+Railway service; **Railway was considered and superseded** — there is no separate
+Railway compute.)
 
-- **As-built `supabase/functions/license/`** still hosts both `mint-trial` and
-  `ls-webhook` as a Supabase Edge Function — i.e. the webhook currently hits
-  **Supabase**, the one thing decision #4 forbids. Plan Beta moves all of it to
-  Railway and deletes the Edge Function; the `ls-webhook` route is re-homed on
-  Railway, and Supabase is left as pure storage.
+The drift that remains is **code, not topology**:
+
+- **Swift gate rewire (Plan B)** is what makes the app talk to the Edge Function's
+  `/check-in` as the reachable-launch authority and verify the cached signed
+  machine-file offline. Until it lands, the as-built Swift gate has not yet been
+  pointed at the new `/check-in` route.
 
 `licensing.md` §2 (customer-facing) describes the webhook flipping the license to
 paid without naming where it's hosted, so it stays accurate as written.
@@ -170,7 +192,14 @@ paid without naming where it's hosted, so it stays accurate as written.
 
 ## 7. Open items
 
-- **Plan Beta** is the work that makes this real: stand up the Railway backend,
-  re-home `mint-trial` + the Lemon Squeezy webhook on it, and reduce Supabase to
-  storage. Tracked in `licensing-contract.md` §5c (gap items G12/G13) — not owned
-  by this doc.
+- **Plan Beta** (landed) made the Edge Function the brain: `mint-trial`,
+  `check-in`, and the Lemon Squeezy `ls-webhook` are implemented in
+  `supabase/functions/license/`, with Supabase Postgres as the state store.
+- **Plan B** (open) is the Swift gate rewire: point the app at the Edge Function's
+  `/check-in` as the reachable-launch authority and verify the cached signed
+  machine-file offline. Tracked in `licensing-contract.md` §5c (gap items G12/G13)
+  — not owned by this doc.
+
+> **Diagrams.** The mermaid sources above are current. If stale rendered
+> `.excalidraw`/`.png` exports of these diagrams exist, regenerate them from the
+> updated mermaid via `/diagram` — do not hand-edit the binaries.
