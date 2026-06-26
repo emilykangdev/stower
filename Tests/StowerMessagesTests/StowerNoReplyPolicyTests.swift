@@ -11,6 +11,12 @@ internal struct StowerNoReplyPolicyTests {
         #expect(result.map(\.chatID) == ["a"])
     }
 
+    @Test("the last act's GUID propagates from the judged conversation onto the row (A2)")
+    internal func lastMessageGUIDReachesItem() {
+        let result = neglected(for: [judged(state(chatID: "a"))])
+        #expect(result.first?.lastMessageGUID == "guid-a")
+    }
+
     @Test("a group / non-1:1 state never appears")
     internal func groupExcluded() {
         let result = neglected(for: [judged(state(chatID: "g", isOneToOne: false))])
@@ -120,7 +126,8 @@ extension StowerNoReplyPolicyTests {
                 expectsReply: expectsReply,
                 replyExpectationConfidence: confidence,
                 verdictSource: .languageModel
-            )
+            ),
+            lastMessageGUID: "guid-\(state.chatID)"
         )
     }
 

@@ -50,7 +50,8 @@ internal enum StowerGhostedPolicy {
             .map {
                 StowerDebtItem(
                     state: $0.state,
-                    replyExpectationConfidence: $0.verdict.replyExpectationConfidence
+                    replyExpectationConfidence: $0.verdict.replyExpectationConfidence,
+                    lastMessageGUID: $0.lastMessageGUID
                 )
             }
     }

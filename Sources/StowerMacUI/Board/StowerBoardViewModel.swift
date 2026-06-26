@@ -33,13 +33,18 @@ internal enum StowerBoardPhase: Sendable, Equatable {
 @Observable
 internal final class StowerBoardViewModel {
     /// The presentation phase the view renders.
-    internal private(set) var phase: StowerBoardPhase = .preparing
+    ///
+    /// Written by the load/refresh state machine in `+Load` (hence `internal`, not
+    /// `private(set)`); the view treats it as read-only.
+    internal var phase: StowerBoardPhase = .preparing
 
     /// The loaded board; the view reads the lens for `direction`.
-    internal private(set) var board: StowerBoardModel?
+    ///
+    /// Written by `+Load` (and the Contacts-revoke path); the view treats it read-only.
+    internal var board: StowerBoardModel?
 
     /// Whether a background refresh is in flight (disables the refresh control).
-    internal private(set) var isRefreshing = false
+    internal var isRefreshing = false
 
     /// The visible day-filter preset; changing it re-loads (I8).
     internal private(set) var selectedPreset: StowerDayPreset = .default
@@ -48,7 +53,15 @@ internal final class StowerBoardViewModel {
     ///
     /// Switching between the two lens tabs re-lenses the loaded board without
     /// reloading (I7); `.drafts` shows the cross-cutting on-board draft list.
-    internal var selectedTab: StowerBoardTab = .yourTurn
+    ///
+    /// Selection is per-lens, so changing tabs exits Select mode and clears the
+    /// selection (B2) — a selection made in one lens must never leak into another.
+    internal var selectedTab: StowerBoardTab = .yourTurn {
+        didSet {
+            guard selectedTab != oldValue, isSelecting else { return }
+            exitSelectMode()
+        }
+    }
 
     /// The lens to render, derived from `selectedTab` (never held in parallel).
     ///
@@ -92,35 +105,119 @@ internal final class StowerBoardViewModel {
     /// dismisses an open thread before its captured row's resolved name can linger.
     internal private(set) var contactsRevocationToken = 0
 
-    private let dataSource: any StowerBoardDataSource
+    // `internal` (not `private`) so the `+Triage` extension can re-read the board via
+    // the data source (`mutedSenders`, `reloadLocally`).
+    internal let dataSource: any StowerBoardDataSource
     // `internal` (not `private`) so the `+Drafts` / `+Contacts` extension files can
     // reach them — the same split-across-files posture as `StowerDebtBoardProvider`'s
-    // mechanics. The core read-only state (`phase`, `board`, `contactsRevocationToken`)
-    // keeps `private(set)`; its writers stay in this file.
+    // mechanics. The load/refresh state machine (which writes `phase`/`board`/
+    // `isRefreshing`) lives in `+Load`, so those stay `internal`; `contactsRevocationToken`
+    // keeps `private(set)` with its writer here.
     internal let draftStore: any StowerDraftStoring
+    /// Records semantic triage events (dismiss/mute/unmute) as user interaction memory.
+    ///
+    /// Non-blocking: a recording failure never blocks the action. The producers are the
+    /// dismiss/mute/unmute action methods (`+Triage`).
+    internal let interactions: any StowerInteractionRecording
+
+    /// The app-owned triage boundary the board WRITES dismiss/mute/unmute through, and
+    /// reads the muted count from.
+    ///
+    /// The SAME instance the data source filters reads with (injected from the
+    /// composition), so a write here is visible to the next `loadBoard` filter pass.
+    /// Defaults to an empty in-memory store so previews/tests apply no triage.
+    internal let triage: any StowerTriageStoring
+
+    /// The app-owned `UndoManager` ⌘Z and the draining bar's Undo both drive.
+    ///
+    /// Injected (A4) so a background `refreshJudgments` reload can't swap or nil it
+    /// mid-session — the failure mode of `@Environment(\.undoManager)`, which rebinds
+    /// when the `List` rebuilds. `groupsByEvent` is forced off in `init` so each user
+    /// action is exactly one undo step regardless of run-loop timing (I6). The Xcode
+    /// app target binds ⌘Z to this same instance via `CommandGroup(.undoRedo)`.
+    internal let undoManager: UndoManager
+
+    /// The transient draining-bar undo slot, or `nil` when no bar is showing.
+    ///
+    /// A single REPLACEABLE slot (I6): a new dismiss replaces the slot, it never
+    /// stacks. Set ONLY after the triage write resolves (no success bar on a failed
+    /// write). The `StowerDismissUndoBar` view owns the drain timer and clears it via
+    /// `expireUndoBar` when the dwell elapses (paused on hover/keyboard focus).
+    /// `internal` (not `private(set)`) so the `+Triage` extension file can mutate it —
+    /// the same cross-file posture as `inflightWrites`; the view only reads it.
+    internal var undoBar: StowerDismissUndoBarState?
+
+    /// Whether the current lens is in batch-Select mode (Apple Mail "Edit" model).
+    ///
+    /// Clean list at rest; toggling Select reveals checkboxes via `List(selection:)`.
+    /// Switching tabs or applying a batch exits it; selection is per-lens.
+    internal var isSelecting = false
+
+    /// The selected row identities (`chatID`) in the current lens's Select mode.
+    internal var selection: Set<String> = []
+
+    /// The number of muted contacts — drives the toolbar control's visibility and the
+    /// conditional zero-state line (I12).
+    ///
+    /// Read cheaply from `triage` (no Contacts enumeration) after each load and
+    /// mute/unmute; the control is hidden entirely at zero.
+    internal var mutedCount = 0
+
+    /// The name-resolved muted senders for the popover.
+    ///
+    /// Refreshed when the popover opens and after each unmute (so the open popover
+    /// stays current). Empty until loaded.
+    internal var mutedSenders: [StowerMutedSender] = []
+
+    /// Whether the `Muted Senders…` popover is showing.
+    ///
+    /// Shared state so BOTH the toolbar control and the zero-state "Manage…" link can
+    /// open it.
+    internal var isShowingMutedSenders = false
+
+    /// Whether the popover's sender list is being (re)loaded.
+    ///
+    /// Drives a loading row so the popover never flashes "No muted senders" before the
+    /// first load resolves — the resolver enumerates the whole address book, so the
+    /// load is visibly non-instant on first open.
+    internal var isLoadingMutedSenders = false
     internal let dropper: StowerMessagesDropper
     internal let contacts: StowerContactsAccess
     internal let settings: StowerSystemSettingsOpener
     private let opener: StowerMessagesLinkOpener
-    private let onFailure: @MainActor (StowerStartupFailure) -> Void
+    // `internal` so the `+Load` state machine can route failures and pace retries.
+    internal let onFailure: @MainActor (StowerStartupFailure) -> Void
     internal let clock: @Sendable () -> Date
-    private let sleep: @Sendable (Duration) async throws -> Void
+    internal let sleep: @Sendable (Duration) async throws -> Void
 
     /// Backoff between `.coalesced` retries while cold start is unresolved, so the
     /// re-issue waits for the other in-flight pass instead of busy-spinning.
-    private static let coalesceRetryDelay: Duration = .milliseconds(400)
+    internal static let coalesceRetryDelay: Duration = .milliseconds(400)
 
     /// In-flight write-through upserts, per key, chained in issue order so the last
     /// edit wins. Deliberately OUT of `cancel()`'s reach so the termination flush can
     /// still drain them (JC2) — a draft must not be lost to the disappear-cancel.
     internal var inflightWrites: [String: Task<Void, Never>] = [:]
 
-    private var loadTask: Task<Void, Never>?
-    private var refreshTask: Task<Void, Never>?
+    /// Monotonic id for the draining-bar slot, bumped on each replace so the
+    /// `StowerDismissUndoBar` view restarts its drain timer (`.task(id:)`) when the
+    /// slot is replaced by a newer dismiss. `internal` so `+Triage` can bump it.
+    internal var undoBarSequence = 0
+
+    /// The in-flight triage action (dismiss / undo / mute / unmute), exposed via
+    /// `triageTaskHandle` so tests can await it.
+    ///
+    /// `internal` (not `private`) so the `+Triage` extension can chain onto it — the
+    /// same cross-file posture as `inflightWrites`. Production fires and forgets.
+    internal var triageTask: Task<Void, Never>?
+
+    // `internal` so `+Load` owns the load/refresh task lifecycle.
+    internal var loadTask: Task<Void, Never>?
+    internal var refreshTask: Task<Void, Never>?
     internal var contactsTask: Task<Void, Never>?
     internal var loadGeneration = 0
-    private var refreshGeneration = 0
-    private var hasResolvedColdStart = false
+    internal var refreshGeneration = 0
+    internal var hasResolvedColdStart = false
     internal var isRequestingContacts = false
     internal var awaitingContactsRecovery = false
 
@@ -134,6 +231,9 @@ internal final class StowerBoardViewModel {
     internal init(
         dataSource: any StowerBoardDataSource,
         draftStore: any StowerDraftStoring = StowerInMemoryDraftStore(),
+        interactions: any StowerInteractionRecording = StowerNoOpInteractionRecorder(),
+        triage: any StowerTriageStoring = StowerInMemoryTriageStore(),
+        undoManager: UndoManager = UndoManager(),
         dropper: StowerMessagesDropper = StowerMessagesDropper(
             perform: { _ in },
             isAccessibilityTrusted: { false }
@@ -149,6 +249,9 @@ internal final class StowerBoardViewModel {
     ) {
         self.dataSource = dataSource
         self.draftStore = draftStore
+        self.interactions = interactions
+        self.triage = triage
+        self.undoManager = undoManager
         self.dropper = dropper
         self.contacts = contacts
         self.settings = settings
@@ -157,6 +260,10 @@ internal final class StowerBoardViewModel {
         self.clock = clock
         self.sleep = sleep
         contactsAuthorization = contacts.authorization
+        // One user action == one undo step (I6): disable run-loop event coalescing so
+        // three rapid single dismisses stay three separate ⌘Z steps, and drive grouping
+        // explicitly (`begin`/`endUndoGrouping`) per action in `+Triage`.
+        undoManager.groupsByEvent = false
     }
 
     /// Runs the launch sequence on appear: load the cached board, then refresh.
@@ -167,6 +274,9 @@ internal final class StowerBoardViewModel {
         syncContactsAuthorization()
         load()
         refresh()
+        // Seed the muted count so the toolbar control and the zero-state line are
+        // correct on first render; mute/unmute keep it current thereafter.
+        enqueueTriage { await self.refreshMutedCount() }
     }
 
     /// Re-checks Contacts when the app returns to the foreground.
@@ -239,10 +349,11 @@ internal final class StowerBoardViewModel {
         )
     }
 
-    /// The in-flight load/refresh/contacts tasks, exposed so tests can await them.
+    /// The in-flight load/refresh/contacts/triage tasks, exposed so tests can await them.
     internal var loadTaskHandle: Task<Void, Never>? { loadTask }
     internal var refreshTaskHandle: Task<Void, Never>? { refreshTask }
     internal var contactsTaskHandle: Task<Void, Never>? { contactsTask }
+    internal var triageTaskHandle: Task<Void, Never>? { triageTask }
 
     /// Loads the cached board under a fresh generation token (I13).
     internal func load() {
@@ -265,124 +376,4 @@ internal final class StowerBoardViewModel {
         }
     }
 
-    private var config: StowerStartupDebtConfig {
-        StowerStartupDebtConfig(
-            unansweredForDays: selectedPreset.days,
-            minimumReciprocity: StowerStartupDebtConfig.appDefault.minimumReciprocity,
-            ghostGateThreshold: StowerStartupDebtConfig.appDefault.ghostGateThreshold
-        )
-    }
-
-    private func runLoad(generation: Int) async {
-        do {
-            let model = try await dataSource.loadBoard(config: config, now: clock())
-            guard generation == loadGeneration else { return }
-            // Merge persisted drafts BEFORE exposing rows. Once rows are interactive the
-            // user can open the composer (setting `composerKey`), and `mergeDrafts` skips
-            // `composerKey` — so a draft merged after rows appear could be skipped and
-            // then overwritten by the first edit. Merging first closes that window.
-            await mergeDrafts(generation: generation)
-            guard generation == loadGeneration else { return }
-            applyLoaded(model)
-        } catch is CancellationError {
-            // Superseded / dismissed — never a failure.
-        } catch let failure as StowerStartupFailure {
-            guard generation == loadGeneration else { return }
-            onFailure(failure)
-        } catch {
-            guard generation == loadGeneration else { return }
-            onFailure(.unexpected)
-        }
-    }
-
-    private func applyLoaded(_ model: StowerBoardModel) {
-        board = model
-        if !model.isEmpty {
-            phase = .rows
-        } else if hasResolvedColdStart {
-            phase = .caughtUp
-        } else {
-            phase = .preparing
-        }
-    }
-
-    /// Runs the refresh loop: re-issue on `.incomplete`, resolve on `.completed`,
-    /// exit on `.coalesced`.
-    ///
-    /// The loop IS the re-issue, so the `isRefreshing` guard never blocks it;
-    /// cancellation breaks out.
-    private func runRefreshLoop(generation: Int) async {
-        // Generation-guarded so a superseded (cancelled) run's late exit can't clear
-        // a newer refresh's `isRefreshing` flag.
-        defer {
-            if generation == refreshGeneration { isRefreshing = false }
-        }
-        do {
-            while true {
-                let outcome = try await dataSource.refreshJudgments(config: config, now: clock())
-                // A superseded refresh (cancel / a newer refresh) must not apply its
-                // outcome over a newer one, mirroring the load path's generation guard.
-                guard generation == refreshGeneration else { return }
-                if try await handleRefreshOutcome(outcome, generation: generation) == false {
-                    return
-                }
-            }
-        } catch {
-            routeRefreshFailure(error, generation: generation)
-        }
-    }
-
-    /// Routes a refresh failure, dropping a `CancellationError` (superseded /
-    /// dismissed — never a failure) and any stale-generation throw.
-    private func routeRefreshFailure(_ error: Error, generation: Int) {
-        guard !(error is CancellationError), generation == refreshGeneration else { return }
-        onFailure((error as? StowerStartupFailure) ?? .unexpected)
-    }
-
-    /// Acts on one refresh outcome; returns whether the loop should re-issue.
-    ///
-    /// The caller has already confirmed `generation` is current before calling, so
-    /// `applyCompleted` is safe; the coalesced path re-checks after its backoff so a
-    /// superseded refresh stops re-issuing.
-    private func handleRefreshOutcome(
-        _ outcome: StowerBoardRefreshOutcome,
-        generation: Int
-    ) async throws -> Bool {
-        switch outcome {
-        case .coalesced:
-            // Another pass is running. Once cold start is resolved, keep the current
-            // board (neither clear nor reload). But while still preparing, the other
-            // pass's summary goes to ITS caller, not us — so back off and re-issue
-            // rather than strand the spinner.
-            if hasResolvedColdStart || Task.isCancelled { return false }
-            try await sleep(Self.coalesceRetryDelay)
-            return generation == refreshGeneration
-        case .completed(let reloadNeeded, let anyJudged, let hadRecords):
-            applyCompleted(reloadNeeded: reloadNeeded, anyJudged: anyJudged, hadRecords: hadRecords)
-            return false
-        case .incomplete:
-            return !Task.isCancelled && generation == refreshGeneration
-        }
-    }
-
-    private func applyCompleted(reloadNeeded: Bool, anyJudged: Bool, hadRecords: Bool) {
-        let wasColdStart = !hasResolvedColdStart
-        hasResolvedColdStart = true
-        if anyJudged {
-            // Reload when this pass changed rows, OR on the first cold-start
-            // resolution while the board is still the empty cold load: if we
-            // coalesced against another pass, that pass's writes were reported to
-            // ITS caller (changedCount 0 for us), so without this we'd resolve to a
-            // false "all caught up" over a now-warm cache we never re-read.
-            if reloadNeeded || (wasColdStart && (board?.isEmpty ?? true)) {
-                load()
-            } else {
-                phase = (board?.isEmpty ?? true) ? .caughtUp : .rows
-            }
-        } else if hadRecords {
-            phase = .error
-        } else {
-            phase = .caughtUp
-        }
-    }
 }

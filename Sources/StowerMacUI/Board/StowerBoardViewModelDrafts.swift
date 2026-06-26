@@ -101,13 +101,17 @@ extension StowerBoardViewModel {
         dropper.drop(text: drafts[row.draftKey]?.body ?? "", deepLink: row.deepLink)
     }
 
-    /// Drains every in-flight write-through upsert, so a graceful quit loses nothing.
+    /// Drains every in-flight write-through upsert AND the in-flight triage action, so
+    /// a graceful quit loses neither a draft nor a just-issued dismiss/mute/unmute.
     ///
     /// Called from `applicationShouldTerminate` (JC2); never reached by `cancel()`.
     internal func flushAll() async {
         for task in inflightWrites.values {
             await task.value
         }
+        // The triage chain ends each action with a durable write before its reload, so
+        // awaiting it guarantees a dismiss/mute issued moments before ⌘Q is persisted.
+        await triageTask?.value
     }
 
     /// Updates the local draft and writes the change through to the store.

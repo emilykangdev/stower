@@ -77,7 +77,8 @@ internal struct StowerDebtBoardContractTests {
             lastMessageText: "are we still on?",
             lastMessageTimestamp: Date(timeIntervalSinceReferenceDate: 0),
             deepLink: nil,
-            replyExpectationConfidence: 0.82
+            replyExpectationConfidence: 0.82,
+            lastMessageGUID: "guid-c"
         )
         #expect(row.replyExpectationConfidence == 0.82)
         #expect(row.chatID == "c")

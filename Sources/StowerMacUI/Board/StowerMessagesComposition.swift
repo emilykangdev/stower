@@ -23,6 +23,12 @@ internal struct StowerMessagesComposition {
     /// The precious draft store, behind its app-owned boundary.
     internal let draftStore: any StowerDraftStoring
 
+    /// The precious triage store (dismiss + mute), behind its app-owned boundary.
+    internal let triageStore: any StowerTriageStoring
+
+    /// The precious interaction-event recorder, behind its app-owned boundary.
+    internal let interactions: any StowerInteractionRecording
+
     /// The "Reply in Messages" bridge.
     internal let dropper: StowerMessagesDropper
 
@@ -42,19 +48,54 @@ internal struct StowerMessagesComposition {
     internal init() throws {
         let provider = StowerDebtBoardProvider(contactsResolver: StowerContactsResolver())
         startup = StowerMessagesStartupAdapter(engine: provider)
-        board = StowerLiveBoardDataSource(engine: provider)
         contacts = StowerContactsAccess()
-        guard let url = StowerDraftStore.defaultURL else {
+        guard let draftURL = StowerDraftStore.defaultURL else {
             throw StowerDraftStoreUnavailable.locationUnavailable
         }
-        draftStore = StowerLiveDraftStore(store: try StowerDraftStore.open(at: url))
+        draftStore = StowerLiveDraftStore(store: try StowerDraftStore.open(at: draftURL))
+        // The triage store is precious like drafts: it ALWAYS yields persistence
+        // (quarantine-and-recreate on corruption, never delete), and only a true
+        // disk-level fault throws — surfaced as a startup failure like any essential
+        // store. Inject it into the board adapter so the filter applies the user's
+        // dismiss/mute at display time.
+        guard let triageURL = StowerTriageStore.defaultURL else {
+            throw StowerTriageStoreUnavailable.locationUnavailable
+        }
+        let triage = StowerLiveTriageStore(store: try StowerTriageStore.open(at: triageURL))
+        triageStore = triage
+        board = StowerLiveBoardDataSource(engine: provider, triage: triage)
+        // Interaction recording is a NON-BLOCKING side log (gotcha #8): unlike drafts
+        // and triage, a failure to open it must NEVER block the board. So it is opened
+        // best-effort — any fault (unresolvable directory or a disk-level open error)
+        // degrades to a no-op recorder, and dismiss/mute/unmute still work.
+        interactions = Self.openInteractionRecorder()
         dropper = StowerMessagesDropper()
+    }
+
+    /// Opens the interaction recorder best-effort, degrading to a no-op on any fault.
+    private static func openInteractionRecorder() -> any StowerInteractionRecording {
+        guard let url = StowerInteractionEventStore.defaultURL else {
+            return StowerNoOpInteractionRecorder()
+        }
+        do {
+            return StowerLiveInteractionRecorder(
+                store: try StowerInteractionEventStore.open(at: url)
+            )
+        } catch {
+            return StowerNoOpInteractionRecorder()
+        }
     }
 }
 
 /// The drafts store could not even be located (Application Support unresolvable) —
 /// a disk-level failure surfaced to the caller, never papered over.
 internal enum StowerDraftStoreUnavailable: Error, Equatable {
+    /// Application Support could not be resolved or created.
+    case locationUnavailable
+}
+
+/// The triage store could not even be located (Application Support unresolvable).
+internal enum StowerTriageStoreUnavailable: Error, Equatable {
     /// Application Support could not be resolved or created.
     case locationUnavailable
 }
@@ -80,5 +121,102 @@ private struct StowerLiveDraftStore: StowerDraftStoring {
 
     func delete(key: String) async throws {
         try await store.delete(key: key)
+    }
+}
+
+/// Adapts the engine's precious `StowerTriageStore` to the app-owned
+/// `StowerTriageStoring`, so the board/view layer never imports `StowerMessages`.
+private struct StowerLiveTriageStore: StowerTriageStoring {
+    private let store: StowerTriageStore
+
+    init(store: StowerTriageStore) {
+        self.store = store
+    }
+
+    func dismissedMessages() async throws -> [String: StowerDismissedAnchor] {
+        try await store.dismissedMessages().mapValues {
+            StowerDismissedAnchor(messageGUID: $0.messageGUID, anchorTimestamp: $0.anchorTimestamp)
+        }
+    }
+
+    func muted() async throws -> Set<String> {
+        Set(try await store.muted().map(\.handleKey))
+    }
+
+    func dismiss(
+        handleKey: String,
+        messageGUID: String,
+        anchorTimestamp: Date,
+        at: Date
+    ) async throws {
+        try await store.dismiss(
+            handleKey: handleKey,
+            messageGUID: messageGUID,
+            anchorTimestamp: anchorTimestamp,
+            dismissedAt: at
+        )
+    }
+
+    func undismiss(handleKey: String) async throws {
+        try await store.undismiss(handleKey: handleKey)
+    }
+
+    func retireDismissal(
+        handleKey: String,
+        messageGUID: String,
+        anchorTimestamp: Date,
+        at: Date
+    ) async throws {
+        try await store.retireDismissal(
+            handleKey: handleKey,
+            messageGUID: messageGUID,
+            anchorTimestamp: anchorTimestamp,
+            retiredAt: at
+        )
+    }
+
+    func mute(handleKey: String, at: Date) async throws {
+        try await store.mute(handleKey: handleKey, mutedAt: at)
+    }
+
+    func unmute(handleKey: String, at: Date) async throws {
+        try await store.unmute(handleKey: handleKey, unmutedAt: at)
+    }
+}
+
+/// Adapts the engine's precious `StowerInteractionEventStore` to the app-owned
+/// `StowerInteractionRecording`, mapping the app event to the engine event.
+///
+/// Recording is NON-blocking by contract: a store failure is swallowed (the action it
+/// accompanies — dismiss/mute/unmute — has already committed and must not roll back).
+private struct StowerLiveInteractionRecorder: StowerInteractionRecording {
+    private let store: StowerInteractionEventStore
+
+    init(store: StowerInteractionEventStore) {
+        self.store = store
+    }
+
+    func record(_ event: StowerBoardInteractionEvent) async {
+        // Swallow on failure: interaction memory is a side log; it must never block or
+        // roll back the triage action. (Non-blocking contract — see the protocol doc.)
+        try? await store.record(Self.engineEvent(for: event))
+    }
+
+    private static func engineEvent(
+        for event: StowerBoardInteractionEvent
+    ) -> StowerInteractionEvent {
+        switch event {
+        case let .messageDismissed(handleKey, messageGUID, boardTab, occurredAt):
+            return .messageDismissed(
+                handleKey: handleKey,
+                messageGUID: messageGUID,
+                boardTab: boardTab,
+                occurredAt: occurredAt
+            )
+        case let .senderMuted(handleKey, surface, occurredAt):
+            return .senderMuted(handleKey: handleKey, surface: surface, occurredAt: occurredAt)
+        case let .senderUnmuted(handleKey, surface, occurredAt):
+            return .senderUnmuted(handleKey: handleKey, surface: surface, occurredAt: occurredAt)
+        }
     }
 }
