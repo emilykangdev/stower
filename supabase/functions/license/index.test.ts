@@ -191,6 +191,7 @@ class FakeKeygen implements KeygenAdmin {
   validations: KeygenValidation[] = [{ valid: true, code: null }]; // consumed FIFO; last repeats
   entitlements: string[] = [STOWER_TRIAL_ENTITLEMENT_CODE];
   expiry: string | null = isoAt(T0 + 30 * 24 * 60 * 60 * 1000);
+  expiryQueue: (string | null)[] | null = null; // when set, currentExpiry consumes FIFO (last repeats)
 
   createTrialLicense(): Promise<{ id: string; key: string }> {
     if (this.createError) return Promise.reject(this.createError);
@@ -230,6 +231,12 @@ class FakeKeygen implements KeygenAdmin {
     return Promise.resolve(this.entitlements);
   }
   currentExpiry(_licenseID: string): Promise<string | null> {
+    if (this.expiryQueue && this.expiryQueue.length > 0) {
+      const next = this.expiryQueue.length > 1
+        ? this.expiryQueue.shift()!
+        : this.expiryQueue[0];
+      return Promise.resolve(next);
+    }
     return Promise.resolve(this.expiry);
   }
   patchExpiry(licenseID: string, iso: string): Promise<void> {
@@ -855,6 +862,29 @@ Deno.test("I11 a recorded-but-unpatched grant is re-patched to the FROZEN target
     keygen.patchedExpiries[0].iso,
     frozenTarget,
     "must patch to the frozen target, not current+7",
+  );
+});
+
+Deno.test("I12 a paid upgrade racing the extension does not re-expire the license (re-read guard)", async () => {
+  const releases: StableRelease[] = [{
+    major: 1,
+    tag: "v1.0.0",
+    publishedAt: isoAt(T0 + 1000),
+  }];
+  const trials = trialsWith(activeRow());
+  const keygen = new FakeKeygen();
+  // Selection reads the trial expiry; the re-read just before patch sees null — a
+  // purchase webhook flipped the license to paid (perpetual) in the meantime.
+  keygen.expiryQueue = [isoAt(T0 + 30 * 24 * 60 * 60 * 1000), null];
+  const result = await checkIn(
+    checkInDeps(trials, keygen, { latest: "v1", releases }),
+    checkInReq(),
+  );
+  assertEquals((result.body as Record<string, unknown>).trialExtended, false);
+  assertEquals(
+    keygen.patchedExpiries.length,
+    0,
+    "must NOT re-add an expiry to a now-paid license",
   );
 });
 

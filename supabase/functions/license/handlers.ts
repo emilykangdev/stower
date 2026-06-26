@@ -510,6 +510,14 @@ async function applyExtension(
     target,
   );
   if (grant.patchedAt !== null) return { extended: false }; // already extended for this major
+  // Re-read the expiry immediately before patching. A purchase webhook may have run
+  // concurrently and set the expiry to null (perpetual/paid); patching then would
+  // re-add an expiry to a PAID license and eventually lock the buyer out. If it is
+  // no longer a trial expiry, skip — never re-add an expiry to a paid license.
+  const latestExpiry = await deps.keygen.currentExpiry(
+    row.keygen_license_id as string,
+  );
+  if (latestExpiry === null) return { extended: false };
   await deps.keygen.patchExpiry(
     row.keygen_license_id as string,
     grant.targetExpiresAt,

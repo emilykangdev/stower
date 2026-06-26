@@ -73,6 +73,11 @@ function timedFetch(input: string, init: RequestInit = {}): Promise<Response> {
   });
 }
 
+/** Whether a Keygen error body indicates a duplicate / already-attached relationship. */
+function isDuplicateRelationship(body: string): boolean {
+  return /already been taken|already exists|has already|duplicat/i.test(body);
+}
+
 function env(name: string): string {
   const value = Deno.env.get(name);
   if (!value) throw new Error(`missing env ${name}`);
@@ -395,17 +400,23 @@ function keygenAdmin(): KeygenAdmin {
         await response.body?.cancel();
         return;
       }
-      // 422/409 "already attached" is success (idempotent — a webhook retry re-runs this).
-      if (response.status === 422 || response.status === 409) {
-        await response.body?.cancel();
-        return;
-      }
-      if (response.status === 404) {
-        await response.body?.cancel();
+      const status = response.status;
+      const bodyText = await response.text().catch(() => "");
+      if (status === 404) {
         throw new KeygenLicenseNotFoundError(`license ${licenseID}`);
       }
-      await response.body?.cancel();
-      throw new Error(`keygen attach ${response.status}`);
+      // "Already attached" is idempotent success (a webhook retry re-runs this).
+      // Keygen signals a duplicate relationship with 400/409/422 + an "...has already
+      // been taken / exists" error — treat ONLY that as success, so a genuine
+      // malformed request still surfaces (throws → 500 → LS retries) rather than
+      // silently shipping a paid license with no STOWER_V0 (I7).
+      if (
+        (status === 400 || status === 409 || status === 422) &&
+        isDuplicateRelationship(bodyText)
+      ) {
+        return;
+      }
+      throw new Error(`keygen attach ${status}`);
     },
     async activateMachine(licenseID, licenseKey, fingerprint) {
       const response = await timedFetch(`${accountPath}/machines`, {
