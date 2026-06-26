@@ -26,6 +26,7 @@ import {
   type TrialStore,
   type WebhookDeps,
 } from "./handlers.ts";
+import { missingRequiredEnv } from "./config.ts";
 import {
   emptyGithubCache,
   githubReleases,
@@ -663,6 +664,15 @@ Deno.serve(async (request: Request) => {
   const path = new URL(request.url).pathname;
 
   if (request.method === "GET" && path.endsWith("/health")) {
+    // Deploy-readiness canary: report any unset REQUIRED env by NAME (never values,
+    // no DB/secret dependency). One curl after deploy tells you what you forgot.
+    const missingEnv = missingRequiredEnv((name) => Deno.env.get(name));
+    if (missingEnv.length > 0) {
+      return jsonResponse({
+        status: 503,
+        body: { status: "degraded", missingEnv },
+      });
+    }
     return jsonResponse({ status: 200, body: { status: "ok" } });
   }
 
