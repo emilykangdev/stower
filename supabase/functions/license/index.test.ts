@@ -217,7 +217,7 @@ class FakeKeygen implements KeygenAdmin {
     this.activateCalls.push({ licenseID, fingerprint });
     return Promise.resolve(`mach-${licenseID}`);
   }
-  checkoutMachineFile(machineID: string, _key: string): Promise<string> {
+  checkoutMachineFile(machineID: string): Promise<string> {
     this.checkouts.push(machineID);
     return Promise.resolve(`file-${machineID}`);
   }

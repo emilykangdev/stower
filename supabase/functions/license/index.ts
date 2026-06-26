@@ -448,17 +448,21 @@ function keygenAdmin(): KeygenAdmin {
       await response.body?.cancel();
       throw new Error(`keygen activate ${response.status}`);
     },
-    async checkoutMachineFile(machineID, licenseKey) {
+    async checkoutMachineFile(machineID) {
       const query = new URLSearchParams({
         ttl: String(MACHINE_FILE_TTL_SECONDS),
         algorithm: MACHINE_FILE_ALGORITHM,
         include: MACHINE_FILE_INCLUDE,
       });
+      // Admin auth, NOT license-key auth: a license-scoped token is forbidden (403)
+      // from embedding `include=license.entitlements,license.policy,license` in the
+      // machine file. The Edge Function holds the admin token and the file is
+      // Ed25519-signed regardless of which token requests it.
       const response = await timedFetch(
         `${accountPath}/machines/${
           encodeURIComponent(machineID)
         }/actions/check-out?${query}`,
-        { method: "POST", headers: licenseHeaders(licenseKey) },
+        { method: "POST", headers: adminHeaders },
       );
       if (!response.ok) throw new Error(`keygen checkout ${response.status}`);
       const json = await response.json();

@@ -155,8 +155,8 @@ export interface KeygenAdmin {
     licenseKey: string,
     fingerprint: string,
   ): Promise<string>;
-  /** Checks out a signed machine file (license-key auth, `ttl=604800`, signed + `include=`). Resolves the PEM certificate. */
-  checkoutMachineFile(machineID: string, licenseKey: string): Promise<string>;
+  /** Checks out a signed machine file (admin auth, `ttl=604800`, signed + `include=`). Resolves the PEM certificate. */
+  checkoutMachineFile(machineID: string): Promise<string>;
   /** Plain `validate-key` with a fingerprint scope (no entitlement scope — OR is applied in code, I4). */
   validate(licenseKey: string, fingerprint: string): Promise<KeygenValidation>;
   /** The license's effective entitlement codes (policy-inherited + direct). */
@@ -373,10 +373,7 @@ async function mintSuccessReply(
     );
     await deps.trials.setMachine(ids.licenseID, machineID);
   }
-  const machineFile = await deps.keygen.checkoutMachineFile(
-    machineID,
-    ids.licenseKey,
-  );
+  const machineFile = await deps.keygen.checkoutMachineFile(machineID);
   return {
     status: 200,
     body: {
@@ -467,10 +464,7 @@ export async function checkIn(
   if (machineID !== row.keygen_machine_id) {
     await deps.trials.setMachine(row.keygen_license_id, machineID);
   }
-  const machineFile = await deps.keygen.checkoutMachineFile(
-    machineID,
-    row.keygen_license_key,
-  );
+  const machineFile = await deps.keygen.checkoutMachineFile(machineID);
   await deps.trials.touchCheckIn(row.keygen_license_id);
 
   return reply(200, {

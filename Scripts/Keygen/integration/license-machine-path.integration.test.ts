@@ -193,8 +193,11 @@ Deno.test("trial license offline machine path verifies an Ed25519 machine file",
     `trial license did not validate: ${JSON.stringify(validation.json.meta)}`,
   );
 
-  // 5. Check out a signed machine file (license-key auth, pinned Ed25519 algorithm),
-  // with the SAME `include=` the Edge Function uses, so this proves the offline path.
+  // 5. Check out a signed machine file (ADMIN auth, pinned Ed25519 algorithm), with
+  // the SAME `include=` the Edge Function uses, so this proves the offline path. A
+  // license-scoped token is forbidden (403) from embedding the `include=` relationships;
+  // the Edge Function checks out with the admin token it holds (the file is signed
+  // either way).
   const checkoutQuery = new URLSearchParams({
     ttl: String(CHECKOUT_TTL_SECONDS),
     algorithm: MACHINE_FILE_ALGORITHM,
@@ -203,7 +206,6 @@ Deno.test("trial license offline machine path verifies an Ed25519 machine file",
   const checkout = await send(
     "POST",
     `${accountPath(env)}/machines/${machineId}/actions/check-out?${checkoutQuery}`,
-    { headers: licenseAuth(license.key) },
   );
   assert(checkout.status === 200, `check-out expected 200, got ${checkout.status}`);
   const checkoutData = checkout.json.data;
