@@ -65,6 +65,7 @@ function deps(overrides: Partial<GithubDeps>): GithubDeps {
     headers: { "User-Agent": "stower-test" },
     cache: emptyGithubCache(),
     cacheTtlMs: TTL_MS,
+    fetchTimeoutMs: 10_000,
     log: () => {},
     ...overrides,
   };

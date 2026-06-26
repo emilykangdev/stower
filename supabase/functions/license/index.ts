@@ -59,6 +59,20 @@ const GITHUB_DEFAULT_API_BASE = "https://api.github.com";
 const GITHUB_CACHE_TTL_MS = 5 * 60 * 1000;
 const GITHUB_RELEASES_PAGE_SIZE = 100;
 
+// Outbound-fetch deadline (item B). A hung Keygen/GitHub upstream must return a
+// controlled, retryable failure well before the platform's 150s idle → 504, never
+// hang the whole check-in. GitHub timeouts fall back to cached-or-null (extension
+// skipped); Keygen timeouts surface as a retryable error.
+const OUTBOUND_FETCH_TIMEOUT_MS = 10_000;
+
+/** `fetch` with an abort deadline, for the Keygen admin calls. */
+function timedFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    signal: AbortSignal.timeout(OUTBOUND_FETCH_TIMEOUT_MS),
+  });
+}
+
 function env(name: string): string {
   const value = Deno.env.get(name);
   if (!value) throw new Error(`missing env ${name}`);
@@ -286,11 +300,16 @@ function keygenAdmin(): KeygenAdmin {
     licenseID: string,
     fingerprint: string,
   ): Promise<string | null> {
-    const response = await fetch(
+    const response = await timedFetch(
       `${accountPath}/licenses/${encodeURIComponent(licenseID)}/machines`,
       { headers: adminHeaders },
     );
-    if (!response.ok) return null;
+    // A transient list failure must NOT read as "no machine found" — that would let
+    // activateMachine raise a false KeygenMachineLimitError and lock out the real
+    // device. Throw so the caller surfaces a retryable error instead.
+    if (!response.ok) {
+      throw new Error(`keygen list machines ${response.status}`);
+    }
     const json = await response.json();
     const machines =
       (Array.isArray(json.data) ? json.data : []) as KeygenResource[];
@@ -303,7 +322,7 @@ function keygenAdmin(): KeygenAdmin {
   return {
     async createTrialLicense() {
       const expiry = new Date(Date.now() + TRIAL_DURATION_MS).toISOString();
-      const response = await fetch(`${accountPath}/licenses`, {
+      const response = await timedFetch(`${accountPath}/licenses`, {
         method: "POST",
         headers: adminHeaders,
         body: JSON.stringify({
@@ -327,7 +346,7 @@ function keygenAdmin(): KeygenAdmin {
     },
     async upgradeToPaid(licenseID) {
       const encodedID = encodeURIComponent(licenseID);
-      const policyResponse = await fetch(
+      const policyResponse = await timedFetch(
         `${accountPath}/licenses/${encodedID}/policy`,
         {
           method: "PUT",
@@ -344,7 +363,7 @@ function keygenAdmin(): KeygenAdmin {
         throw new Error(`keygen policy ${policyResponse.status}`);
       }
       // The policy swap leaves the trial expiry; clear it to perpetual (idempotent).
-      const expiryResponse = await fetch(
+      const expiryResponse = await timedFetch(
         `${accountPath}/licenses/${encodedID}`,
         {
           method: "PATCH",
@@ -362,7 +381,7 @@ function keygenAdmin(): KeygenAdmin {
       }
     },
     async attachV0(licenseID) {
-      const response = await fetch(
+      const response = await timedFetch(
         `${accountPath}/licenses/${encodeURIComponent(licenseID)}/entitlements`,
         {
           method: "POST",
@@ -389,7 +408,7 @@ function keygenAdmin(): KeygenAdmin {
       throw new Error(`keygen attach ${response.status}`);
     },
     async activateMachine(licenseID, licenseKey, fingerprint) {
-      const response = await fetch(`${accountPath}/machines`, {
+      const response = await timedFetch(`${accountPath}/machines`, {
         method: "POST",
         headers: licenseHeaders(licenseKey),
         body: JSON.stringify({
@@ -423,7 +442,7 @@ function keygenAdmin(): KeygenAdmin {
         algorithm: MACHINE_FILE_ALGORITHM,
         include: MACHINE_FILE_INCLUDE,
       });
-      const response = await fetch(
+      const response = await timedFetch(
         `${accountPath}/machines/${
           encodeURIComponent(machineID)
         }/actions/check-out?${query}`,
@@ -439,7 +458,7 @@ function keygenAdmin(): KeygenAdmin {
       return certificate;
     },
     async validate(licenseKey, fingerprint): Promise<KeygenValidation> {
-      const response = await fetch(
+      const response = await timedFetch(
         `${accountPath}/licenses/actions/validate-key`,
         {
           method: "POST",
@@ -458,7 +477,7 @@ function keygenAdmin(): KeygenAdmin {
       };
     },
     async effectiveEntitlements(licenseID) {
-      const response = await fetch(
+      const response = await timedFetch(
         `${accountPath}/licenses/${encodeURIComponent(licenseID)}/entitlements`,
         { headers: adminHeaders },
       );
@@ -473,7 +492,7 @@ function keygenAdmin(): KeygenAdmin {
         .filter((code): code is string => typeof code === "string");
     },
     async currentExpiry(licenseID) {
-      const response = await fetch(
+      const response = await timedFetch(
         `${accountPath}/licenses/${encodeURIComponent(licenseID)}`,
         { headers: adminHeaders },
       );
@@ -483,7 +502,7 @@ function keygenAdmin(): KeygenAdmin {
       return typeof expiry === "string" ? expiry : null;
     },
     async patchExpiry(licenseID, iso) {
-      const response = await fetch(
+      const response = await timedFetch(
         `${accountPath}/licenses/${encodeURIComponent(licenseID)}`,
         {
           method: "PATCH",
@@ -581,6 +600,7 @@ function githubAdapter(): CheckInDeps["github"] {
     headers,
     cache: githubCache,
     cacheTtlMs: GITHUB_CACHE_TTL_MS,
+    fetchTimeoutMs: OUTBOUND_FETCH_TIMEOUT_MS,
     log: (message) => console.log(message), // non-secret: only a major-version string
   });
 }

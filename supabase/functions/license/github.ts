@@ -33,6 +33,8 @@ export interface GithubDeps {
   headers: Record<string, string>; // User-Agent (required by GitHub) + optional auth
   cache: GithubReleasesCache;
   cacheTtlMs: number;
+  /** Abort deadline for the releases fetch; a timeout falls back to cached-or-null. */
+  fetchTimeoutMs: number;
   log: (message: string) => void;
 }
 
@@ -91,6 +93,7 @@ async function fetchStableReleases(
   try {
     const response = await deps.fetch(deps.releasesUrl, {
       headers: deps.headers,
+      signal: AbortSignal.timeout(deps.fetchTimeoutMs),
     });
     if (!response.ok) {
       deps.log(`github: releases fetch returned ${response.status}`);

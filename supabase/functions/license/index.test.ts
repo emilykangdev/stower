@@ -939,6 +939,22 @@ Deno.test("check-in maps a true machine-limit conflict to 409 fingerprint_mismat
   );
 });
 
+Deno.test("check-in propagates a transient activate error (not a false seat conflict)", async () => {
+  const trials = trialsWith(activeRow({ keygen_machine_id: null }));
+  const keygen = new FakeKeygen();
+  keygen.activateError = new Error("keygen machines 503"); // transient, NOT KeygenMachineLimitError
+  let threw = false;
+  try {
+    await checkIn(checkInDeps(trials, keygen, { latest: "v0" }), checkInReq());
+  } catch {
+    threw = true; // the dispatch maps this to a retryable 503, never a 409 fingerprint_mismatch
+  }
+  assert(
+    threw,
+    "a transient activate error must propagate, not become a false fingerprint_mismatch",
+  );
+});
+
 Deno.test("check-in rejects an unknown major (400)", async () => {
   const trials = trialsWith(activeRow());
   const result = await checkIn(
