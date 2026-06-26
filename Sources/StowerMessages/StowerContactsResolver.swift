@@ -48,27 +48,28 @@ public struct StowerContactsResolver: Sendable {
     ///
     /// The muted-senders popover keys on the normalized handle (the only identity it
     /// stores), but the rows are NOT on the board, so their names can't be read from
-    /// loaded rows. The resolver's exact index is keyed by the SAME normalized form
-    /// `StowerDraftKey.derive` produces (both go through `StowerPhoneNormalizer`), so a
-    /// key lookup is a direct hit; an unmatched key degrades to a readable handle
-    /// (the de-prefixed key), never the raw `e164:`/`email:`/`raw:` token.
+    /// loaded rows. It de-prefixes the key to a readable handle and runs the SAME
+    /// `displayName(for:)` resolution the board uses — so it applies the email, exact,
+    /// AND last-ten-digit suffix matches identically (a contact that resolves on the
+    /// board never falls back to a bare number here). Degrades to the readable handle.
     ///
     /// - Parameter key: A normalized handle key (`email:…` / `e164:…` / `raw:…`).
     /// - Returns: The Contacts name, or a readable handle fallback.
     public func displayName(forKey key: String) -> String {
-        if let name = exactNames[key] {
-            return name
-        }
-        return Self.readableHandle(forKey: key)
+        displayName(for: Self.readableHandle(forKey: key))
     }
 
     /// Whether a normalized key resolves to a real Contacts name (vs a handle
     /// fallback) — drives the muted-senders avatar (initials vs a generic glyph).
     ///
+    /// Uses the same full resolution as `displayName(forKey:)`, so the avatar agrees
+    /// with the resolved name (a suffix-matched contact shows initials, not a glyph).
+    ///
     /// - Parameter key: A normalized handle key (`email:…` / `e164:…` / `raw:…`).
     /// - Returns: `true` when a Contacts name exists for the key.
     public func hasName(forKey key: String) -> Bool {
-        exactNames[key] != nil
+        let handle = Self.readableHandle(forKey: key)
+        return displayName(for: handle) != handle
     }
 
     /// Reconstructs a readable handle from a normalized key for display fallback.

@@ -17,23 +17,49 @@ struct StowerMacApp: App {
     /// registrations drive, so the undo stack survives a board reload (unlike
     /// `@Environment(\.undoManager)`, which rebinds when the list rebuilds). The board
     /// view-model flips `groupsByEvent` off so each dismiss is exactly one undo step
-    /// (I6). The draining-bar Undo button calls `undo()` on this instance.
-    ///
-    /// NOTE (A4/B1 spike — DEFERRED): this is deliberately NOT bound to the global
-    /// `.undoRedo` menu command. A `CommandGroup(replacing: .undoRedo)` override stole
-    /// ⌘Z from the focused draft-composer text editor (typing a draft + ⌘Z would
-    /// un-dismiss a board row instead of undoing text). Binding ⌘Z to the board undo
-    /// WITHOUT hijacking text-field undo needs a focus-gated command (`@FocusedValue`,
-    /// enabled only when no text field is first responder) and an app-runtime smoke
-    /// test — out of scope for the headless gate. Until then the draining-bar Undo
-    /// button is the undo affordance; ⌘Z keeps its native per-text-field behavior.
+    /// (I6). Both ⌘Z and the draining-bar Undo button call `undo()` on this instance.
     private let undoManager = UndoManager()
 
     var body: some Scene {
         WindowGroup {
             StowerRootContainer(flusher: appDelegate.flusher, undoManager: undoManager)
         }
+        .commands {
+            // ⌘Z / ⌘⇧Z (A4/B1 spike — resolved WITHOUT an AppKit responder bridge in the
+            // board; the only AppKit here is forwarding the action the standard Edit-menu
+            // item already uses). We replace `.undoRedo` so ⌘Z can reach the board's undo,
+            // but FIRST forward `undo:`/`redo:` down the responder chain — exactly what the
+            // default Undo item does (`action: undo:, target: nil`). When a draft-composer
+            // text field is first responder it handles its own text undo and we stop;
+            // ONLY when nothing in the chain handles it does the board dismiss-undo run.
+            // So text-field undo is preserved and ⌘Z reverses a dismiss when not editing.
+            CommandGroup(replacing: .undoRedo) {
+                Button("Undo") { performUndo() }
+                    .keyboardShortcut("z", modifiers: .command)
+                Button("Redo") { performRedo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+            }
+        }
     }
+
+    /// Forwards to the focused responder's text undo; falls back to the board undo when
+    /// nothing in the responder chain handled it (no text field is editing).
+    private func performUndo() {
+        if !NSApp.sendAction(Self.undoActionSelector, to: nil, from: nil) {
+            undoManager.undo()
+        }
+    }
+
+    /// The redo mirror of `performUndo`.
+    private func performRedo() {
+        if !NSApp.sendAction(Self.redoActionSelector, to: nil, from: nil) {
+            undoManager.redo()
+        }
+    }
+
+    /// The standard first-responder Edit-menu undo/redo actions (`undo:` / `redo:`).
+    private static let undoActionSelector = Selector(("undo:"))
+    private static let redoActionSelector = Selector(("redo:"))
 }
 
 /// Builds the root once, surfacing a startup failure if an essential store (the

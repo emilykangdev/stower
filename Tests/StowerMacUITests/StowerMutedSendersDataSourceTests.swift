@@ -57,6 +57,26 @@ import Testing
         #expect(senders.first?.hasResolvedName == false)
     }
 
+    @Test("mutedSenders resolves a contact that matches only by last-ten-digit suffix (C1)")
+    internal func mutedSendersResolvesViaSuffix() async throws {
+        // Muted handle is full E.164; the Contacts card stores the number WITHOUT the
+        // country code, so it matches only by suffix — exactly the board's behavior.
+        let mutedHandle = "+14155550100"
+        let key = StowerDraftKey.derive(forHandle: mutedHandle)
+        let adapter = StowerLiveBoardDataSource(
+            engine: StowerFakeMessagesEngine(),
+            triage: StowerInMemoryTriageStore(muted: [key]),
+            makeContactsResolver: {
+                StowerContactsResolver(mapping: ["415-555-0100": "Suffix Match"])
+            }
+        )
+
+        let senders = await adapter.mutedSenders()
+
+        #expect(senders.first?.displayName == "Suffix Match")
+        #expect(senders.first?.hasResolvedName == true)
+    }
+
     @Test("mutedSenders is empty when nothing is muted (the toolbar control hides)")
     internal func mutedSendersEmptyWhenNoneMuted() async throws {
         let adapter = StowerLiveBoardDataSource(
