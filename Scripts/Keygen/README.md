@@ -79,5 +79,16 @@ absent — a missing harness is a hard error, never a silent skip.
   proxy serves).** CI is the source of truth — do NOT boot the harness on an M-series
   Mac; ground local work against the docs + hermetic unit tests and let CI run the
   real-CE integration assertions.
+  - **Untested arm64 lead (a spike, not a promise):** Docker Hub *does* publish
+    `keygen/api:v1.6.0` for **`linux/arm64`** as well as amd64 — our
+    `docker-compose.yml` explicitly pins `platform: linux/amd64`, which is what forces
+    the slow emulation. BUT Keygen's self-hosting docs state the server **requires
+    x86_64 + SSE 4.2**, so the arm64 image is published best-effort and **unverified**
+    (it may fail at runtime). If fast *local* Mac runs ever matter: spike it — drop the
+    `platform: linux/amd64` pin, `up.sh`, and see if the native arm64 image boots +
+    passes `deno task test:integration`. If it works, local Mac runs become possible;
+    if not (the SSE 4.2 dependency), we stay CI-only. Low priority — CI already covers
+    it, and the integration tests run locally against a *real Keygen account* (env
+    override) with no Docker at all.
 - **`.env` is committed and throwaway** because the DB is ephemeral (`down.sh -v`
   wipes it). The only secret-bearing file is `.runtime.env`, which is gitignored.
