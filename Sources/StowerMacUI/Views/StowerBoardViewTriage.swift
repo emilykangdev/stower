@@ -122,8 +122,13 @@ extension StowerBoardView {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                Button("Manage…") { model.isShowingMutedSenders = true }
-                    .buttonStyle(.borderless)
+                Button("Manage…") {
+                    // Load explicitly before presenting (the toolbar button's popover is
+                    // the anchor; this just drives the same shared `isShowingMutedSenders`).
+                    model.reloadMutedSendersList()
+                    model.isShowingMutedSenders = true
+                }
+                .buttonStyle(.borderless)
             }
         }
     }

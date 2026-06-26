@@ -24,6 +24,10 @@ internal struct StowerMutedSendersButton: View {
 
     internal var body: some View {
         Button {
+            // Load explicitly here (not via `.onChange`): the zero-state "Manage…" link
+            // can flip `isPresented` from elsewhere, and an onChange-driven load is
+            // fragile across those entry points. Both call `onOpen()` before presenting.
+            onOpen()
             isPresented = true
         } label: {
             Image(systemName: "bell.slash")
@@ -32,9 +36,6 @@ internal struct StowerMutedSendersButton: View {
         .accessibilityLabel("Muted senders")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             StowerMutedSendersPopover(senders: senders, onUnmute: onUnmute)
-        }
-        .onChange(of: isPresented) { _, nowPresented in
-            if nowPresented { onOpen() }
         }
     }
 }
