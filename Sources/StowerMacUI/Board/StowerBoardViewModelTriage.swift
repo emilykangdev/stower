@@ -14,12 +14,25 @@ import Foundation
 extension StowerBoardViewModel {
     // MARK: Dismiss
 
+    /// Serializes a triage action AFTER the in-flight one, so rapid actions preserve
+    /// user order — the write, undo registration, bar, and reload of action N never
+    /// interleave with action N+1 (the same chaining posture as `commitDraft`).
+    ///
+    /// `internal` so the load path can seed the muted count through the same queue.
+    internal func enqueueTriage(_ work: @escaping () async -> Void) {
+        let previous = triageTask
+        triageTask = Task {
+            await previous?.value
+            await work()
+        }
+    }
+
     /// Dismisses a set of rows as ONE user action — the single entry point for both a
     /// single-row dismiss (a set of one) and a batch "Dismiss N" (a set of N).
     ///
     /// Kicks off the async work; the view calls this directly from its action closures.
     internal func dismiss(_ rows: Set<StowerBoardRow>) {
-        triageTask = Task { await performDismiss(rows) }
+        enqueueTriage { await self.performDismiss(rows) }
     }
 
     /// Writes the dismissals, records the events, registers ONE undo step for the set,
@@ -92,9 +105,9 @@ extension StowerBoardViewModel {
         undoManager.registerUndo(withTarget: self) { vm in vm.handleRedoDismiss(rows) }
         undoManager.setActionName(Self.dismissUndoActionName)
         undoBar = nil
-        triageTask = Task { [weak self] in
-            await self?.undismissIO(rows)
-            await self?.reloadLocally()
+        enqueueTriage {
+            await self.undismissIO(rows)
+            await self.reloadLocally()
         }
     }
 
@@ -105,11 +118,10 @@ extension StowerBoardViewModel {
     private func handleRedoDismiss(_ rows: Set<StowerBoardRow>) {
         undoManager.registerUndo(withTarget: self) { vm in vm.handleUndoDismiss(rows) }
         undoManager.setActionName(Self.dismissUndoActionName)
-        triageTask = Task { [weak self] in
-            guard let self else { return }
-            let dismissed = await dismissIO(rows)
-            showUndoBar(count: dismissed.count)
-            await reloadLocally()
+        enqueueTriage {
+            let dismissed = await self.dismissIO(rows)
+            self.showUndoBar(count: dismissed.count)
+            await self.reloadLocally()
         }
     }
 
@@ -186,14 +198,14 @@ extension StowerBoardViewModel {
     /// First-time confirmation is the view's concern (it owns the persisted "seen"
     /// flag); this method performs the mute unconditionally.
     internal func mute(_ row: StowerBoardRow) {
-        triageTask = Task { await performMute(handleKey: row.draftKey) }
+        enqueueTriage { await self.performMute(handleKey: row.draftKey) }
     }
 
     /// Unmutes a sender (popover Unmute), records the event from the popover surface,
     /// and refreshes both the board and the still-open popover list.
     internal func unmute(_ sender: StowerMutedSender) {
-        triageTask = Task {
-            await performUnmute(handleKey: sender.key, surface: Self.mutedSendersSurface)
+        enqueueTriage {
+            await self.performUnmute(handleKey: sender.key, surface: Self.mutedSendersSurface)
         }
     }
 
@@ -250,7 +262,7 @@ extension StowerBoardViewModel {
 
     /// Refreshes the popover list (the toolbar control calls this as it opens).
     internal func reloadMutedSendersList() {
-        triageTask = Task { await loadMutedSenders() }
+        enqueueTriage { await self.loadMutedSenders() }
     }
 
     // MARK: Reload

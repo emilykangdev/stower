@@ -107,6 +107,8 @@ private struct StowerMutedSenderRow: View {
         .padding(.vertical, Self.rowVerticalPadding)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
+        // Combining hides the inline Unmute button, so re-expose it as a VoiceOver action.
+        .accessibilityAction(named: Text("Unmute")) { onUnmute() }
     }
 
     /// The quiet pill warning the person stays hidden by an active dismissal even

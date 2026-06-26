@@ -54,6 +54,8 @@ internal struct StowerDismissUndoBar: View {
         .accessibilityLabel(label)
         .accessibilityHint("Undo available")
         .accessibilityAddTraits(.updatesFrequently)
+        // Combining hides the Undo button, so re-expose it as a VoiceOver action.
+        .accessibilityAction(named: Text("Undo")) { onUndo() }
         .task(id: state.id) { await drain() }
     }
 

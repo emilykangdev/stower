@@ -269,7 +269,7 @@ internal final class StowerBoardViewModel {
         refresh()
         // Seed the muted count so the toolbar control and the zero-state line are
         // correct on first render; mute/unmute keep it current thereafter.
-        triageTask = Task { await refreshMutedCount() }
+        enqueueTriage { await self.refreshMutedCount() }
     }
 
     /// Re-checks Contacts when the app returns to the foreground.

@@ -125,6 +125,25 @@ private let triageFixedNow = Date(timeIntervalSince1970: 5_000_000)
         #expect(await triage.dismissedMessages().isEmpty)
     }
 
+    @Test("two rapid dismisses (no await between) serialize and undo in reverse order")
+    internal func rapidDismissesSerialize() async {
+        let triage = StowerInMemoryTriageStore()
+        let model = makeViewModel(triage: triage)
+        let rowA = uniqueRow("a")
+        let rowB = uniqueRow("b")
+
+        // Fire both before awaiting — the chain must apply A then B, not interleave.
+        model.dismiss([rowA])
+        model.dismiss([rowB])
+        await settle(model)
+        #expect(await triage.dismissedMessages().count == 2)
+
+        // One undo reverses the LAST action (B); A stays dismissed.
+        model.undoLastDismiss()
+        await settle(model)
+        #expect(await triage.dismissedMessages().keys.sorted() == [rowA.draftKey])
+    }
+
     // MARK: No success bar on a failed write
 
     @Test("a dismiss whose write throws shows no bar and registers no undo")

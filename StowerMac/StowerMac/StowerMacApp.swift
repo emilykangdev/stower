@@ -13,27 +13,25 @@ import SwiftUI
 struct StowerMacApp: App {
     @NSApplicationDelegateAdaptor(StowerAppDelegate.self) private var appDelegate
 
-    /// The app-owned `UndoManager` (A4): ONE instance shared between the board's
-    /// dismiss/undo registrations and the ⌘Z / ⌘⇧Z menu commands below, so the undo
-    /// stack survives a board reload (unlike `@Environment(\.undoManager)`, which
-    /// rebinds when the list rebuilds). The board view-model flips `groupsByEvent` off
-    /// so each dismiss is exactly one undo step (I6).
+    /// The app-owned `UndoManager` (A4): ONE stable instance the board's dismiss/undo
+    /// registrations drive, so the undo stack survives a board reload (unlike
+    /// `@Environment(\.undoManager)`, which rebinds when the list rebuilds). The board
+    /// view-model flips `groupsByEvent` off so each dismiss is exactly one undo step
+    /// (I6). The draining-bar Undo button calls `undo()` on this instance.
+    ///
+    /// NOTE (A4/B1 spike — DEFERRED): this is deliberately NOT bound to the global
+    /// `.undoRedo` menu command. A `CommandGroup(replacing: .undoRedo)` override stole
+    /// ⌘Z from the focused draft-composer text editor (typing a draft + ⌘Z would
+    /// un-dismiss a board row instead of undoing text). Binding ⌘Z to the board undo
+    /// WITHOUT hijacking text-field undo needs a focus-gated command (`@FocusedValue`,
+    /// enabled only when no text field is first responder) and an app-runtime smoke
+    /// test — out of scope for the headless gate. Until then the draining-bar Undo
+    /// button is the undo affordance; ⌘Z keeps its native per-text-field behavior.
     private let undoManager = UndoManager()
 
     var body: some Scene {
         WindowGroup {
             StowerRootContainer(flusher: appDelegate.flusher, undoManager: undoManager)
-        }
-        .commands {
-            // Bind ⌘Z / ⌘⇧Z to the app-owned manager via the native `.undoRedo`
-            // group — NO AppKit responder-chain bridge (A4 spike resolved). The board's
-            // draining-bar Undo button calls the same `undo()`.
-            CommandGroup(replacing: .undoRedo) {
-                Button("Undo") { undoManager.undo() }
-                    .keyboardShortcut("z", modifiers: .command)
-                Button("Redo") { undoManager.redo() }
-                    .keyboardShortcut("z", modifiers: [.command, .shift])
-            }
         }
     }
 }
