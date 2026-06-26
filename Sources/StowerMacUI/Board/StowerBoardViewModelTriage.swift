@@ -230,6 +230,8 @@ extension StowerBoardViewModel {
         do {
             try await triage.unmute(handleKey: handleKey, at: at)
         } catch {
+            // Degrade-never-crash: a failed unmute leaves the sender muted (and visible
+            // in the popover to retry). Don't record an event for a write that didn't land.
             return
         }
         await interactions.record(
