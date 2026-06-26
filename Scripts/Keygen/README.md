@@ -8,11 +8,15 @@ accepts our requests).
 
 Zero production, zero Keygen Cloud. Everything here is fake and ephemeral.
 
+This folder is the single home for **everything Keygen**: the CE Docker harness,
+the `bootstrap-keygen.ts` provisioning script, and its Deno tests (hermetic unit +
+real-CE integration). It is a self-contained Deno project (`deno.json`).
+
 ## Usage
 
 ```bash
 Scripts/Keygen/up.sh        # boot CE, provision, mint admin token → .runtime.env
-( cd supabase/functions/license && deno task test:integration )
+( cd Scripts/Keygen && deno task test:integration )
 Scripts/Keygen/down.sh      # tear down + wipe volumes + remove .runtime.env
 ```
 
@@ -37,6 +41,11 @@ absent — a missing harness is a hard error, never a silent skip.
 | `Caddyfile` | Injects `X-Forwarded-Proto: https` so Keygen's `force_ssl` serves 200 |
 | `up.sh` | Boot → headless setup → mint admin token → write `.runtime.env` |
 | `down.sh` | `docker compose down -v` + remove `.runtime.env` |
+| `bootstrap-keygen.ts` | Idempotent Keygen structure provisioner (product / policies / entitlements); also the prod-ops tool |
+| `bootstrap-keygen.test.ts` | Hermetic unit tests for the bootstrap script (fake `fetch`) — run by `precheck` every commit |
+| `integration/` | Real-CE integration tests (bootstrap round-trip + offline machine path) — `deno task test:integration` |
+| `deno.json` / `deno.integration.json` | Deno project config + exclude-free override that lets the integration task run |
+| `test-bootstrap.sh` | One-shot local runner: up → bootstrap → integration → auto-teardown |
 
 ## Recipe notes (empirically verified by the 2026-06-24 Docker spike)
 

@@ -374,7 +374,7 @@ falls back to the cached signed file only until that file's `meta.expiry`.
   with retry copy. Background polling, deep-link return, and automatic checkout
   completion detection are future UX improvements, not required for v0.
 
-**Bootstrap script** (§A — `supabase/functions/license/scripts/bootstrap-keygen.ts`):
+**Bootstrap script** (§A — `Scripts/Keygen/bootstrap-keygen.ts`):
 
 - Idempotent find-or-create: Product `stower`, policies `STOWER_TRIAL_POLICY`
   + `STOWER_PAID_POLICY`

@@ -26,16 +26,15 @@ Scripts/Keygen/up.sh
 
 echo "==> [2/3] Running the bootstrap script standalone against local Keygen CE"
 echo "         (no Supabase webhook, no Railway — just Keygen structures)"
-# Absolute --env-file path: `deno run` resolves a relative --env-file against the
-# CWD (here supabase/functions/license), NOT against the deno.json dir the way
-# `deno task` does — so a relative `../../Scripts/Keygen` would miss. The absolute
-# path from $REPO_ROOT is robust regardless of CWD.
-( cd supabase/functions/license &&
+# Everything Keygen lives here: the script, deno.json, and .runtime.env are all in
+# Scripts/Keygen, so the --env-file is a same-dir relative path (robust for both
+# `deno run` and `deno task`).
+( cd "$REPO_ROOT/Scripts/Keygen" &&
   deno run --allow-net=localhost --allow-env \
-    --env-file="$REPO_ROOT/Scripts/Keygen/.runtime.env" \
-    scripts/bootstrap-keygen.ts )
+    --env-file=.runtime.env \
+    bootstrap-keygen.ts )
 
 echo "==> [3/3] Running the real-CE integration suite (the regression net)"
-( cd supabase/functions/license && deno task test:integration )
+( cd "$REPO_ROOT/Scripts/Keygen" && deno task test:integration )
 
 echo "==> All green. Harness teardown runs next via the EXIT trap."

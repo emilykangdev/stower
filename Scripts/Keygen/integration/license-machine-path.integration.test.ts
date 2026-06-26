@@ -14,7 +14,7 @@
 //
 // Requires the harness (Scripts/Keygen/up.sh). Fails loudly if it is down.
 
-import { bootstrap, type BootstrapDeps } from "../scripts/bootstrap-keygen.ts";
+import { bootstrap, type BootstrapDeps } from "../bootstrap-keygen.ts";
 import {
   accountPath,
   type HarnessEnv,

@@ -58,7 +58,7 @@ jobs:
       - name: Boot Keygen CE harness
         run: Scripts/Keygen/up.sh
       - name: Run licensing integration tests
-        working-directory: supabase/functions/license
+        working-directory: Scripts/Keygen
         run: deno task test:integration
       - name: Tear down harness
         if: always()

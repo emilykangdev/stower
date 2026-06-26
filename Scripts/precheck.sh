@@ -78,10 +78,12 @@ else
     swift test ${SKIP_ARGS[@]+"${SKIP_ARGS[@]}"}
 fi
 
-# Step 4c — Deno tests for the license Edge Function (handlers.ts pure logic).
-# The mint/webhook idempotency, signature, and replay invariants live in
-# supabase/functions/license/index.test.ts. They are hermetic (no network, disk,
-# or env), so they run anywhere Deno does — including CI (ci.yml installs Deno).
+# Step 4c — Deno unit tests for the licensing code (hermetic: fake fetch, no
+# network/disk/env). Two homes: the license Edge Function (mint/webhook
+# idempotency, signature, replay) in supabase/functions/license/index.test.ts, and
+# the Keygen bootstrap script (exact-attribute drift checks) in
+# Scripts/Keygen/bootstrap-keygen.test.ts. The real-CE integration tier
+# (Scripts/Keygen/integration) needs the Docker harness and runs only in CI.
 # FAILS if Deno is absent (not a skip): these guard the payment/license path, so
 # "Deno missing" must break the gate loudly, never silently drop coverage.
 if ! command -v deno >/dev/null 2>&1; then
@@ -91,6 +93,7 @@ if ! command -v deno >/dev/null 2>&1; then
     exit 1
 fi
 ( cd supabase/functions/license && deno test )
+( cd Scripts/Keygen && deno test )
 
 # Step 5 — module boundary checks.
 # Match only real Swift import declarations (anchored to line start, optional

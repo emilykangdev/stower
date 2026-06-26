@@ -89,4 +89,4 @@ KEYGEN_PUBLIC_KEY=${public_key}
 EOF
 
 echo "==> Harness up. Creds in Scripts/Keygen/${RUNTIME_ENV}"
-echo "    Run: ( cd supabase/functions/license && deno task test:integration )"
+echo "    Run: ( cd Scripts/Keygen && deno task test:integration )"

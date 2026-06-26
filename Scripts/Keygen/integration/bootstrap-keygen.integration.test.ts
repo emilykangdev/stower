@@ -1,6 +1,6 @@
 // INTEGRATION test: runs the REAL bootstrap-keygen.ts against the live Keygen CE
-// harness (Scripts/Keygen/). The hermetic unit tests (scripts/bootstrap-keygen.
-// test.ts) stub `fetch` — they prove our logic but not that real Keygen accepts our
+// harness (Scripts/Keygen/). The hermetic unit tests (../bootstrap-keygen.test.ts)
+// stub `fetch` — they prove our logic but not that real Keygen accepts our
 // exact JSON:API payloads. This proves the round-trip and idempotency for real, the
 // check that would have caught the `page[number]` 400 before it shipped.
 //
@@ -11,7 +11,7 @@ import {
   bootstrap,
   type BootstrapDeps,
   type BootstrapOutput,
-} from "../scripts/bootstrap-keygen.ts";
+} from "../bootstrap-keygen.ts";
 import { requireEnv } from "./harness.ts";
 
 function assert(condition: boolean, message: string): void {
