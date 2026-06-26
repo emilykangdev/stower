@@ -53,7 +53,7 @@ absent — a missing harness is a hard error, never a silent skip.
 | `down.sh` | `docker compose down -v` + remove `.runtime.env` |
 | `bootstrap-keygen.ts` | Idempotent Keygen structure provisioner (product / policies / entitlements); also the prod-ops tool |
 | `bootstrap-keygen.test.ts` | Hermetic unit tests for the bootstrap script (fake `fetch`) — run by `precheck` every commit |
-| `integration/` | Real-CE integration tests (bootstrap round-trip + offline machine path) — `deno task test:integration` |
+| `integration/` | Real-CE integration tests (bootstrap round-trip + offline machine path + **paid-path: a `STOWER_V0` license validates and checks out a signed file carrying the entitlement, no Lemon Squeezy**) — `deno task test:integration` |
 | `deno.json` / `deno.integration.json` | Deno project config + exclude-free override that lets the integration task run |
 | `test-bootstrap.sh` | One-shot local runner: up → bootstrap → integration → auto-teardown |
 
