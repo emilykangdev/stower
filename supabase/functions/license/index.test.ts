@@ -1,0 +1,503 @@
+// Deno tests for the pure license-function logic (handlers.ts): mint idempotency
+// + crash recovery (I3), the LS upgrade webhook (I8 function-side), signature
+// rejection (I9), and replay / wrong-variant / transient-failure handling (I15).
+// Fully hermetic — fakes only, no network, disk, or env, and inline asserts so
+// `deno test` fetches nothing.
+
+import {
+  handleWebhook,
+  type KeygenAdmin,
+  KeygenLicenseNotFoundError,
+  type MintDeps,
+  mintTrial,
+  PurchaseForgedLicenseError,
+  type PurchaseStore,
+  type TrialRow,
+  type TrialStore,
+  type WebhookDeps,
+} from "./handlers.ts";
+
+function assertEquals(
+  actual: unknown,
+  expected: unknown,
+  message?: string,
+): void {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  if (a !== e) throw new Error(message ?? `assertEquals failed: ${a} !== ${e}`);
+}
+
+const RECLAIM_WINDOW_MS = 60_000;
+const T0 = 1_700_000_000_000;
+const isoAt = (ms: number) => new Date(ms).toISOString();
+
+class FakeTrials implements TrialStore {
+  rows = new Map<string, TrialRow & { claim_id?: string }>();
+  claimNowMs = T0;
+  activateError: Error | null = null;
+  private claimCounter = 0;
+
+  claim(fingerprint: string): Promise<string | null> {
+    if (this.rows.has(fingerprint)) return Promise.resolve(null);
+    const claimId = `claim-${++this.claimCounter}`;
+    this.rows.set(fingerprint, {
+      status: "pending",
+      keygen_license_id: null,
+      keygen_license_key: null,
+      created_at: isoAt(this.claimNowMs),
+      claim_id: claimId,
+    });
+    return Promise.resolve(claimId);
+  }
+  get(fingerprint: string): Promise<TrialRow | null> {
+    return Promise.resolve(this.rows.get(fingerprint) ?? null);
+  }
+  activate(
+    fingerprint: string,
+    claimToken: string,
+    licenseID: string,
+    licenseKey: string,
+  ): Promise<boolean> {
+    if (this.activateError) return Promise.reject(this.activateError);
+    const row = this.rows.get(fingerprint);
+    if (!row || row.status !== "pending" || row.claim_id !== claimToken) {
+      return Promise.resolve(false); // claim was reclaimed by another winner
+    }
+    this.rows.set(fingerprint, {
+      status: "active",
+      keygen_license_id: licenseID,
+      keygen_license_key: licenseKey,
+      created_at: row.created_at,
+      claim_id: claimToken,
+    });
+    return Promise.resolve(true);
+  }
+  releaseClaim(fingerprint: string, claimToken: string): Promise<void> {
+    const row = this.rows.get(fingerprint);
+    if (row && row.status === "pending" && row.claim_id === claimToken) {
+      this.rows.delete(fingerprint);
+    }
+    return Promise.resolve();
+  }
+  reclaimStale(fingerprint: string, olderThanMs: number): Promise<void> {
+    const row = this.rows.get(fingerprint);
+    if (
+      row && row.status === "pending" &&
+      Date.parse(row.created_at) < olderThanMs
+    ) {
+      this.rows.delete(fingerprint);
+    }
+    return Promise.resolve();
+  }
+}
+
+class FakeKeygen implements KeygenAdmin {
+  created = 0;
+  upgrades: string[] = [];
+  nextLicense = { id: "lic-new", key: "key-new" };
+  createError: Error | null = null;
+  upgradeError: Error | null = null;
+
+  createTrialLicense(): Promise<{ id: string; key: string }> {
+    if (this.createError) return Promise.reject(this.createError);
+    this.created++;
+    return Promise.resolve(this.nextLicense);
+  }
+  upgradeToPaid(licenseID: string): Promise<void> {
+    if (this.upgradeError) return Promise.reject(this.upgradeError);
+    this.upgrades.push(licenseID);
+    return Promise.resolve();
+  }
+}
+
+class FakePurchases implements PurchaseStore {
+  records: Array<
+    { orderID: string; licenseID: string; email: string; variantID: string }
+  > = [];
+  recordError: Error | null = null;
+
+  exists(orderID: string): Promise<boolean> {
+    return Promise.resolve(this.records.some((r) => r.orderID === orderID));
+  }
+  record(
+    purchase: {
+      orderID: string;
+      licenseID: string;
+      email: string;
+      variantID: string;
+    },
+  ): Promise<void> {
+    if (this.recordError) return Promise.reject(this.recordError);
+    this.records.push(purchase);
+    return Promise.resolve();
+  }
+}
+
+function mintDeps(
+  trials: TrialStore,
+  keygen: KeygenAdmin,
+  nowMs: number,
+): MintDeps {
+  return {
+    trials,
+    keygen,
+    now: () => nowMs,
+    reclaimWindowMs: RECLAIM_WINDOW_MS,
+  };
+}
+
+function webhookDeps(
+  keygen: KeygenAdmin,
+  purchases: PurchaseStore,
+  licenseIsMinted: (id: string) => Promise<boolean> = () =>
+    Promise.resolve(true),
+): WebhookDeps {
+  return {
+    purchases,
+    keygen,
+    verifySignature: (_raw, sig) => Promise.resolve(sig === "good"),
+    paidVariantID: "paid-variant",
+    licenseIsMinted,
+  };
+}
+
+function orderBody(overrides: Partial<{
+  orderID: string;
+  licenseID: string;
+  variantID: string;
+  email: string;
+  event: string;
+}> = {}): string {
+  const o = {
+    orderID: "ord-1",
+    licenseID: "lic-1",
+    variantID: "paid-variant",
+    email: "a@b.com",
+    event: "order_created",
+    ...overrides,
+  };
+  return JSON.stringify({
+    meta: { event_name: o.event, custom_data: { license_id: o.licenseID } },
+    data: {
+      id: o.orderID,
+      attributes: {
+        user_email: o.email,
+        first_order_item: { variant_id: o.variantID },
+      },
+    },
+  });
+}
+
+// I3(a): a repeat mint returns the existing active license and creates none.
+Deno.test("I3a mint is idempotent — second call returns the same license, none created", async () => {
+  const trials = new FakeTrials();
+  const keygen = new FakeKeygen();
+  keygen.nextLicense = { id: "lic-1", key: "key-1" };
+
+  const first = await mintTrial(mintDeps(trials, keygen, T0), "fp");
+  assertEquals(first, {
+    status: 200,
+    body: { key: "key-1", licenseID: "lic-1" },
+  });
+
+  const second = await mintTrial(mintDeps(trials, keygen, T0), "fp");
+  assertEquals(second, {
+    status: 200,
+    body: { key: "key-1", licenseID: "lic-1" },
+  });
+  assertEquals(keygen.created, 1);
+});
+
+// I3(b): a winner that died before activate leaves a fresh pending row; a second
+// mint inside the reclaim window retries, it does not double-mint.
+Deno.test("I3b a fresh pending claim does not double-mint", async () => {
+  const trials = new FakeTrials();
+  const keygen = new FakeKeygen();
+  trials.rows.set("fp", {
+    status: "pending",
+    keygen_license_id: null,
+    keygen_license_key: null,
+    created_at: isoAt(T0),
+  });
+
+  const result = await mintTrial(mintDeps(trials, keygen, T0 + 30_000), "fp");
+  assertEquals(result.status, 503);
+  assertEquals(keygen.created, 0);
+});
+
+// I3(c): a parallel loser gets a typed retry, never {null, null}.
+Deno.test("I3c a parallel loser gets a retryable error, not null ids", async () => {
+  const trials = new FakeTrials();
+  const keygen = new FakeKeygen();
+  trials.rows.set("fp", {
+    status: "pending",
+    keygen_license_id: null,
+    keygen_license_key: null,
+    created_at: isoAt(T0),
+  });
+
+  const result = await mintTrial(mintDeps(trials, keygen, T0 + 1_000), "fp");
+  assertEquals(result, { status: 503, body: { error: "retry" } });
+});
+
+// I3(d): a Keygen-create failure deletes the claim (no poisoned pending row).
+Deno.test("I3d a Keygen-create failure releases the claim", async () => {
+  const trials = new FakeTrials();
+  const keygen = new FakeKeygen();
+  keygen.createError = new Error("keygen down");
+
+  const result = await mintTrial(mintDeps(trials, keygen, T0), "fp");
+  assertEquals(result.status, 503);
+  assertEquals(trials.rows.has("fp"), false);
+});
+
+// Crash recovery: an abandoned (stale) pending claim is reclaimed and minted.
+Deno.test("I3 a stale pending claim is reclaimed and minted", async () => {
+  const trials = new FakeTrials();
+  const keygen = new FakeKeygen();
+  keygen.nextLicense = { id: "lic-2", key: "key-2" };
+  trials.rows.set("fp", {
+    status: "pending",
+    keygen_license_id: null,
+    keygen_license_key: null,
+    created_at: isoAt(T0),
+  });
+  trials.claimNowMs = T0 + 120_000;
+
+  const result = await mintTrial(mintDeps(trials, keygen, T0 + 120_000), "fp");
+  assertEquals(result, {
+    status: 200,
+    body: { key: "key-2", licenseID: "lic-2" },
+  });
+  assertEquals(keygen.created, 1);
+});
+
+// I3: a DB-activate failure AFTER Keygen create keeps the claim (no orphan storm).
+Deno.test("I3 a post-create DB failure does not release the claim", async () => {
+  const trials = new FakeTrials();
+  trials.activateError = new Error("db write failed");
+  const keygen = new FakeKeygen();
+
+  const result = await mintTrial(mintDeps(trials, keygen, T0), "fp");
+  assertEquals(result.status, 503);
+  // The license was created once; the claim row is retained (still pending), so a
+  // retry inside the window will NOT mint a second license.
+  assertEquals(keygen.created, 1);
+  assertEquals(trials.rows.get("fp")?.status, "pending");
+});
+
+// The stale-reclaim delete must not destroy a competing fresh claim (TOCTOU).
+Deno.test("I3 reclaim only deletes a row older than the cutoff", async () => {
+  const trials = new FakeTrials();
+  // A FRESH pending row (created 'now'); the reclaim cutoff is now - window, so
+  // this row is younger than the cutoff and must survive.
+  trials.rows.set("fp", {
+    status: "pending",
+    keygen_license_id: null,
+    keygen_license_key: null,
+    created_at: isoAt(T0),
+  });
+
+  await trials.reclaimStale("fp", T0 - RECLAIM_WINDOW_MS);
+  assertEquals(trials.rows.has("fp"), true);
+});
+
+// A stalled winner whose claim was reclaimed cannot overwrite the new owner's row:
+// activate matches on the claim token, so it returns false and leaves the row.
+Deno.test("I3 activate only succeeds for the owning claim token", async () => {
+  const trials = new FakeTrials();
+  const tokenA = await trials.claim("fp"); // request A wins the claim
+  // Meanwhile A stalls; the row is reclaimed and activated by request B:
+  trials.rows.set("fp", {
+    status: "active",
+    keygen_license_id: "lic-B",
+    keygen_license_key: "key-B",
+    created_at: isoAt(T0),
+    claim_id: "token-B",
+  });
+
+  const wonA = await trials.activate("fp", tokenA ?? "", "lic-A", "key-A");
+  assertEquals(wonA, false);
+  assertEquals(trials.rows.get("fp")?.keygen_license_id, "lic-B"); // A did not overwrite B
+});
+
+// I9: a bad LS signature is 401 with no Keygen call and no row write.
+Deno.test("I9 a bad signature is 401 with no side effects", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases),
+    orderBody(),
+    "bad",
+  );
+  assertEquals(result.status, 401);
+  assertEquals(keygen.upgrades.length, 0);
+  assertEquals(purchases.records.length, 0);
+});
+
+// I8 (function side): order_created + valid variant upgrades the right license.
+Deno.test("I8 a valid order upgrades the right license and records it", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases),
+    orderBody(),
+    "good",
+  );
+  assertEquals(result.status, 200);
+  assertEquals(keygen.upgrades, ["lic-1"]);
+  assertEquals(purchases.records.length, 1);
+  assertEquals(purchases.records[0].licenseID, "lic-1");
+});
+
+// I15(a): a replayed order is a no-op — one upgrade only.
+Deno.test("I15a a replayed order upgrades once", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+  const deps = webhookDeps(keygen, purchases);
+
+  await handleWebhook(deps, orderBody(), "good");
+  const replay = await handleWebhook(deps, orderBody(), "good");
+  assertEquals(replay.status, 200);
+  assertEquals(keygen.upgrades.length, 1);
+  assertEquals(purchases.records.length, 1);
+});
+
+// I15(b): a wrong variant never upgrades and never records.
+Deno.test("I15b a wrong variant is ignored", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases),
+    orderBody({ variantID: "some-other-product" }),
+    "good",
+  );
+  assertEquals(result.status, 200);
+  assertEquals(keygen.upgrades.length, 0);
+  assertEquals(purchases.records.length, 0);
+});
+
+// I15(c): a transient Keygen failure is 500 with no row, so LS retries.
+Deno.test("I15c a transient Keygen failure stays retryable", async () => {
+  const keygen = new FakeKeygen();
+  keygen.upgradeError = new Error("keygen 503");
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases),
+    orderBody(),
+    "good",
+  );
+  assertEquals(result.status, 500);
+  assertEquals(purchases.records.length, 0);
+});
+
+// A forged/unknown license id is 200 (do not retry-storm), with no row.
+Deno.test("a forged license id returns 200 with no row", async () => {
+  const keygen = new FakeKeygen();
+  keygen.upgradeError = new KeygenLicenseNotFoundError("unknown");
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases),
+    orderBody(),
+    "good",
+  );
+  assertEquals(result.status, 200);
+  assertEquals(purchases.records.length, 0);
+});
+
+// An FK violation at record time (a forged id that passed the PUT) returns 200.
+Deno.test("an FK violation at record time returns 200 after the upgrade", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+  purchases.recordError = new PurchaseForgedLicenseError("forged id");
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases),
+    orderBody(),
+    "good",
+  );
+  assertEquals(result.status, 200);
+  assertEquals(keygen.upgrades.length, 1);
+});
+
+// A TRANSIENT record failure must return 500 so Lemon Squeezy retries — otherwise
+// the audit row is lost even though the upgrade already succeeded.
+Deno.test("a transient record failure returns 500 so LS retries", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+  purchases.recordError = new Error("40001 serialization_failure");
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases),
+    orderBody(),
+    "good",
+  );
+  assertEquals(result.status, 500);
+  assertEquals(keygen.upgrades.length, 1);
+});
+
+// A paid order for our variant but with no license_id is acked (no retry storm),
+// upgrades nothing, and records nothing — surfaced for manual reconciliation.
+Deno.test("a paid order missing license_id is acked without upgrading", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases),
+    orderBody({ licenseID: "" }),
+    "good",
+  );
+  assertEquals(result.status, 200);
+  assertEquals(keygen.upgrades.length, 0);
+  assertEquals(purchases.records.length, 0);
+});
+
+// A paid order whose license_id was never minted by us is refused BEFORE any
+// Keygen mutation (a tampered checkout cannot upgrade an arbitrary license).
+Deno.test("a paid order for an unminted license never calls Keygen", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases, () => Promise.resolve(false)),
+    orderBody(),
+    "good",
+  );
+  assertEquals(result.status, 200);
+  assertEquals(keygen.upgrades.length, 0);
+  assertEquals(purchases.records.length, 0);
+});
+
+// A transient failure in the license-ownership lookup must return 500 (so LS
+// retries), never silently ack a paid order as "not minted".
+Deno.test("a transient ownership-lookup failure returns 500", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases, () => Promise.reject(new Error("db down"))),
+    orderBody(),
+    "good",
+  );
+  assertEquals(result.status, 500);
+  assertEquals(keygen.upgrades.length, 0);
+});
+
+// A non-order event is ignored with a 200.
+Deno.test("a non order_created event is ignored", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+
+  const result = await handleWebhook(
+    webhookDeps(keygen, purchases),
+    orderBody({ event: "subscription_created" }),
+    "good",
+  );
+  assertEquals(result.status, 200);
+  assertEquals(keygen.upgrades.length, 0);
+});

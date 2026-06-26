@@ -1,0 +1,86 @@
+# Local, throwaway Keygen Community Edition harness for the licensing integration
+# tests. Pinned to keygen/api:v1.6.0 — the last release before ClickHouse became a
+# hard dependency (v1.7.0+), so this boots on Postgres + Redis ONLY. The image is
+# x86_64 (platform: linux/amd64): native on CI's ubuntu runners, emulated (slower)
+# on Apple Silicon. Everything is wiped by `down.sh -v`; no data survives a run.
+name: stower-keygen-harness
+
+# Shared Keygen env. v1.6.0 requires KEYGEN_DOMAIN at runtime in addition to
+# KEYGEN_HOST (undocumented — boot crashes on a nil Keygen::DOMAIN without it).
+# Values are interpolated from .env in this directory.
+x-keygen-env: &keygen-env
+  SECRET_KEY_BASE: ${SECRET_KEY_BASE}
+  ENCRYPTION_DETERMINISTIC_KEY: ${ENCRYPTION_DETERMINISTIC_KEY}
+  ENCRYPTION_PRIMARY_KEY: ${ENCRYPTION_PRIMARY_KEY}
+  ENCRYPTION_KEY_DERIVATION_SALT: ${ENCRYPTION_KEY_DERIVATION_SALT}
+  DATABASE_URL: postgres://postgres:postgres@pg:5432/keygen
+  REDIS_URL: redis://redis:6379
+  KEYGEN_HOST: localhost
+  KEYGEN_DOMAIN: localhost
+  KEYGEN_MODE: singleplayer
+  KEYGEN_EDITION: CE
+  KEYGEN_ACCOUNT_ID: ${KEYGEN_ACCOUNT_ID}
+
+services:
+  pg:
+    image: postgres:15
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: keygen
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d keygen"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Headless provisioning: creates the account + admin user AND runs migrations in
+  # one step (no separate migrate). Behind the `setup` profile so it does not start
+  # with `up`; up.sh runs it once via `compose run --rm setup`.
+  setup:
+    image: keygen/api:v1.6.0
+    platform: linux/amd64
+    profiles: ["setup"]
+    command: ["setup"]
+    environment:
+      <<: *keygen-env
+      KEYGEN_ADMIN_EMAIL: ${KEYGEN_ADMIN_EMAIL}
+      KEYGEN_ADMIN_PASSWORD: ${KEYGEN_ADMIN_PASSWORD}
+    depends_on:
+      pg:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # The API web server. Needs the explicit `web` arg — the bare image does not
+  # start it. v1.6.0 force_ssl-301s plain HTTP, so clients reach it only through
+  # the proxy below, never directly.
+  api:
+    image: keygen/api:v1.6.0
+    platform: linux/amd64
+    command: ["web"]
+    environment: *keygen-env
+    depends_on:
+      pg:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # force_ssl is hardcoded true in v1.6.0, so every plain-HTTP call 301s. This
+  # header-injecting reverse proxy makes Keygen believe it is behind TLS, so the
+  # bootstrap script and integration tests talk plain HTTP on :8080 unmodified.
+  proxy:
+    image: caddy:2
+    depends_on:
+      - api
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro

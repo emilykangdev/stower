@@ -27,3 +27,8 @@ Models/
 *.sqlite-shm
 # Python bytecode cache from the conversion script.
 __pycache__/
+
+# Local Keygen CE test harness: the only secret-bearing file. up.sh mints a fresh
+# admin token into it each run, so it must never be committed (the rest of
+# Scripts/Keygen/ is committed throwaway config).
+Scripts/Keygen/.runtime.env

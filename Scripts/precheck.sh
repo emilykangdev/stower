@@ -78,6 +78,23 @@ else
     swift test ${SKIP_ARGS[@]+"${SKIP_ARGS[@]}"}
 fi
 
+# Step 4c — Deno unit tests for the licensing code (hermetic: fake fetch, no
+# network/disk/env). Two homes: the license Edge Function (mint/webhook
+# idempotency, signature, replay) in supabase/functions/license/index.test.ts, and
+# the Keygen bootstrap script (exact-attribute drift checks) in
+# Scripts/Keygen/bootstrap-keygen.test.ts. The real-CE integration tier
+# (Scripts/Keygen/integration) needs the Docker harness and runs only in CI.
+# FAILS if Deno is absent (not a skip): these guard the payment/license path, so
+# "Deno missing" must break the gate loudly, never silently drop coverage.
+if ! command -v deno >/dev/null 2>&1; then
+    echo "ERROR: deno not installed — the license Edge Function tests cannot run" >&2
+    echo "       and the payment/license invariants would ship unverified. Install:" >&2
+    echo "       https://docs.deno.com/runtime/getting_started/installation/ (or: brew install deno)" >&2
+    exit 1
+fi
+( cd supabase/functions/license && deno test )
+( cd Scripts/Keygen && deno test )
+
 # Step 5 — module boundary checks.
 # Match only real Swift import declarations (anchored to line start, optional
 # @testable), and only in *.swift files — so a README, comment, or string that
@@ -151,5 +168,15 @@ fi
 # 6f — The Xcode app entry imports ONLY SwiftUI + StowerMacUI — never the engine/db.
 if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+(GRDB|FoundationModels|Photos|PhotoKit|StowerMessages|StowerCore)([[:space:]]|$)' StowerMac/StowerMac 2>/dev/null; then
     echo "ERROR: the StowerMac app entry must import only SwiftUI + StowerMacUI, never the engine/db" >&2
+    exit 1
+fi
+
+# 6g — No logging in StowerMacUI. The license key and the activate response (which
+#      carries customer PII) flow through this module; a stray print/Logger/os_log/
+#      NSLog would leak them. Locks the key-never-logged invariant (authored via
+#      /harden-guardrail). Anchored to real call sites so words like "footprint" or
+#      "Logger" in a comment can't trip it; green today.
+if grep -RInE --include="*.swift" '(^|[^A-Za-z0-9_])(print|NSLog|os_log)[[:space:]]*\(|(^|[^A-Za-z0-9_])Logger[[:space:]]*\(' Sources/StowerMacUI 2>/dev/null; then
+    echo "ERROR: no logging in Sources/StowerMacUI — the license key / activate-response PII must never reach logs (remove the print/Logger/os_log/NSLog call)" >&2
     exit 1
 fi
