@@ -143,6 +143,14 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
         guard !mutedKeys.isEmpty else { return [] }
         // Built once (not per key): `.live()` enumerates the whole address book.
         let contacts = makeContactsResolver()
+        // `isActivelyDismissed` cross-references the raw `dismissed_message` set, per the
+        // plan's settled Dismiss×mute design (the pill warns "still hidden by a dismissal"
+        // before unmute). KNOWN benign limitation: if a strictly-newer message arrived but
+        // no board load has retired the stale dismissal yet, the pill may over-show — the
+        // harmless direction (unmuting then reveals the person; the pill never FAILS to
+        // warn for a genuinely-active dismissal, which is the surprise it guards against).
+        // Making it exact would require loading per-conversation timestamps here, which
+        // this bounded current-state query deliberately avoids.
         return mutedKeys.map { key in
             StowerMutedSender(
                 key: key,

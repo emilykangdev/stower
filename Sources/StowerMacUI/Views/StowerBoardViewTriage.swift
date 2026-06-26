@@ -9,7 +9,10 @@ import SwiftUI
 /// and the shared chrome.
 extension StowerBoardView {
     @ToolbarContentBuilder internal var toolbarContent: some ToolbarContent {
-        if model.mutedCount > 0 {
+        // Keep the control mounted while the popover is open, so unmuting the LAST
+        // sender (mutedCount → 0) doesn't yank the popover's anchor out from under it —
+        // it stays open showing the empty state until the user clicks away (C1).
+        if model.mutedCount > 0 || model.isShowingMutedSenders {
             ToolbarItem(placement: .primaryAction) { mutedSendersButton }
         }
         if model.selectedTab != .drafts {
