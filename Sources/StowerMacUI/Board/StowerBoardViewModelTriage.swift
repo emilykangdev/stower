@@ -263,7 +263,12 @@ extension StowerBoardViewModel {
     }
 
     /// Refreshes the popover list (the toolbar control calls this as it opens).
+    ///
+    /// Flips the loading flag SYNCHRONOUSLY (before enqueueing) so the popover shows the
+    /// loading row immediately — the enqueued task may wait on an in-flight triage action
+    /// before `loadMutedSenders` runs, and that gap would otherwise flash a false empty.
     internal func reloadMutedSendersList() {
+        isLoadingMutedSenders = true
         enqueueTriage { await self.loadMutedSenders() }
     }
 

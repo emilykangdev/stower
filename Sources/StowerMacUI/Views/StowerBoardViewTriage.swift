@@ -25,25 +25,33 @@ extension StowerBoardView {
         ToolbarItem(placement: .primaryAction) { refreshButton }
     }
 
-    /// The clean at-rest row: a tap opens the composer, a trailing hover control or the
-    /// context menu dismisses, and the context menu also mutes.
+    /// The clean at-rest row: a real Button opens the composer (so keyboard/VoiceOver
+    /// activation works), a trailing hover control or the context menu dismisses, and
+    /// the context menu also mutes.
+    ///
+    /// The hover control is a sibling `.overlay` (NOT nested in the label): it layers on
+    /// top, so its own button takes the trailing-region taps while the row Button takes
+    /// the rest — no nested-button conflict. The context menu is the keyboard/VoiceOver
+    /// path for Dismiss/Mute (the hover control is a mouse convenience).
     internal func dismissableRow(_ row: StowerBoardRow) -> some View {
-        StowerNoReplyRowView(row: row, draftPreview: model.drafts[row.draftKey]?.body)
-            .contentShape(Rectangle())
-            .overlay(alignment: .trailing) { hoverDismissControl(row) }
-            .onTapGesture { model.openComposer(for: row) }
-            .accessibilityAddTraits(.isButton)
-            .onHover { hovering in
-                if hovering {
-                    hoveredRowID = row.id
-                } else if hoveredRowID == row.id {
-                    hoveredRowID = nil
-                }
+        Button {
+            model.openComposer(for: row)
+        } label: {
+            StowerNoReplyRowView(row: row, draftPreview: model.drafts[row.draftKey]?.body)
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .trailing) { hoverDismissControl(row) }
+        .onHover { hovering in
+            if hovering {
+                hoveredRowID = row.id
+            } else if hoveredRowID == row.id {
+                hoveredRowID = nil
             }
-            .contextMenu {
-                Button("Dismiss") { model.dismiss([row]) }
-                Button("Mute Sender") { requestMute(row) }
-            }
+        }
+        .contextMenu {
+            Button("Dismiss") { model.dismiss([row]) }
+            Button("Mute Sender") { requestMute(row) }
+        }
     }
 
     /// The trailing archive control, revealed only while this row is hovered.
