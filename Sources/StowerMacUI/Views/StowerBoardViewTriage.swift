@@ -91,6 +91,7 @@ extension StowerBoardView {
     internal var mutedSendersButton: some View {
         StowerMutedSendersButton(
             senders: model.mutedSenders,
+            isLoading: model.isLoadingMutedSenders,
             isPresented: $model.isShowingMutedSenders,
             onOpen: { model.reloadMutedSendersList() },
             onUnmute: { model.unmute($0) }

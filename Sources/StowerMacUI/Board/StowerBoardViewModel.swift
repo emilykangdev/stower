@@ -174,6 +174,13 @@ internal final class StowerBoardViewModel {
     /// Shared state so BOTH the toolbar control and the zero-state "Manage…" link can
     /// open it.
     internal var isShowingMutedSenders = false
+
+    /// Whether the popover's sender list is being (re)loaded.
+    ///
+    /// Drives a loading row so the popover never flashes "No muted senders" before the
+    /// first load resolves — the resolver enumerates the whole address book, so the
+    /// load is visibly non-instant on first open.
+    internal var isLoadingMutedSenders = false
     internal let dropper: StowerMessagesDropper
     internal let contacts: StowerContactsAccess
     internal let settings: StowerSystemSettingsOpener

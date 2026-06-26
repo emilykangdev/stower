@@ -13,6 +13,9 @@ internal struct StowerMutedSendersButton: View {
     /// The muted senders to list (name-resolved + sorted by the data source).
     internal let senders: [StowerMutedSender]
 
+    /// Whether the sender list is loading (drives a loading row, not a false empty).
+    internal let isLoading: Bool
+
     /// Whether the popover is open — shared so the zero-state "Manage…" can open it too.
     @Binding internal var isPresented: Bool
 
@@ -35,7 +38,7 @@ internal struct StowerMutedSendersButton: View {
         .help("Muted senders")
         .accessibilityLabel("Muted senders")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            StowerMutedSendersPopover(senders: senders, onUnmute: onUnmute)
+            StowerMutedSendersPopover(senders: senders, isLoading: isLoading, onUnmute: onUnmute)
         }
     }
 }
@@ -43,6 +46,7 @@ internal struct StowerMutedSendersButton: View {
 /// The popover body: a titled, scrollable list of muted senders with inline Unmute.
 private struct StowerMutedSendersPopover: View {
     let senders: [StowerMutedSender]
+    let isLoading: Bool
     let onUnmute: (StowerMutedSender) -> Void
 
     var body: some View {
@@ -53,7 +57,13 @@ private struct StowerMutedSendersPopover: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Divider()
-            if senders.isEmpty {
+            if senders.isEmpty, isLoading {
+                // Loading, not empty — don't flash "No muted senders" before the first
+                // (address-book-enumerating) load resolves.
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.vertical, Self.emptyVerticalPadding)
+            } else if senders.isEmpty {
                 Text("No muted senders.")
                     .font(.callout)
                     .foregroundStyle(.secondary)

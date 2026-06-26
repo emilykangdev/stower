@@ -257,7 +257,9 @@ extension StowerBoardViewModel {
     /// Called when the popover opens and after each unmute. Resolution lives in the
     /// data source (it owns the Contacts resolver).
     internal func loadMutedSenders() async {
+        isLoadingMutedSenders = true
         mutedSenders = await dataSource.mutedSenders()
+        isLoadingMutedSenders = false
     }
 
     /// Refreshes the popover list (the toolbar control calls this as it opens).
