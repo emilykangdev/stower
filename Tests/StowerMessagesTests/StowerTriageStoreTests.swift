@@ -54,6 +54,26 @@ internal struct StowerTriageStoreTests {
         #expect(dismissed[Self.handle]?.anchorTimestamp == Self.newer)
     }
 
+    // MARK: I1 — the anchor round-trips EXACTLY (sub-ms precision is not truncated)
+
+    @Test("a sub-millisecond anchor round-trips exactly, so it cannot self-expire (I1)")
+    internal func anchorRoundTripsExactly() async throws {
+        // A realistic chat.db timestamp has sub-millisecond precision; a `.datetime`
+        // column would truncate it and the SAME message would read as strictly newer.
+        let subMs = Date(timeIntervalSinceReferenceDate: 700_123.456_789_012)
+        let store = try StowerTriageStore.inMemory()
+        try await store.dismiss(
+            handleKey: Self.handle,
+            messageGUID: "g1",
+            anchorTimestamp: subMs,
+            dismissedAt: subMs
+        )
+        let read = try await store.dismissedMessages()[Self.handle]?.anchorTimestamp
+        #expect(read == subMs)
+        // The exact value is not strictly newer than itself → would stay hidden.
+        #expect((read.map { subMs <= $0 }) == true)
+    }
+
     // MARK: I2 — retiring a dismissal MOVES it (state loses a row, history gains one)
 
     @Test("retiring a dismissal moves it into history atomically (I2)")

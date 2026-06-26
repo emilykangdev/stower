@@ -64,17 +64,26 @@ internal struct StowerMessagesComposition {
         let triage = StowerLiveTriageStore(store: try StowerTriageStore.open(at: triageURL))
         triageStore = triage
         board = StowerLiveBoardDataSource(engine: provider, triage: triage)
-        // The interaction-event store is precious append-only. Recording is a
-        // non-blocking side log, so a failure to open it must NOT block the board —
-        // but a missing Application Support directory is the same disk-level fault the
-        // other stores surface, so it throws here too rather than silently no-op.
-        guard let interactionURL = StowerInteractionEventStore.defaultURL else {
-            throw StowerInteractionStoreUnavailable.locationUnavailable
-        }
-        interactions = StowerLiveInteractionRecorder(
-            store: try StowerInteractionEventStore.open(at: interactionURL)
-        )
+        // Interaction recording is a NON-BLOCKING side log (gotcha #8): unlike drafts
+        // and triage, a failure to open it must NEVER block the board. So it is opened
+        // best-effort — any fault (unresolvable directory or a disk-level open error)
+        // degrades to a no-op recorder, and dismiss/mute/unmute still work.
+        interactions = Self.openInteractionRecorder()
         dropper = StowerMessagesDropper()
+    }
+
+    /// Opens the interaction recorder best-effort, degrading to a no-op on any fault.
+    private static func openInteractionRecorder() -> any StowerInteractionRecording {
+        guard let url = StowerInteractionEventStore.defaultURL else {
+            return StowerNoOpInteractionRecorder()
+        }
+        do {
+            return StowerLiveInteractionRecorder(
+                store: try StowerInteractionEventStore.open(at: url)
+            )
+        } catch {
+            return StowerNoOpInteractionRecorder()
+        }
     }
 }
 
@@ -87,13 +96,6 @@ internal enum StowerDraftStoreUnavailable: Error, Equatable {
 
 /// The triage store could not even be located (Application Support unresolvable).
 internal enum StowerTriageStoreUnavailable: Error, Equatable {
-    /// Application Support could not be resolved or created.
-    case locationUnavailable
-}
-
-/// The interaction-event store could not even be located (Application Support
-/// unresolvable).
-internal enum StowerInteractionStoreUnavailable: Error, Equatable {
     /// Application Support could not be resolved or created.
     case locationUnavailable
 }

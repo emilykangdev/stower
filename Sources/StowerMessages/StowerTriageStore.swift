@@ -145,9 +145,10 @@ public actor StowerTriageStore {
             var dismissals: [String: StowerDismissedMessageRecord] = [:]
             for row in rows {
                 let key: String = row["handleKey"]
+                let anchorSeconds: Double = row["anchorTimestamp"]
                 dismissals[key] = StowerDismissedMessageRecord(
                     messageGUID: row["messageGUID"],
-                    anchorTimestamp: row["anchorTimestamp"]
+                    anchorTimestamp: Date(timeIntervalSinceReferenceDate: anchorSeconds)
                 )
             }
             return dismissals
@@ -190,7 +191,10 @@ public actor StowerTriageStore {
                       anchorTimestamp = excluded.anchorTimestamp,
                       dismissedAt = excluded.dismissedAt
                     """,
-                arguments: [handleKey, messageGUID, anchorTimestamp, dismissedAt]
+                arguments: [
+                    handleKey, messageGUID, anchorTimestamp.timeIntervalSinceReferenceDate,
+                    dismissedAt
+                ]
             )
         }
     }
@@ -231,14 +235,19 @@ public actor StowerTriageStore {
                     FROM dismissed_message
                     WHERE handleKey = ? AND messageGUID = ? AND anchorTimestamp = ?
                     """,
-                arguments: [retiredAt, handleKey, messageGUID, anchorTimestamp]
+                arguments: [
+                    retiredAt, handleKey, messageGUID,
+                    anchorTimestamp.timeIntervalSinceReferenceDate
+                ]
             )
             try database.execute(
                 sql: """
                     DELETE FROM dismissed_message
                     WHERE handleKey = ? AND messageGUID = ? AND anchorTimestamp = ?
                     """,
-                arguments: [handleKey, messageGUID, anchorTimestamp]
+                arguments: [
+                    handleKey, messageGUID, anchorTimestamp.timeIntervalSinceReferenceDate
+                ]
             )
         }
     }

@@ -25,7 +25,13 @@ extension StowerTriageStore {
             try database.create(table: "dismissed_message") { table in
                 table.column("handleKey", .text).primaryKey()
                 table.column("messageGUID", .text).notNull()
-                table.column("anchorTimestamp", .datetime).notNull()
+                // REAL seconds (timeIntervalSinceReferenceDate), NOT a `.datetime`:
+                // GRDB serializes Date to millisecond-precision text, but the live
+                // engine timestamp keeps sub-millisecond precision, so a truncated
+                // anchor would read as strictly-older than the SAME message on the
+                // next load and spuriously self-expire the dismissal. A Double
+                // round-trips exactly through SQLite REAL.
+                table.column("anchorTimestamp", .double).notNull()
                 table.column("dismissedAt", .datetime).notNull()
             }
             try database.create(table: "muted_contact") { table in
@@ -36,7 +42,9 @@ extension StowerTriageStore {
                 table.autoIncrementedPrimaryKey("id")
                 table.column("handleKey", .text).notNull()
                 table.column("messageGUID", .text).notNull()
-                table.column("anchorTimestamp", .datetime).notNull()
+                // REAL seconds, matching `dismissed_message` — the retire MOVE copies
+                // the column verbatim, so the archived anchor stays exact too.
+                table.column("anchorTimestamp", .double).notNull()
                 table.column("dismissedAt", .datetime).notNull()
                 table.column("retiredAt", .datetime).notNull()
             }
