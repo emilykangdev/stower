@@ -42,6 +42,13 @@ const KEYGEN_BASE_URL = "https://api.keygen.sh";
 const TRIAL_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30-day trial
 const RECLAIM_WINDOW_MS = 60 * 1000; // abandoned 'pending' claim age
 const JSON_API_CONTENT_TYPE = "application/vnd.api+json";
+// Keygen paginates the license-entitlements list (default 10, newest-first); 100
+// is the API max. Stower accrues at most a handful of effective codes per license
+// (STOWER_TRIAL + one per purchased major), so a single max-size page reads them
+// all — no cursor loop needed. Without it, an older code (e.g. STOWER_V0) could
+// fall off page 1 once paid majors add up and the entitlement OR would falsely
+// read `wrong_version`, blocking a paying customer.
+const KEYGEN_ENTITLEMENTS_PAGE_SIZE = 100;
 
 // Machine-file checkout: 7-day TTL, signed (Ed25519, unencrypted) so the app can
 // verify it offline, with the license + entitlements + policy baked INTO the
@@ -482,8 +489,13 @@ function keygenAdmin(): KeygenAdmin {
       };
     },
     async effectiveEntitlements(licenseID) {
+      const query = new URLSearchParams({
+        limit: String(KEYGEN_ENTITLEMENTS_PAGE_SIZE),
+      });
       const response = await timedFetch(
-        `${accountPath}/licenses/${encodeURIComponent(licenseID)}/entitlements`,
+        `${accountPath}/licenses/${
+          encodeURIComponent(licenseID)
+        }/entitlements?${query}`,
         { headers: adminHeaders },
       );
       if (!response.ok) {
