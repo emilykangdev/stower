@@ -41,7 +41,7 @@ import Testing
             (StowerPalette.surface, "#FBF8F3"),
             (StowerPalette.surfaceSolid, "#FBF8F3"),
             (StowerPalette.textPrimary, "#2E2A26"),
-            (StowerPalette.textSecondary, "#736B61"),
+            (StowerPalette.textSecondary, "#665E55"),
             (StowerPalette.coral, "#BE5238"),
             (StowerPalette.peach, "#E9A487"),
             (StowerPalette.tabActiveFill, "#F2D7C6"),
@@ -60,22 +60,31 @@ import Testing
         #expect(abs(Double(resolved.opacity) - 1) < Self.colorTolerance)
     }
 
-    @Test("primary text clears AA body contrast on both warm surfaces")
-    internal func primaryTextIsBodyLegible() {
-        #expect(Self.contrast(StowerPalette.textPrimary, StowerPalette.canvas) >= Self.bodyContrast)
-        #expect(
-            Self.contrast(StowerPalette.textPrimary, StowerPalette.surface) >= Self.bodyContrast
-        )
+    @Test(
+        "primary text clears AA body contrast on every fill it sits on",
+        arguments: [
+            StowerPalette.canvas,  // notices, names
+            StowerPalette.surface,  // rows, cards
+            StowerPalette.peach,  // Reply in Messages label
+            StowerPalette.tabActiveFill,  // active tab segment label
+            StowerPalette.pillFill  // preset-menu label, banner title
+        ]
+    )
+    internal func primaryTextIsBodyLegible(on fill: Color) {
+        #expect(Self.contrast(StowerPalette.textPrimary, fill) >= Self.bodyContrast)
     }
 
-    @Test("secondary text clears AA body contrast on both warm surfaces")
-    internal func secondaryTextIsBodyLegible() {
-        #expect(
-            Self.contrast(StowerPalette.textSecondary, StowerPalette.canvas) >= Self.bodyContrast
-        )
-        #expect(
-            Self.contrast(StowerPalette.textSecondary, StowerPalette.surface) >= Self.bodyContrast
-        )
+    @Test(
+        "secondary text clears AA body contrast on every warm fill it sits on",
+        arguments: [
+            StowerPalette.canvas,  // notice messages
+            StowerPalette.surface,  // row summaries/ages, inactive tab segments
+            StowerPalette.rowHover,  // row secondary text while hovered
+            StowerPalette.pillFill  // Contacts banner caption
+        ]
+    )
+    internal func secondaryTextIsBodyLegible(on fill: Color) {
+        #expect(Self.contrast(StowerPalette.textSecondary, fill) >= Self.bodyContrast)
     }
 
     @Test("coral carries legible white text (the from-me bubble) and works as an icon on cream")

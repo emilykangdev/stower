@@ -42,17 +42,18 @@ internal enum StowerPalette {
         opacity: 1
     )
 
-    /// De-emphasized text (summaries, ages, captions) — warm gray `#736B61`.
+    /// De-emphasized text (summaries, ages, captions) — warm gray `#665E55`.
     ///
     /// Darkened from the spec's `#8C857C` (the spec marks its colors "approximate,
-    /// tunable") to clear AA **body** contrast (≈4.8:1 on cream): the token carries
-    /// normal-size row/notice copy, which WCAG holds to 4.5:1, so the lighter spec value
-    /// would have failed for low-vision readers.
+    /// tunable") to clear AA **body** contrast (4.5:1) on every warm fill it lands on —
+    /// not just cream (`canvas`/`surface`) but also `rowHover` (row text on hover) and
+    /// `pillFill` (the Contacts banner caption), where the lighter spec value fell below
+    /// 4.5:1. The token carries normal-size copy, which WCAG holds to the body tier.
     internal static let textSecondary = Color(
         .sRGB,
-        red: 0.4510,
-        green: 0.4196,
-        blue: 0.3804,
+        red: 0.4000,
+        green: 0.3686,
+        blue: 0.3333,
         opacity: 1
     )
 
