@@ -42,23 +42,27 @@ internal enum StowerPalette {
         opacity: 1
     )
 
-    /// De-emphasized text (summaries, ages, captions) — warm gray `#8C857C`
-    /// (≈3.3:1 on cream: clears the AA large/UI tier, not the 4.5 body tier — kept exact
-    /// to the approved spec; see `StowerPaletteTests` for the tier rationale).
+    /// De-emphasized text (summaries, ages, captions) — warm gray `#736B61`.
+    ///
+    /// Darkened from the spec's `#8C857C` (the spec marks its colors "approximate,
+    /// tunable") to clear AA **body** contrast (≈4.8:1 on cream): the token carries
+    /// normal-size row/notice copy, which WCAG holds to 4.5:1, so the lighter spec value
+    /// would have failed for low-vision readers.
     internal static let textSecondary = Color(
         .sRGB,
-        red: 0.5490,
-        green: 0.5216,
-        blue: 0.4863,
+        red: 0.4510,
+        green: 0.4196,
+        blue: 0.3804,
         opacity: 1
     )
 
-    /// The strong accent — a muted coral `#C75D43`, used for fills and icons only (never
+    /// The strong accent — a muted coral `#BE5238`, used for fills and icons only (never
     /// body text, JC6): the avatar's deep gradient stop, the from-me bubble, the undo
     /// drain, the draft pencil glyph.
     ///
-    /// ≈3.8:1 on cream (icon tier) and ≈4.1:1 under white (legible monogram initials).
-    internal static let coral = Color(.sRGB, red: 0.7804, green: 0.3647, blue: 0.2627, opacity: 1)
+    /// Deepened so **white** text clears AA body contrast (≈4.7:1) — the from-me thread
+    /// bubble renders normal white text on it; ≈4.3:1 on cream as an icon/fill.
+    internal static let coral = Color(.sRGB, red: 0.7451, green: 0.3216, blue: 0.2196, opacity: 1)
 
     /// The soft accent — peach `#E9A487` (design `accentPeach`): the "Reply in Messages"
     /// fill (with `textPrimary` label — white fails AA on peach) and the avatar's light

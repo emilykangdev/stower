@@ -10,11 +10,11 @@ import Testing
 /// forced-light environment and compared to its source hex within `colorTolerance`),
 /// and coral-on-cream illegibility (JC6 — relative-luminance contrast per pairing).
 ///
-/// Contrast tiers follow WCAG: `bodyContrast` (4.5:1) for primary reading text,
-/// `largeOrUIContrast` (3.0:1) for de-emphasized/UI text, icons, and fills. The
-/// `textSecondary` token is held to the UI tier (it is de-emphasized caption text and
-/// the approved spec value lands at ≈3.3:1 — kept exact rather than darkened, so the
-/// palette never drifts from the design source of truth).
+/// Contrast tiers follow WCAG: `bodyContrast` (4.5:1) for reading text (primary AND the
+/// de-emphasized `textSecondary`, which carries normal-size row/notice copy), and
+/// `largeOrUIContrast` (3.0:1) for icons and fills on cream. `textSecondary` and `coral`
+/// are darkened from the spec's nominal values (the spec marks its colors "approximate,
+/// tunable") specifically so body text clears 4.5:1.
 @Suite internal struct StowerPaletteTests {
     /// Forced-light environment so a (flat, non-dynamic) token resolves deterministically
     /// regardless of the host appearance.
@@ -41,8 +41,8 @@ import Testing
             (StowerPalette.surface, "#FBF8F3"),
             (StowerPalette.surfaceSolid, "#FBF8F3"),
             (StowerPalette.textPrimary, "#2E2A26"),
-            (StowerPalette.textSecondary, "#8C857C"),
-            (StowerPalette.coral, "#C75D43"),
+            (StowerPalette.textSecondary, "#736B61"),
+            (StowerPalette.coral, "#BE5238"),
             (StowerPalette.peach, "#E9A487"),
             (StowerPalette.tabActiveFill, "#F2D7C6"),
             (StowerPalette.pillFill, "#F3D9C9"),
@@ -68,22 +68,22 @@ import Testing
         )
     }
 
-    @Test("secondary text clears the AA large/UI tier on both warm surfaces")
-    internal func secondaryTextIsUILegible() {
+    @Test("secondary text clears AA body contrast on both warm surfaces")
+    internal func secondaryTextIsBodyLegible() {
         #expect(
-            Self.contrast(StowerPalette.textSecondary, StowerPalette.canvas)
-                >= Self.largeOrUIContrast
+            Self.contrast(StowerPalette.textSecondary, StowerPalette.canvas) >= Self.bodyContrast
         )
         #expect(
-            Self.contrast(StowerPalette.textSecondary, StowerPalette.surface)
-                >= Self.largeOrUIContrast
+            Self.contrast(StowerPalette.textSecondary, StowerPalette.surface) >= Self.bodyContrast
         )
     }
 
-    @Test("coral works as an icon/fill on cream and carries legible white initials")
-    internal func coralIsLegibleAsFill() {
+    @Test("coral carries legible white text (the from-me bubble) and works as an icon on cream")
+    internal func coralIsLegibleUnderWhiteAndOnCream() {
+        // The from-me thread bubble renders normal white body text on coral → AA body.
+        #expect(Self.contrast(StowerPalette.coral, .white) >= Self.bodyContrast)
+        // Coral as an icon/fill on the cream canvas → AA large/UI.
         #expect(Self.contrast(StowerPalette.coral, StowerPalette.canvas) >= Self.largeOrUIContrast)
-        #expect(Self.contrast(StowerPalette.coral, .white) >= Self.largeOrUIContrast)
     }
 
     @Test("the peach Reply fill carries a legible dark label (white fails AA on peach)")
