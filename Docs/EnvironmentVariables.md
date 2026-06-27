@@ -74,24 +74,30 @@ A clean way to keep the two sets apart is dotenvx multi-environment files
 
 ---
 
-## 3. App-side config (not env vars — compiled placeholders, wired by Plan B)
+## 3. App-side config (not env vars — one `StowerLicenseConfig`, public values)
 
-The Mac app doesn't read OS env vars; these are compiled constants. Plan B wired
-the gate, so the app now needs exactly **three** values — and **none of them are
-secrets**. That is the vendor-split invariant (§3 of `licensing-contract.md`):
+The Mac app doesn't read OS env vars for licensing; the three values it needs live
+in one place: **`StowerLicenseConfig`** (`Sources/StowerMacUI/Startup/StowerLicenseConfig.swift`).
+All three are **public** — the vendor-split invariant (§3 of `licensing-contract.md`):
 every secret (the Keygen admin `KEYGEN_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`,
 `LS_WEBHOOK_SECRET` — all in §1 above) lives **only** in the Edge Function env and
 **never ships in the binary**. The app holds only public values.
 
-All three are **placeholders today** (gap G10) — set them at prod ops before paid
-sales; `/health` does not cover them (they're app-side). Until set, a production
-first run can't reach the function and lands on `.connectOnce`.
+`StowerLicenseConfig` resolves in three layers: the compiled default
+(`staging` in a `DEBUG` build, `production` otherwise) → a per-field
+`STOWER_*` `ProcessInfo` override when present. So a Debug build points at the test
+deployment automatically; a Release build uses `production`; and any build can be
+redirected via env vars without recompiling.
 
-| # | Thing | Symbol (placeholder) | What it is | Differs test↔prod? |
-|---|-------|----------------------|-----------|--------------------|
-| 1 | Edge Function base URL | `StowerLicenseGate.functionBaseURL` (`StowerLicenseGate.swift:122`) — `https://stower-license.supabase.co/functions/v1/license` | the public endpoint the app mints/checks-in against | yes (test vs prod Supabase ref) |
-| 2 | Keygen account **public** key (hex) | `StowerLicenseLeaseStore.keygenPublicKeyHex` (`StowerLicenseLeaseStore.swift:257`) — all-zeros | the Ed25519 **public** key that verifies a signed machine file **offline** (`load()`/`offlineAuthority`). Public — NOT the admin `KEYGEN_TOKEN` | usually same (one Keygen account) — differs only if test uses a separate account |
-| 3 | Lemon Squeezy **checkout URL** | `StowerLicenseCheckInClient.checkoutBaseURLString` (`StowerLicenseCheckInClient.swift:244`) — `https://stower.lemonsqueezy.com/checkout` | the public product/variant Buy link; the app appends `checkout[custom][license_id]=<licenseID>` | yes (test vs live product/variant) |
+| # | Value | `StowerLicenseConfig` field | What it is | Differs test↔prod? |
+|---|-------|-----------------------------|-----------|--------------------|
+| 1 | Edge Function base URL | `functionBaseURL` (override `STOWER_FUNCTION_URL`) | the public endpoint the app mints/checks-in against | yes — `staging` = the test Supabase ref; `production` = placeholder until prod ops |
+| 2 | Keygen account **public** key (hex) | `keygenPublicKeyHex` (override `STOWER_KEYGEN_PUBLIC_KEY`) | the Ed25519 **public** key that verifies a signed machine file **offline** (`load()`/`offlineAuthority`, I6). Public — NOT the admin `KEYGEN_TOKEN` | usually same (one Keygen account); `production` is all-zeros until prod ops |
+| 3 | Lemon Squeezy **checkout URL** | `checkoutBaseURL` (override `STOWER_CHECKOUT_URL`) | the public product/variant Buy link; the app appends `checkout[custom][license_id]=<licenseID>` | yes (test vs live product/variant) |
+
+`production` is the prod-ops checklist (G10): fill its three fields before paid
+sales. `/health` does not cover them (they're app-side). Until `production` is set,
+a Release first run can't reach the function and lands on `.connectOnce`.
 
 > **No store/product IDs anymore.** The old Lemon Squeezy `/activate` path
 > (`expectedStoreID`/`expectedProductID` on the deleted `StowerLemonSqueezyLicenseGate`)

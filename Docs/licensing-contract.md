@@ -256,8 +256,9 @@ internal struct StowerLicenseLease: Sendable, Equatable, Codable {
 - Stored in the macOS **Keychain** as a generic-password item (`StowerKeychainItem`,
   service `com.stower.license.lease`, account `machine-file`). See "On-device
   storage & threat model" below.
-- `keygenPublicKeyHex`: all-zeros placeholder (`:210-211`) — no production
-  verification runs yet.
+- The verify key is injected via `init(publicKeyHex:)` — the production gate passes
+  `StowerLicenseConfig.resolved.keygenPublicKeyHex` (the single app-side config home;
+  `staging` carries the real account key, `production` is all-zeros until prod ops, G10).
 - Verifies the machine-file's Ed25519 signature on every `load()` (I6); the
   signed payload is `"machine/" + enc`.
 

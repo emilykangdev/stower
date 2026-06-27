@@ -143,7 +143,8 @@ internal struct StowerLicenseCheckInClient: StowerLicenseCheckInProviding {
     /// decodes them), keeping the result a valid URL. The pair is APPENDED to any
     /// existing query so a product/variant URL's own params are preserved.
     internal static func checkoutURL(licenseID: String) -> URL? {
-        guard var components = URLComponents(string: checkoutBaseURLString) else { return nil }
+        let base = StowerLicenseConfig.resolved.checkoutBaseURL
+        guard var components = URLComponents(string: base) else { return nil }
         // Strict RFC-3986 unreserved set — NOT `.urlQueryAllowed`, which permits
         // `&`/`=`/`/`, so a license id with those could inject extra query pairs.
         let encodedID =
@@ -235,13 +236,6 @@ internal struct StowerLicenseCheckInClient: StowerLicenseCheckInProviding {
     private static let wrongVersionVerb = "wrong_version"
     private static let unknownLicenseVerb = "unknown_license"
 
-    /// The Lemon Squeezy product checkout URL — the only surviving LS literal.
-    ///
-    /// PLACEHOLDER (prod ops, G10): set this to the real product/variant checkout
-    /// URL before paid sales, alongside the Edge Function base URL and the Keygen
-    /// public key. A bare `/checkout` does not resolve to a buyable product; Buy
-    /// can only complete once this is the real URL (zero paid users until then).
-    private static let checkoutBaseURLString = "https://stower.lemonsqueezy.com/checkout"
     /// The percent-encoded `checkout[custom][license_id]=` query prefix.
     private static let customLicenseIDQueryPrefix = "checkout%5Bcustom%5D%5Blicense_id%5D="
     /// RFC-3986 unreserved characters; everything else in the license id is

@@ -107,15 +107,15 @@ internal struct StowerLicenseLeaseStore: Sendable {
     /// - Parameters:
     ///   - storage: The persistence seam; defaults to the Keychain item. Injected
     ///     so tests use an in-memory blob.
-    ///   - publicKeyHex: The Keygen account's Ed25519 public key as hex; injected
-    ///     so the signature-verification tests can sign with a known key. Defaults
-    ///     to the embedded production key.
+    ///   - publicKeyHex: The Keygen account's Ed25519 public key as hex. The
+    ///     production gate supplies `StowerLicenseConfig.resolved.keygenPublicKeyHex`;
+    ///     tests inject a known key so they can sign their own machine files.
     internal init(
         storage: StowerLeaseStorage = StowerKeychainItem(
             service: leaseKeychainService,
             account: leaseKeychainAccount
         ),
-        publicKeyHex: String = StowerLicenseLeaseStore.keygenPublicKeyHex
+        publicKeyHex: String
     ) {
         self.storage = storage
         self.publicKeyHex = publicKeyHex
@@ -247,15 +247,6 @@ internal struct StowerLicenseLeaseStore: Sendable {
     private static let leaseKeychainService = "com.stower.license.lease"
     private static let leaseKeychainAccount = "machine-file"
     private static let entitlementsType = "entitlements"
-
-    /// The Stower Keygen account's Ed25519 public key (hex), used to verify a
-    /// machine-file offline.
-    ///
-    /// Replaced with the real account key when Plan B wires the gate; the all-zero
-    /// placeholder verifies nothing, which is correct for this board-independent
-    /// slice (no production verification runs yet).
-    internal static let keygenPublicKeyHex =
-        "0000000000000000000000000000000000000000000000000000000000000000"
 }
 
 /// The signed offline-gate data decoded from the verified machine file's `enc`

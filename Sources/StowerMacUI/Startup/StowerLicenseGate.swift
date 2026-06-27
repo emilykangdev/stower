@@ -30,13 +30,15 @@ internal struct StowerLicenseGate: StowerLicenseGating {
     /// Builds the production gate wired to the Edge Function, the Keychain lease
     /// store, and the real device fingerprint.
     ///
-    /// The base URL is a prod-ops placeholder (like `keygenPublicKeyHex`, G10):
-    /// until it is the real deployment, the online calls are unreachable and a
-    /// first run lands on `.connectOnce` — production licensing turns on at prod ops.
+    /// Endpoints + the Keygen public key come from `StowerLicenseConfig.resolved`
+    /// (staging in DEBUG, production otherwise, with `STOWER_*` env overrides). In a
+    /// Release build before prod ops fills the `production` defaults (G10), the
+    /// online calls are unreachable and a first run lands on `.connectOnce`.
     internal init() {
+        let config = StowerLicenseConfig.resolved
         self.init(
-            client: StowerLicenseCheckInClient(functionBaseURL: Self.functionBaseURL),
-            leaseStore: StowerLicenseLeaseStore(),
+            client: StowerLicenseCheckInClient(functionBaseURL: config.functionBaseURL),
+            leaseStore: StowerLicenseLeaseStore(publicKeyHex: config.keygenPublicKeyHex),
             fingerprint: StowerDeviceFingerprint()
         )
     }
@@ -116,9 +118,4 @@ internal struct StowerLicenseGate: StowerLicenseGating {
             return .needsTrialOnline
         }
     }
-
-    /// The Supabase Edge Function base — a prod-ops placeholder until the real
-    /// deployment ref is wired (G10), mirroring the `keygenPublicKeyHex` posture.
-    private static let functionBaseURL =
-        "https://stower-license.supabase.co/functions/v1/license"
 }
