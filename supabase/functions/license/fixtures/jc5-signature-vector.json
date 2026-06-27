@@ -1,0 +1,11 @@
+{
+  "_comment": "JC5 per-license request-signature parity vector (Docs/licensing-contract.md v1.13). One canonical (key, method, path, timestamp, nonce, body) and the lower-case-hex HMAC-SHA256 it must produce. Both the Deno verifier (requestSignature.ts) and Plan B's Swift signer must reproduce `signature` byte-for-byte. The `key` is a throwaway test string, NOT a real license key. Message = [METHOD, path, timestamp, nonce, sha256hex(body)].join('\\n'); signature = hmacSha256hex(key, message).",
+  "key": "stower-test-license-key-DO-NOT-USE",
+  "method": "POST",
+  "path": "/check-in",
+  "timestamp": "1700000000",
+  "nonce": "fixed-test-nonce-0123456789abcdef",
+  "body": "{\"licenseID\":\"lic-test-0001\",\"fingerprint\":\"fp-test-abc\"}",
+  "bodyHash": "60f97ca89af8e67d4e9546044f1cb89c34452423385edc577e2fdbd83a629447",
+  "signature": "2ebb652663b36ba38d61a70b1adf37a890a010bfceae3d8f495eff0cbf3856b4"
+}

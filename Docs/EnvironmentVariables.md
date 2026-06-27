@@ -1,0 +1,99 @@
+# Stower — Environment Variables (Licensing)
+
+Every env var the licensing system reads, what it's for, and what changes between
+**test** and **prod**. Grounded in source: the Edge Function reads them in
+`supabase/functions/license/` (`index.ts`, `config.ts`), and `config.ts`'s
+`REQUIRED_ENV` is the canonical "can't boot without these" list — `GET /health`
+reports any that are unset (by name, never value).
+
+> **Scope.** This covers the **Edge Function** (the licensing brain), which is
+> built. The Mac-app-side config (store/product IDs, function base URL) is
+> placeholder/unwired today (Plan B) — see the last section. The local Keygen CE
+> test harness has its own separate env, documented in
+> [`Scripts/Keygen/README.md`](../Scripts/Keygen/README.md), not here.
+
+---
+
+## 1. All Edge Function env vars
+
+**Required** — `config.ts` `REQUIRED_ENV`; if any is unset, `/health` returns
+`503 {status:"degraded", missingEnv:[...]}` and the function can't operate.
+
+| Var | What it is | Read at |
+|-----|-----------|---------|
+| `SUPABASE_URL` | The Supabase project the function reads/writes state in (`device_trials`, `purchases`, `trial_extension_grants`) | `index.ts:89` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key for that project (full DB access; server-only secret) | `index.ts:89` |
+| `KEYGEN_ACCOUNT` | Keygen account (tenant) UUID — the license authority | `index.ts:288` |
+| `KEYGEN_TOKEN` | Keygen **admin** token; mints/validates/upgrades licenses, checks out signed machine files. Never ships in the app | `index.ts:289` |
+| `KEYGEN_V0_ENTITLEMENT` | The Keygen entitlement **resource id** (UUID) attached to a license on a v0 purchase. Missing → throws at boot (never ships a paid license with no major stamp) | `index.ts:292` |
+| `KEYGEN_TRIAL_POLICY` | The trial policy id new trial licenses are minted under (30-day, any-version unlock) | `index.ts:340` |
+| `KEYGEN_PAID_POLICY` | The paid policy id a license flips to on purchase (no expiry) | `index.ts:361` |
+| `LS_WEBHOOK_SECRET` | Lemon Squeezy webhook signing secret; verifies the `order_created` webhook is genuine | `index.ts:543` |
+| `LS_PAID_VARIANT_ID` | The Lemon Squeezy **variant** id that counts as "bought v0". Any other variant in a webhook is ignored | `index.ts:577` |
+
+**Optional** — GitHub releases feed the once-per-major +7-day trial extension. If
+`GITHUB_REPO` is unset, the extension is simply skipped (no error).
+
+| Var | What it is | Default if unset | Read at |
+|-----|-----------|------------------|---------|
+| `GITHUB_REPO` | `owner/name` of the repo whose releases define "current latest major" | unset → extension disabled | `index.ts:596` |
+| `GITHUB_API_BASE` | GitHub API base URL (override for testing/enterprise) | `https://api.github.com` | `index.ts:604` |
+| `GITHUB_TOKEN` | GitHub token to raise the releases-API rate limit | unset → unauthenticated requests | `index.ts:609` |
+
+**Not env vars** (hardcoded, identical everywhere): `KEYGEN_BASE_URL`
+(`https://api.keygen.sh`) and the default GitHub base, both constants in `index.ts`.
+Only override Keygen's base by editing code (e.g. to point at a local Keygen CE).
+
+---
+
+## 2. What differs between test and prod
+
+Set up a **separate Lemon Squeezy test-mode webhook** pointing at a **test/staging
+deploy** of the function (or a Supabase branch) so test orders never touch real
+licenses. Then only these values change:
+
+| Var | Test | Prod | |
+|-----|------|------|--|
+| `LS_PAID_VARIANT_ID` | The **test** product's **variant** id | The **live** product's variant id | ⚠️ variant, not product, id |
+| `LS_WEBHOOK_SECRET` | The **test-mode** webhook's signing secret | The **live-mode** webhook's secret | LS test & live secrets are separate |
+| `SUPABASE_URL` | Test/staging project (or branch) URL | Prod project URL | differs |
+| `SUPABASE_SERVICE_ROLE_KEY` | That test project's key | Prod project's key | differs |
+| `KEYGEN_ACCOUNT` | Test Keygen account *(or same account, test policies)* | Prod account | differs — keep test licenses out of prod |
+| `KEYGEN_TOKEN` | Admin token for the test account | Prod admin token | differs |
+| `KEYGEN_V0_ENTITLEMENT` | Entitlement id in the test setup | Prod entitlement id | differs (account-specific UUID) |
+| `KEYGEN_TRIAL_POLICY` | Test trial policy id | Prod trial policy id | differs |
+| `KEYGEN_PAID_POLICY` | Test paid policy id | Prod paid policy id | differs |
+| `GITHUB_REPO` | Same — or **leave unset** in test to skip the +7d extension | `owner/name` of the real repo | usually same |
+| `GITHUB_API_BASE` | Same (usually unset) | unset (uses default) | same |
+| `GITHUB_TOKEN` | Same/optional | optional | same |
+
+Rule of thumb: **everything that points at money (Lemon Squeezy) or at license
+state (Supabase + Keygen) differs; the GitHub "latest version" signal is shared.**
+A clean way to keep the two sets apart is dotenvx multi-environment files
+(`.env.test` / `.env.production`) or Supabase per-environment secrets.
+
+---
+
+## 3. App-side config (not env vars — for completeness)
+
+The Mac app doesn't read OS env vars; these are compiled/injected values, and the
+purchase side is **placeholder/unwired today** (Plan B). They still differ
+test↔prod once wired:
+
+| Thing | Where | Today | Differs test↔prod? |
+|-------|-------|-------|--------------------|
+| Lemon Squeezy `expectedStoreID` / `expectedProductID` | compiled constants in `StowerLemonSqueezyLicenseGate.swift` | **placeholder `0` / `0`** — must be set to real ids before selling | yes (test vs live store/product) |
+| Edge Function base URL | injected `functionBaseURL` on `StowerTrialMintClient` (e.g. `https://<ref>.supabase.co/functions/v1/license`) | unwired (Plan B) | yes (test vs prod Supabase ref) |
+
+---
+
+## 4. Lemon Squeezy test webhook — quick setup
+
+1. In Lemon Squeezy **test mode**, grab the test product's **variant** id and add a
+   webhook (test mode has its own signing secret).
+2. Point that webhook at a **test deploy** of the function's `…/ls-webhook` route.
+3. On that test deploy, set `LS_PAID_VARIANT_ID` + `LS_WEBHOOK_SECRET` to the test
+   values above, with test Supabase + Keygen config. Leave prod untouched.
+
+See [`Lifecycle.md`](./Lifecycle.md) for the purchase flow and
+[`licensing-contract.md`](./licensing-contract.md) for the webhook seam contract.
