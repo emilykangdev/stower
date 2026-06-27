@@ -258,7 +258,8 @@ internal struct StowerLicenseLease: Sendable, Equatable, Codable {
   storage & threat model" below.
 - The verify key is injected via `init(publicKeyHex:)` — the production gate passes
   `StowerLicenseConfig.resolved.keygenPublicKeyHex` (the single app-side config home;
-  `staging` carries the real account key, `production` is all-zeros until prod ops, G10).
+  both `staging` and `production` carry the real account key, since it is account-level
+  and they share one Keygen account; the Edge Function URL is the remaining G10 placeholder).
 - Verifies the machine-file's Ed25519 signature on every `load()` (I6); the
   signed payload is `"machine/" + enc`.
 

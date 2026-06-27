@@ -92,7 +92,7 @@ redirected via env vars without recompiling.
 | # | Value | `StowerLicenseConfig` field | What it is | Differs test↔prod? |
 |---|-------|-----------------------------|-----------|--------------------|
 | 1 | Edge Function base URL | `functionBaseURL` (override `STOWER_FUNCTION_URL`) | the public endpoint the app mints/checks-in against | yes — `staging` = the test Supabase ref; `production` = placeholder until prod ops |
-| 2 | Keygen account **public** key (hex) | `keygenPublicKeyHex` (override `STOWER_KEYGEN_PUBLIC_KEY`) | the Ed25519 **public** key that verifies a signed machine file **offline** (`load()`/`offlineAuthority`, I6). Public — NOT the admin `KEYGEN_TOKEN` | usually same (one Keygen account); `production` is all-zeros until prod ops |
+| 2 | Keygen account **public** key (hex) | `keygenPublicKeyHex` (override `STOWER_KEYGEN_PUBLIC_KEY`) | the Ed25519 **public** key that verifies a signed machine file **offline** (`load()`/`offlineAuthority`, I6). Public — NOT the admin `KEYGEN_TOKEN` | **same** — account-level keypair, so staging + production share it (one Keygen account); differs only if prod moves to its own account |
 | 3 | Lemon Squeezy **checkout URL** | `checkoutBaseURL` (override `STOWER_CHECKOUT_URL`) | the public product/variant Buy link; the app appends `checkout[custom][license_id]=<licenseID>` | yes (test vs live product/variant) |
 
 `production` is the prod-ops checklist (G10): fill its three fields before paid

@@ -22,19 +22,19 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     /// The Lemon Squeezy product checkout URL the Buy action opens.
     internal let checkoutBaseURL: String
 
-    /// Production defaults — placeholders until a prod environment is stood up
-    /// (G10): set the real prod Edge Function URL, Keygen public key, and LS
-    /// product checkout URL here at prod ops.
+    /// Production defaults — the Keygen key is already real (same account as
+    /// staging, account-level keypair); the Edge Function URL + LS checkout URL stay
+    /// placeholders until a prod environment is stood up (G10).
     internal static let production = StowerLicenseConfig(
         functionBaseURL: "https://stower-license.supabase.co/functions/v1/license",
-        keygenPublicKeyHex: placeholderKeygenPublicKeyHex,
+        keygenPublicKeyHex: accountPublicKeyHex,
         checkoutBaseURL: "https://stower.lemonsqueezy.com/checkout"
     )
 
     /// Staging defaults — the live test deployment a `DEBUG` build points at.
     internal static let staging = StowerLicenseConfig(
         functionBaseURL: "https://qxsrnsxvsgofaeblbmmv.supabase.co/functions/v1/license",
-        keygenPublicKeyHex: "dbc3a1ff8e028cdee0e2156eddf123628e8ede2efc9332516c39e7488627c433",
+        keygenPublicKeyHex: accountPublicKeyHex,
         checkoutBaseURL: "https://stower.lemonsqueezy.com/checkout"
     )
 
@@ -74,10 +74,13 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
         compiled: compiledDefault
     )
 
-    /// The all-zeros Keygen key placeholder — verifies nothing, the correct
-    /// pre-prod-ops state for `production` (G10).
-    private static let placeholderKeygenPublicKeyHex =
-        "0000000000000000000000000000000000000000000000000000000000000000"
+    /// The Stower Keygen account's Ed25519 public key (hex), used to verify signed
+    /// machine files offline (I6).
+    ///
+    /// Account-level, so staging and production (same account) share it — replace
+    /// only if production ever moves to its own account.
+    private static let accountPublicKeyHex =
+        "dbc3a1ff8e028cdee0e2156eddf123628e8ede2efc9332516c39e7488627c433"
 
     /// `ProcessInfo` override keys (dev/test/CI point a build at any deployment).
     private static let functionURLEnvKey = "STOWER_FUNCTION_URL"
