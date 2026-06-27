@@ -140,6 +140,13 @@ import Testing
         // The bracket keys are percent-encoded; the LS backend decodes them.
         #expect(string.contains("checkout%5Bcustom%5D%5Blicense_id%5D=lic-123"))
     }
+
+    @Test("checkoutURL percent-encodes a license id with reserved characters")
+    internal func checkoutURLEncodesReservedCharacters() throws {
+        let url = try #require(StowerLicenseCheckInClient.checkoutURL(licenseID: "a/b&c"))
+        // The id is percent-encoded so it can't inject extra query pairs.
+        #expect(url.absoluteString.contains("license_id%5D=a%2Fb%26c"))
+    }
 }
 
 /// Captures the request a stub transport received, across the `Sendable` boundary.

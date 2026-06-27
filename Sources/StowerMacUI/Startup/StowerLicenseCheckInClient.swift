@@ -140,14 +140,22 @@ internal struct StowerLicenseCheckInClient: StowerLicenseCheckInProviding {
     ///
     /// Pure and static — Buy is navigation, not a licensing call, so it needs no
     /// client instance. The bracket keys are percent-encoded (the LS backend
-    /// decodes them), keeping the result a valid URL.
+    /// decodes them), keeping the result a valid URL. The pair is APPENDED to any
+    /// existing query so a product/variant URL's own params are preserved.
     internal static func checkoutURL(licenseID: String) -> URL? {
         guard var components = URLComponents(string: checkoutBaseURLString) else { return nil }
+        // Strict RFC-3986 unreserved set — NOT `.urlQueryAllowed`, which permits
+        // `&`/`=`/`/`, so a license id with those could inject extra query pairs.
         let encodedID =
             licenseID.addingPercentEncoding(
-                withAllowedCharacters: .urlQueryAllowed
+                withAllowedCharacters: Self.unreservedCharacters
             ) ?? licenseID
-        components.percentEncodedQuery = customLicenseIDQueryPrefix + encodedID
+        let customPair = customLicenseIDQueryPrefix + encodedID
+        if let existing = components.percentEncodedQuery, !existing.isEmpty {
+            components.percentEncodedQuery = existing + "&" + customPair
+        } else {
+            components.percentEncodedQuery = customPair
+        }
         return components.url
     }
 
@@ -227,6 +235,13 @@ internal struct StowerLicenseCheckInClient: StowerLicenseCheckInProviding {
     private static let checkoutBaseURLString = "https://stower.lemonsqueezy.com/checkout"
     /// The percent-encoded `checkout[custom][license_id]=` query prefix.
     private static let customLicenseIDQueryPrefix = "checkout%5Bcustom%5D%5Blicense_id%5D="
+    /// RFC-3986 unreserved characters; everything else in the license id is
+    /// percent-encoded so it can't break out of the query value.
+    private static let unreservedCharacters: CharacterSet = {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return allowed
+    }()
 }
 
 /// The check-in request body: the license id + the device fingerprint hash.
