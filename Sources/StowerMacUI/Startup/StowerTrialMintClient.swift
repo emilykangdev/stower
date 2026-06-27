@@ -2,11 +2,13 @@ import Foundation
 
 /// The outcome of one Supabase `mint-trial` round-trip.
 ///
-/// There is deliberately no `{null, null}` success: a 200 that fails to decode
-/// both fields is `.unreachable`, never a half-minted license.
+/// There is deliberately no partial success: a 200 that fails to decode every
+/// required field is `.unreachable`, never a half-minted license. The signed
+/// `machineFile` is required so first run has offline authority (contract §5b).
 internal enum StowerTrialMint: Sendable, Equatable {
-    /// The server returned this device's trial license.
-    case minted(key: String, licenseID: String)
+    /// The server returned this device's trial license, with the secret key, the
+    /// resource id, and the signed machine file for offline authority.
+    case minted(licenseKey: String, licenseID: String, machineFile: String)
 
     /// A mint is in flight for this fingerprint (a winner is mid-mint, or a
     /// crashed claim is still inside the reclaim window) — retry shortly.
@@ -45,9 +47,10 @@ internal struct StowerTrialMintClient: Sendable {
 
     /// Mints (or returns the existing) trial license for `fingerprint`.
     ///
-    /// - Returns: `.minted` with the key + license id on a 200; `.retryShortly`
-    ///   on the server's transient retry status; `.unreachable` on a transport
-    ///   throw, any other status, or an undecodable 200.
+    /// - Returns: `.minted` with the secret key, license id, and signed machine
+    ///   file on a 200; `.retryShortly` on the server's transient retry status;
+    ///   `.unreachable` on a transport throw, any other status, or a 200 missing
+    ///   any required field.
     internal func mint(fingerprint: String) async -> StowerTrialMint {
         guard let request = mintRequest(fingerprint: fingerprint) else { return .unreachable }
         let data: Data
@@ -61,12 +64,13 @@ internal struct StowerTrialMintClient: Sendable {
         if status == Self.retryStatus { return .retryShortly }
         guard status == Self.okStatus,
             let body = try? JSONDecoder().decode(StowerMintResponse.self, from: data),
-            let key = body.key, let licenseID = body.licenseID,
-            !key.isEmpty, !licenseID.isEmpty
+            let licenseKey = body.licenseKey, let licenseID = body.licenseID,
+            let machineFile = body.machineFile,
+            !licenseKey.isEmpty, !licenseID.isEmpty, !machineFile.isEmpty
         else {
             return .unreachable
         }
-        return .minted(key: key, licenseID: licenseID)
+        return .minted(licenseKey: licenseKey, licenseID: licenseID, machineFile: machineFile)
     }
 
     /// Builds the JSON POST to `…/mint-trial`, or `nil` if the URL won't parse.
@@ -96,9 +100,14 @@ private struct StowerMintRequest: Encodable {
     let fingerprint: String
 }
 
-/// The mint response: the license key + resource id, each optional so a partial
-/// body decodes to `.unreachable` rather than a half-minted license.
+/// The mint response (`{minted, licenseKey, licenseID, machineID, machineFile}`).
+///
+/// The renamed `licenseKey` (was `key`), the resource id, and the signed machine
+/// file. Each is optional so a partial body decodes to `.unreachable` rather than
+/// a half-minted license. `minted`/`machineID` are on the wire but unused by the
+/// app — only the three fields the lease stores are decoded.
 private struct StowerMintResponse: Decodable {
-    let key: String?
+    let licenseKey: String?
     let licenseID: String?
+    let machineFile: String?
 }

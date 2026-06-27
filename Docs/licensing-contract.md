@@ -6,7 +6,7 @@
 > code changes. If a plan describes a seam shape that contradicts this file, the
 > plan is wrong — not this file.
 
-**Version:** 1.16 · **Last updated:** 2026-06-26 · **Canonical home:** this file.
+**Version:** 1.19 · **Last updated:** 2026-06-26 · **Canonical home:** this file.
 
 When the contract changes: edit here, bump the version, record the change in
 §Changelog. Plans reference this file by version number.
@@ -329,7 +329,7 @@ wired in `index.ts`). Request: `POST /check-in` with body
 | 200 | `wrong_version` | `licenseID, currentLatestMajor` | `.wrongVersion(licenseID:)` |
 | 200 | `expired` | `licenseID` | `.trialExpired(licenseID:)` |
 | 401 | `bad_signature` | — (non-secret diagnostic logged) | `.couldNotReach` |
-| 404 | `unknown_license` | — | `.needsTrialOnline` |
+| 404 | `unknown_license` | — | clear stale lease, then enter the shared mint flow (JC6); only a post-clear mint transport failure maps to `.needsTrialOnline` |
 | 409 | `fingerprint_mismatch` | `licenseID` | device changed (PAR-36) |
 | 503 | `retry_shortly` / `unreachable` | — | `.couldNotReach` |
 
@@ -379,9 +379,28 @@ gains nothing: the forged blob fails the signature check and `load()` returns
 **read** their own key. The Keygen **admin** secret never ships in the binary —
 it lives only in the Edge Function env.
 
-### 5b. Intended (the Edge-Function-backed Keygen redesign — not yet implemented)
+**Trial dedupe (one trial per device).** The dedupe key is the device
+fingerprint (`device_trials.fingerprint` PK = `SHA-256(IOPlatformUUID)`, §5a).
+`mintTrial` is **idempotent on the fingerprint**: a device that already has a row
+gets its *existing* license back — same `licenseID`/`licenseKey`, same
+server-side trial clock — never a fresh trial. So the JC6 `unknown_license`
+self-heal (clear the local lease + re-mint) **cannot reset the trial**: it returns
+the device's existing — possibly already `trialExpired` — license, which the next
+`/check-in` re-verdicts to the paywall. A *forged* lease never reaches re-mint at
+all (it fails the `load()` Ed25519 check, I6). The guarantee is therefore **per
+device, not per human**, and v0 deliberately accepts the residual reset vectors
+(a different Mac, a spoofed `IOPlatformUUID`, or the Keychain fingerprint fallback
+at `:266`) rather than hardening them pre-launch — closing them is **PAR-36**
+(G6), sequenced before paid sales. The specific reset procedures are kept out of
+this repo on purpose.
 
-The facade the plans describe. **None of this exists in code yet.**
+### 5b. Intended (the Edge-Function-backed Keygen redesign)
+
+The facade the plans describe. The **startup license seam + check-in client +
+gate** below are now **built by Plan B** (`StowerLicenseGating` /
+`StowerCheckInSignature` / `StowerLicenseCheckInClient` / `StowerLicenseGate`, see
+§Changelog 1.19); the **fingerprint reversal** (PAR-36) and **real Keygen public
+key** (G10) remain future.
 
 **Rewritten startup license seam** (Plan B):
 
@@ -389,27 +408,31 @@ The facade the plans describe. **None of this exists in code yet.**
 internal protocol StowerLicenseGating: Sendable {
     func hasLease() -> Bool                    // pure-local Keychain read (replaces hasStoredLicense)
     func currentStatus(now: Date) async -> StowerLicenseStatus  // NEW
-    func activate(key: String) async -> StowerLicenseActivation // drops instanceID
 }
 ```
 
 - `StowerLicenseStatus`: `.valid` | `.trialExpired(licenseID:)` | `.wrongVersion(licenseID:)` | `.couldNotReach` | `.needsTrialOnline`
   - `.wrongVersion` is the gate state for a license that is valid (paid, unexpired, good signature) but does not hold this build's required entitlement. Without it, the gate can't distinguish "trial expired, buy it" from "you have a valid license, just not for this major" — the version-unlock model (§1) is unenforceable without this branch.
-- `StowerLicenseEntryContext`: `.trialExpired(licenseID:)` | `.upgradeRequired(licenseID:)` | `.connectOnce` | `.couldNotReach` | `.activationFailed(StowerLicenseGateError)`
+- `StowerLicenseEntryContext`: `.trialExpired(licenseID:)` | `.upgradeRequired(licenseID:)` | `.connectOnce` | `.couldNotReach`
   - `.upgradeRequired` is the entry-screen context `.wrongVersion` routes to. It carries the `licenseID` so the buy screen can build the upgrade checkout URL. Distinct from `.trialExpired` (first-time purchase vs. cross-major upgrade — different copy, different checkout target).
-- `StowerCheckingLicenseReason`: `.startingTrial` | `.activating` | `.revalidating`
-- `StowerLicenseActivation`: `.activated` | `.invalid` | `.couldNotReach` (no `instanceID`)
+- `StowerCheckingLicenseReason`: `.startingTrial` | `.revalidating`
 - New conformer: an Edge-Function-backed `StowerLicenseGate` (composes the Plan-A
   local seams and talks to the Edge Function for online licensing)
 - Delete: `StowerLemonSqueezyLicenseGate`, `StowerLicenseStore`, `StowerLemonSqueezyClient`
+- Delete the manual key activation UI/seam for Plan B. The landed Edge Function
+  has no app-facing route that can turn an arbitrary pasted key into
+  `{licenseID, licenseKey, machineFile}`, and the Mac app must not call Keygen
+  directly. A future recovery route can reintroduce manual key/license repair as a
+  separate backend-backed slice.
 
 **Check-in client** (§C):
 
 - `StowerLicenseCheckInClient` (Plan B; built on the unwired `StowerTrialMintClient`
   base) is the only online licensing client used by the Mac app. It calls the
-  Edge Function for trial mint, reachable-launch `/check-in` (JC5-signed),
-  checkout URL creation, manual key activation fallback, and Re-check after
-  purchase.
+  Edge Function for trial mint, reachable-launch `/check-in` (JC5-signed), and
+  Re-check after purchase. It may also expose a pure local Lemon Squeezy checkout
+  URL builder that carries the existing `licenseID`; there is no Edge Function
+  checkout-URL route.
 - The Edge Function (server-side, already built) validates with Keygen, reads
   effective entitlements, applies the OR rule, activates machines, and checks out
   signed machine files using `include=license.entitlements,license.policy,license`.
@@ -480,6 +503,9 @@ signed file only until that file's `meta.expiry`.
 
 - Checkout targets the existing device license id carried by
   `.trialExpired(licenseID:)` / `.upgradeRequired(licenseID:)`.
+- The app opens the Lemon Squeezy product checkout URL with
+  `checkout[custom][license_id]=<licenseID>` appended. Lemon Squeezy includes that
+  value in webhook `meta.custom_data.license_id`, which `handleWebhook` reads.
 - The Lemon Squeezy webhook handled by the Edge Function is the only component
   that mutates the license to paid: policy → Paid, expiry → `null`, direct
   `STOWER_V0` entitlement attached.
@@ -613,3 +639,6 @@ vaporware. Plans must not violate these.
 | 1.13 | 2026-06-25 | **Railway superseded — the licensing brain is the existing Supabase Edge Function** (`supabase/functions/license/`, Deno); Supabase is now brain + Postgres state store, and the app's only online licensing surface is the Edge Function base URL. Swept all ~47 Railway mentions to the Edge Function (vendor split §3, model §2, sequencing, §4, §5a/§5b/§5c, invariants I4/I7/I13). As-built (§5a, landed via Plan Beta): `/mint-trial` now activates the machine + checks out the signed file and renames the wire reply `key`→`licenseKey` (returns `{minted, licenseKey, licenseID, machineID, machineFile}`); NEW `POST /check-in` (gate authority, status table in §5) + NEW `GET /health` (`{status:"ok"}`, no secrets/DB); `/ls-webhook` now attaches `STOWER_V0` via `keygenAdmin.attachV0` and records `purchased_major`/`entitlement_code`. Added the `/check-in` seam shape + status table, the JC5 per-license signature (HMAC over `{METHOD}\n{path}\n{timestamp}\n{nonce}\n{sha256hex(body)}`, header-based, 120s replay bound, committed vector `fixtures/jc5-signature-vector.json`, canonical `CHECK_IN_SIGNING_PATH` `/check-in`), JC7 (server-derived required entitlement via `entitlementForMajor`), and JC9 (entitlement *code* is a per-runtime constant, only `KEYGEN_V0_ENTITLEMENT` UUID is env) to §4. Added the "On-device storage & threat model" note: the lease lives in the macOS Keychain (`StowerKeychainItem`, service `com.stower.license.lease`, account `machine-file`) — Keychain protects the key, the Ed25519 signature protects entitlements+expiry (re-verified every `load()`, I6); a forged lease fails the signature check. New DB (`20260625_license_checkin.sql`): `device_trials` gains `keygen_machine_id/started_major/updated_at/last_check_in_at/observed_major/observed_build`; new `trial_extension_grants` (PK `(keygen_license_id, major)`); `purchases` gains `purchased_major/entitlement_code`. A2 confirmed — entitlements + license expiry live INSIDE the Ed25519-signed machine-file `enc` payload (CI integration test decodes `enc` and asserts). Added invariants I16 (JC5 signature required, header-based, replay-bounded, committed vector), I17 (check-in never returns the key), I18 (secrets never logged), I19 (entitlement code is a pinned constant). `Sources/StowerMacUI/Startup/StowerKeygenClient.swift` **deleted** (server-side now); the wired Swift gate is still `StowerLemonSqueezyLicenseGate` and `StowerTrialMintClient` is still unwired (Plan B rewires). Grounded in `index.ts`, `handlers.ts`, `requestSignature.ts`, `github.ts`, `fixtures/jc5-signature-vector.json`, `20260625_license_checkin.sql`, `StowerLicenseLeaseStore.swift`. |
 | 1.15 | 2026-06-26 | **Deleted the premature version scaffolding** (`appMajor`/`appBuild`) from the licensing backend — YAGNI, two-way door, pre-launch, zero live clients. Wire shrinks: `/mint-trial` body is now `{fingerprint}` and `/check-in` body is `{licenseID, fingerprint}` (both lose `appMajor`/`appBuild`). The check-in `required` entitlement is now the flat `STOWER_V0` constant — the server no longer derives it from any major (deleted `ENTITLEMENT_BY_MAJOR`, `entitlementForMajor`, `StowerUnknownMajorError`, and the `400 bad_request` forged-major path in `handlers.ts`). DB: `device_trials` drops `observed_major`/`observed_build` (write-only, never read; deleted from `20260625_license_checkin.sql` in place — nothing applied yet) and `TrialStore.recordObservedVersion` is gone. The JC5 parity vector (`fixtures/jc5-signature-vector.json`) was regenerated to the post-cleanup `/check-in` body via the same algorithm (`requestSignature.test.ts` parity still passes). Entitlement gate behavior is **unchanged today** (`required` is `STOWER_V0` either way). The per-major derivation (`STOWER_V${major}`, sourced from `purchased_major` for paid users — the only consumers of `required`) returns at v1; `purchased_major` is KEPT (the future entitlement source). Grounded in `handlers.ts`, `index.ts`, `index.test.ts`, `20260625_license_checkin.sql`, `fixtures/jc5-signature-vector.json`. |
 | 1.16 | 2026-06-26 | **Disambiguated "expired"** — the word was overloaded across the licensing seam (the trial-expiry verdict vs. the machine-file TTL vs. the license `expiry` attribute), which I15 already warns about. Swift symbols collapsed to one greppable token: `StowerLicenseStatus.expired(licenseID:)` **and** the wire-response enum case → `.trialExpired(licenseID:)` (both layers, matching the existing `.wrongVersion` two-layer pattern), and `StowerLicenseEntryContext.trialEnded(licenseID:)` → `.trialExpired(licenseID:)`. The JSON wire verb `expired` returned by `/check-in` is **unchanged** (Deno-owned — renaming it is a server code change, out of scope). `meta.expiry` (the 7-day offline TTL, I14) is decoded into the lease property `machineFileExpiry`; the wire key stays literal. Normative prose no longer says bare "expired"/"expiry" — always "trial expiry" or "machine-file TTL (`meta.expiry`)". Docs-only, no behavior change (I14/I15 meaning unchanged); lands **before** Plan B so Plan B is authored in the final vocabulary. Grounded in this file + `tmp/ready-plans/2026-06-26-plan-B-startup-integration-supabase.md`. |
+| 1.17 | 2026-06-26 | **Documented the trial-dedupe abuse-resistance guarantee** in §5 (cont): `mintTrial` is idempotent on the device fingerprint (`device_trials.fingerprint` PK), so the JC6 `unknown_license` self-heal returns a device's *existing* license — clearing or tampering the local lease **cannot reset the trial clock** (a forged lease fails the `load()` signature check, I6). States the guarantee is **per-device, not per-human**, and that v0 accepts the residual reset vectors (a second Mac / `IOPlatformUUID` spoof / the Keychain fingerprint fallback) with hardening deferred to **PAR-36** (G6) before paid sales — a two-way-door call (no paid users; premature to harden pre-launch). No code/behavior change — documents existing `mintTrial` + fingerprint-PK behavior; the bypass procedures are intentionally kept out of the repo (local notes only). Grounded in `handlers.ts` (`mintTrial`), `20260618120000_license_core.sql` (`device_trials` PK), `StowerDeviceFingerprint.swift`. |
+| 1.18 | 2026-06-26 | Removed the unsupported manual key activation fallback from the intended Plan B seam. The app-facing Edge Function routes are `/mint-trial`, `/check-in`, `/ls-webhook`, and `/health`; none can turn an arbitrary pasted key into a persisted signed lease, and the Mac app must not call Keygen directly. Plan B therefore deletes the old Lemon Squeezy activation UI/seam and keeps purchase recovery to Buy + explicit Re-check. Also corrected the `/check-in` status table for `unknown_license`: a stored-lease 404 clears the stale lease and re-enters the shared mint flow (JC6), rather than mapping directly to `.needsTrialOnline`. |
+| 1.19 | 2026-06-26 | **Plan B landed — the Swift gate is wired to the Edge Function.** The §5b startup seam is now as-built: `StowerLicenseGating` is `hasLease()` + `currentStatus(now:)` (the old `activate`/`persistLicense`/manual-key path is deleted); new `StowerCheckInSignature` reproduces the JC5 parity vector (`fixtures/jc5-signature-vector.json`) byte-for-byte; new `StowerLicenseCheckInClient` (built on `StowerTrialMintClient`) does mint + JC5-signed `/check-in` (mapping the §5 status table) + a pure LS checkout-URL builder carrying `checkout[custom][license_id]`; new `StowerLicenseGate` composes the check-in client + `StowerLicenseLeaseStore` + `StowerDeviceFingerprint` (mint-on-first-run, reachable check-in stores the fresh signed file, offline fallback bounded by `meta.expiry` (I14) + the signed `STOWER_TRIAL`/`STOWER_V0` OR (I5), JC6 `unknown_license` self-heal). `StowerTrialMintClient` now decodes `licenseKey`/`machineFile`; `StowerLicenseLeaseStore` gained `offlineAuthority(now:)` decoding the signed `enc` payload. `StowerStartupState` cases keep their names with new payloads (`needsLicense(StowerLicenseEntryContext)`, `checkingLicense(StowerCheckingLicenseReason)`); `StowerRootView` builds `StowerLicenseGate()`. Deleted: `StowerLemonSqueezyClient`, `StowerLemonSqueezyLicenseGate`, `StowerLicenseStore`/`StowerStoredLicense` + their tests. Remaining future: the real `keygenPublicKeyHex` + Edge Function base URL (G10/prod ops) and the PAR-36 fingerprint reversal. Grounded in the new Swift sources + `fixtures/jc5-signature-vector.json`. |

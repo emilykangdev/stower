@@ -14,11 +14,10 @@ import SwiftUI
 public struct StowerRootView: View {
     @State private var model: StowerStartupModel
     @State private var boardModel: StowerBoardViewModel
-    @State private var licenseKey = ""
     private let settings: StowerSystemSettingsOpener
 
     /// Builds the production root wired to the shared engine-backed composition and
-    /// the real Lemon Squeezy license gate.
+    /// the real Edge-Function-backed license gate.
     ///
     /// Throws only when an essential store can't be opened (a true disk-level draft
     /// store failure) — the same posture as any other essential-store startup fault.
@@ -44,7 +43,7 @@ public struct StowerRootView: View {
             undoManager: undoManager,
             dropper: composition.dropper,
             contacts: composition.contacts,
-            licenseGate: StowerLemonSqueezyLicenseGate(),
+            licenseGate: StowerLicenseGate(),
             settings: StowerSystemSettingsOpener(),
             flusher: flusher
         )
@@ -105,11 +104,11 @@ public struct StowerRootView: View {
         switch model.state {
         case .checkingModel, .checkingLicense, .checkingMessages:
             StowerCheckingView(state: model.state)
-        case .needsLicense(let error):
+        case .needsLicense(let context):
             StowerLicenseEntryView(
-                key: $licenseKey,
-                error: error,
-                onActivate: { model.submitLicense($0) }
+                context: context,
+                onBuy: { openCheckout(licenseID: $0) },
+                onRetry: { model.checkAgain() }
             )
         case .modelUnavailable(let reason):
             StowerModelUnavailableView(
@@ -126,6 +125,15 @@ public struct StowerRootView: View {
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
         }
+    }
+
+    /// Opens the Lemon Squeezy checkout bound to `licenseID`.
+    ///
+    /// The purchase webhook then upgrades this exact device license. A no-op if the
+    /// URL won't build.
+    private func openCheckout(licenseID: String) {
+        guard let url = StowerLicenseCheckInClient.checkoutURL(licenseID: licenseID) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func fdaView(path: String, stillMissing: Bool) -> some View {

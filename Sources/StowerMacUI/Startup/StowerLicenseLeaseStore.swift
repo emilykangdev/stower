@@ -145,6 +145,28 @@ internal struct StowerLicenseLeaseStore: Sendable {
         storage.delete()
     }
 
+    /// The signed offline authority for the cached lease, or `nil` when there is
+    /// no lease, its machine-file signature fails (I6), its `enc` payload won't
+    /// decode, or its TTL (`meta.expiry`) is already at/behind `now` (I14 — no
+    /// grace).
+    ///
+    /// The caller still checks `allowsThisBuild` (the entitlement OR) before
+    /// proceeding offline; this enforces the presence-and-TTL half from signed
+    /// data only — never an unsigned local flag (I5).
+    internal func offlineAuthority(now: Date) -> StowerOfflineAuthority? {
+        guard let lease = load(),
+            let payload = Self.decodePayload(lease.machineFile),
+            let expiry = Self.parseExpiry(payload.meta.expiry),
+            expiry > now
+        else {
+            return nil
+        }
+        let codes = payload.included
+            .filter { $0.type == Self.entitlementsType }
+            .compactMap { $0.attributes?.code }
+        return StowerOfflineAuthority(machineFileExpiry: expiry, entitlementCodes: codes)
+    }
+
     /// Verifies a machine-file's Ed25519 signature against the embedded public key.
     ///
     /// The signed payload is `"machine/" + enc` per Keygen's cryptography spec; a
@@ -181,6 +203,30 @@ internal struct StowerLicenseLeaseStore: Sendable {
         return certificate
     }
 
+    /// Decodes the machine file's signed `enc` payload into a TTL + entitlement view.
+    ///
+    /// Returns `nil` when any step (certificate parse, base64, JSON) fails.
+    private static func decodePayload(_ machineFile: String) -> StowerMachineFilePayload? {
+        guard let certificate = parseCertificate(machineFile),
+            let encData = Data(base64Encoded: certificate.enc),
+            let payload = try? JSONDecoder().decode(StowerMachineFilePayload.self, from: encData)
+        else {
+            return nil
+        }
+        return payload
+    }
+
+    /// Parses a Keygen `meta.expiry` ISO-8601 timestamp (with or without
+    /// fractional seconds), or `nil` when unparseable.
+    private static func parseExpiry(_ iso: String) -> Date? {
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFraction.date(from: iso) { return date }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: iso)
+    }
+
     /// Decodes an even-length hex string to bytes, or `nil` on a bad digit.
     private static func data(fromHex hex: String) -> Data? {
         guard hex.count.isMultiple(of: 2) else { return nil }
@@ -200,6 +246,7 @@ internal struct StowerLicenseLeaseStore: Sendable {
     private static let endMarker = "-----END MACHINE FILE-----"
     private static let leaseKeychainService = "com.stower.license.lease"
     private static let leaseKeychainAccount = "machine-file"
+    private static let entitlementsType = "entitlements"
 
     /// The Stower Keygen account's Ed25519 public key (hex), used to verify a
     /// machine-file offline.
@@ -211,6 +258,33 @@ internal struct StowerLicenseLeaseStore: Sendable {
         "0000000000000000000000000000000000000000000000000000000000000000"
 }
 
+/// The signed offline-gate data decoded from the verified machine file's `enc`
+/// payload: the TTL boundary (`meta.expiry`, I14) and the entitlement codes
+/// (`included[entitlements].code`, I5).
+///
+/// Both come from the Ed25519-signed payload, so the offline OR + TTL check read
+/// tamper-proof data — never an unsigned local flag.
+internal struct StowerOfflineAuthority: Sendable, Equatable {
+    /// The machine-file TTL boundary, decoded from the signed `meta.expiry`.
+    internal let machineFileExpiry: Date
+
+    /// The signed entitlement codes carried in the machine file.
+    internal let entitlementCodes: [String]
+
+    /// Whether the signed entitlements allow this build to run offline — the OR
+    /// over `STOWER_TRIAL` / `STOWER_V0` (I5).
+    ///
+    /// A signed `STOWER_V0`-only lease can still fail this on a future build whose
+    /// required code it lacks.
+    internal var allowsThisBuild: Bool {
+        entitlementCodes.contains(Self.trialEntitlementCode)
+            || entitlementCodes.contains(Self.v0EntitlementCode)
+    }
+
+    private static let trialEntitlementCode = "STOWER_TRIAL"
+    private static let v0EntitlementCode = "STOWER_V0"
+}
+
 /// The minimal decode of a Keygen machine-file certificate.
 ///
 /// Holds the encoded payload, its signature, and the algorithm; only `enc`/`sig`
@@ -219,4 +293,24 @@ private struct StowerMachineCertificate: Decodable {
     let enc: String
     let sig: String
     let alg: String
+}
+
+/// The slice of a Keygen machine-file `enc` payload the offline gate reads: the
+/// `meta.expiry` TTL boundary and the `included` entitlement codes.
+private struct StowerMachineFilePayload: Decodable {
+    struct Meta: Decodable {
+        let expiry: String
+    }
+
+    struct Included: Decodable {
+        let type: String
+        let attributes: Attributes?
+    }
+
+    struct Attributes: Decodable {
+        let code: String?
+    }
+
+    let meta: Meta
+    let included: [Included]
 }
