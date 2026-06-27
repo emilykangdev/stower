@@ -63,10 +63,16 @@ import Testing
         #expect(await checkIn(client) == .badSignature)
     }
 
-    @Test("404 maps to .unknownLicense")
+    @Test("404 with the unknown_license verdict maps to .unknownLicense")
     internal func mapsUnknownLicense() async throws {
         let client = try client(status: 404, json: #"{"status":"unknown_license"}"#)
         #expect(await checkIn(client) == .unknownLicense)
+    }
+
+    @Test("a bare route/deploy 404 is .unreachable, never destroys the lease")
+    internal func bareRoute404IsUnreachable() async throws {
+        let client = try client(status: 404, json: #"{"message":"Not Found"}"#)
+        #expect(await checkIn(client) == .unreachable)
     }
 
     @Test("409 maps to .fingerprintMismatch")

@@ -192,7 +192,10 @@ internal struct StowerLicenseCheckInClient: StowerLicenseCheckInProviding {
         case badSignatureStatus:
             return .badSignature
         case unknownLicenseStatus:
-            return .unknownLicense
+            // Only the function's own `unknown_license` verdict may clear the lease
+            // and re-mint (JC6). A bare 404 from a route/deploy miss has no such
+            // body, so it must fall back as transient — never destroy a valid lease.
+            return body?.status == unknownLicenseVerb ? .unknownLicense : .unreachable
         case fingerprintMismatchStatus:
             return .fingerprintMismatch
         default:
@@ -230,8 +233,14 @@ internal struct StowerLicenseCheckInClient: StowerLicenseCheckInProviding {
     private static let okVerb = "ok"
     private static let expiredVerb = "expired"
     private static let wrongVersionVerb = "wrong_version"
+    private static let unknownLicenseVerb = "unknown_license"
 
     /// The Lemon Squeezy product checkout URL — the only surviving LS literal.
+    ///
+    /// PLACEHOLDER (prod ops, G10): set this to the real product/variant checkout
+    /// URL before paid sales, alongside the Edge Function base URL and the Keygen
+    /// public key. A bare `/checkout` does not resolve to a buyable product; Buy
+    /// can only complete once this is the real URL (zero paid users until then).
     private static let checkoutBaseURLString = "https://stower.lemonsqueezy.com/checkout"
     /// The percent-encoded `checkout[custom][license_id]=` query prefix.
     private static let customLicenseIDQueryPrefix = "checkout%5Bcustom%5D%5Blicense_id%5D="
