@@ -21,9 +21,20 @@ internal struct StowerCounterpartAvatar: View {
                     .imageScale(.medium)
             }
         }
-        .foregroundStyle(StowerBoardTheme.monogramForeground)
+        // White glyph on a coral→peach duotone (JC4): coral on white initials is
+        // invisible, so the monogram is white and the deep coral stop anchors its
+        // legibility.
+        .foregroundStyle(.white)
         .frame(width: StowerBoardTheme.monogramSize, height: StowerBoardTheme.monogramSize)
-        .background(StowerBoardTheme.monogramBackground, in: Circle())
+        .background(Self.fill, in: Circle())
         .accessibilityHidden(true)
     }
+
+    /// The muted coral→peach gradient behind the monogram (top-leading deep coral,
+    /// bottom-trailing peach).
+    private static let fill = LinearGradient(
+        colors: [StowerPalette.coral, StowerPalette.peach],
+        startPoint: .topLeading,
+        endPoint: .bottomTrailing
+    )
 }

@@ -180,3 +180,47 @@ if grep -RInE --include="*.swift" '(^|[^A-Za-z0-9_])(print|NSLog|os_log)[[:space
     echo "ERROR: no logging in Sources/StowerMacUI — the license key / activate-response PII must never reach logs (remove the print/Logger/os_log/NSLog call)" >&2
     exit 1
 fi
+
+# Step 7 — board warm-palette + motion guards (authored via /harden-guardrail for the
+# 2026-06-26 palette+motion sprint). The board surface ships a flat warm palette
+# (StowerPalette) and reduce-motion-gated tokens (StowerMotion); these two greps stop
+# the stock-SwiftUI patterns from leaking back. Standing gate; do not weaken to go green.
+
+# 7a — No accent-blue on the board/composer/drafts surface. System blue renders through
+#      Color.accentColor AND the accent-derived styling a plain `Color.accentColor` grep
+#      can't see — `.borderedProminent`, `.foregroundStyle(.tint)`, and `.tint(…)` — so
+#      all four are banned. The ONE allowed tint is the explicit warm `.tint(StowerPalette.…)`
+#      (the warm coral multi-select highlight). Onboarding/license/FDA/error screens are
+#      out of scope and excluded.
+PALETTE_SCOPED_FILES=(
+    Sources/StowerMacUI/Views/StowerBoardView.swift
+    Sources/StowerMacUI/Views/StowerBoardViewTriage.swift
+    Sources/StowerMacUI/Views/StowerDraftComposer.swift
+    Sources/StowerMacUI/Views/StowerDraftField.swift
+    Sources/StowerMacUI/Views/StowerDraftsList.swift
+    Sources/StowerMacUI/Views/StowerNoReplyRowView.swift
+    Sources/StowerMacUI/Views/StowerCounterpartAvatar.swift
+    Sources/StowerMacUI/Views/StowerContactsAccessBanner.swift
+    Sources/StowerMacUI/Views/StowerThreadBubbleRow.swift
+    Sources/StowerMacUI/Views/StowerSegmentedPill.swift
+    Sources/StowerMacUI/Views/StowerDismissUndoBar.swift
+    Sources/StowerMacUI/Views/StowerMutedSendersButton.swift
+    Sources/StowerMacUI/Board/StowerBoardTheme.swift
+)
+if grep -RInE 'Color\.accentColor|\.accentColor|\.borderedProminent|foregroundStyle\(\.tint\)|\.tint\(' \
+    "${PALETTE_SCOPED_FILES[@]}" 2>/dev/null | grep -vE '\.tint\(StowerPalette\.'; then
+    echo "ERROR: accent-blue leak on the board surface — use StowerPalette (coral/peach) and" >&2
+    echo "       StowerProminentButtonStyle; the only allowed tint is .tint(StowerPalette.…)" >&2
+    exit 1
+fi
+
+# 7b — No raw animation literal in the board/composer views: every curve must flow through
+#      a reduce-motion-gated StowerMotion token (else an animation forgets Reduce Motion or
+#      can't be tuned in one file). StowerMotion.swift is the home for the literals; the
+#      StowerDismissUndoBar per-tick `.linear(…)` drain is NOT a curve and is not matched here.
+if grep -RInE --include="*.swift" '\.spring\(|\.easeInOut\(|\.easeOut\(|\.easeIn\(|\.snappy\(|\.smooth\(' \
+    Sources/StowerMacUI/Views Sources/StowerMacUI/Board 2>/dev/null | grep -v 'StowerMotion.swift'; then
+    echo "ERROR: raw animation literal in a board view — route it through a StowerMotion token" >&2
+    echo "       (StowerMotion.removal/composer/tabSwitch/crossFade/press), which gates Reduce Motion" >&2
+    exit 1
+fi

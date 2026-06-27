@@ -28,7 +28,8 @@ internal struct StowerNoReplyRowView: View {
             StowerCounterpartAvatar(monogram: row.monogram, hasResolvedName: row.hasResolvedName)
             VStack(alignment: .leading, spacing: StowerBoardTheme.rowTextSpacing) {
                 Text(row.counterpart)
-                    .font(.body.weight(.medium))
+                    .font(StowerType.rowName)
+                    .foregroundStyle(StowerPalette.textPrimary)
                     .lineLimit(1)
                 summary
                 if let draftPreview {
@@ -44,7 +45,7 @@ internal struct StowerNoReplyRowView: View {
     private var age: some View {
         Text("\(row.ageInDays)d")
             .font(.callout.monospacedDigit())
-            .foregroundStyle(.secondary)
+            .foregroundStyle(StowerPalette.textSecondary)
             .frame(width: StowerBoardTheme.dayColumnWidth, alignment: .trailing)
             .accessibilityLabel("\(row.ageInDays) days")
     }
@@ -53,23 +54,31 @@ internal struct StowerNoReplyRowView: View {
         if row.summary.isPlaceholder {
             Text("<\(row.summary.label)>")
                 .font(.callout.italic())
-                .foregroundStyle(.secondary)
+                .foregroundStyle(StowerPalette.textSecondary)
                 .lineLimit(1)
         } else {
             Text(row.summary.label)
                 .font(.callout)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(StowerPalette.textSecondary)
                 .lineLimit(1)
         }
     }
 
-    /// The collapsed draft preview: a leading pencil glyph + truncated draft text,
-    /// visually distinct from (and below) the last-message summary.
+    /// The collapsed draft preview: a leading coral pencil glyph + truncated draft text.
+    ///
+    /// Only the glyph carries coral (icon/fill — JC6); the text stays warm near-black so
+    /// small coral text on cream never trips WCAG-AA. The pencil + position keep it
+    /// distinct from the gray last-message summary above it.
     private func draftLine(_ preview: String) -> some View {
-        Label(preview, systemImage: "pencil")
-            .font(.callout)
-            .foregroundStyle(StowerBoardTheme.monogramForeground)
-            .lineLimit(1)
-            .accessibilityLabel("Draft: \(preview)")
+        HStack(spacing: StowerBoardTheme.rowTextSpacing) {
+            Image(systemName: "pencil")
+                .foregroundStyle(StowerPalette.coral)
+            Text(preview)
+                .foregroundStyle(StowerPalette.textPrimary)
+        }
+        .font(.callout)
+        .lineLimit(1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Draft: \(preview)")
     }
 }

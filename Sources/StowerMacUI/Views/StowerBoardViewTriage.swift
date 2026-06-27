@@ -35,11 +35,11 @@ extension StowerBoardView {
     /// path for Dismiss/Mute (the hover control is a mouse convenience).
     internal func dismissableRow(_ row: StowerBoardRow) -> some View {
         Button {
-            model.openComposer(for: row)
+            withAnimation(StowerMotion.composer(reduceMotion)) { model.openComposer(for: row) }
         } label: {
             StowerNoReplyRowView(row: row, draftPreview: model.drafts[row.draftKey]?.body)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(StowerPressableButtonStyle())
         .overlay(alignment: .trailing) { hoverDismissControl(row) }
         .onHover { hovering in
             if hovering {
@@ -80,8 +80,15 @@ extension StowerBoardView {
             ForEach(rows) { row in
                 StowerNoReplyRowView(row: row, draftPreview: model.drafts[row.draftKey]?.body)
                     .tag(row.id)
+                    .listRowBackground(StowerPalette.surface)
             }
         }
+        .scrollContentBackground(.hidden)
+        // Warm coral selection highlight in place of system blue.
+        .tint(StowerPalette.coral)
+        // Batch dismiss animates the gap-close on the same value-based pattern as the
+        // single-row list (A5: withAnimation can't catch the async dismiss).
+        .animation(StowerMotion.removal(reduceMotion), value: rows.map(\.id))
     }
 
     @ViewBuilder internal var undoBarOverlay: some View {

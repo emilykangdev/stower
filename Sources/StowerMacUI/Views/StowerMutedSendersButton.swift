@@ -81,6 +81,10 @@ private struct StowerMutedSendersPopover: View {
         }
         .padding(Self.padding)
         .frame(width: Self.width)
+        .background(StowerPalette.canvas)
+        // A popover is a separate window; the root `.preferredColorScheme(.light)` does
+        // not reliably reach it on macOS, so re-lock it here (A7).
+        .preferredColorScheme(.light)
     }
 
     private static let titleSpacing: CGFloat = 6

@@ -21,10 +21,10 @@ internal struct StowerThreadBubbleRow: View {
         label
             .padding(StowerBoardTheme.bubblePadding)
             .background(
-                line.isFromMe ? StowerBoardTheme.outboundBubble : StowerBoardTheme.inboundBubble,
+                line.isFromMe ? StowerPalette.coral : StowerPalette.incomingBubble,
                 in: RoundedRectangle(cornerRadius: StowerBoardTheme.bubbleCornerRadius)
             )
-            .foregroundStyle(line.isFromMe ? Color.white : Color.primary)
+            .foregroundStyle(line.isFromMe ? Color.white : StowerPalette.textPrimary)
     }
 
     @ViewBuilder private var label: some View {

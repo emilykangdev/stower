@@ -27,13 +27,14 @@ internal struct StowerBoardNotice<Action: View>: View {
         VStack(spacing: StowerBoardTheme.headerSpacing) {
             Image(systemName: symbol)
                 .font(.largeTitle)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(StowerPalette.coral)
                 .accessibilityHidden(true)
             Text(title)
-                .font(.title3.weight(.semibold))
+                .font(StowerType.display)
+                .foregroundStyle(StowerPalette.textPrimary)
             Text(message)
-                .font(.body)
-                .foregroundStyle(.secondary)
+                .font(StowerType.body)
+                .foregroundStyle(StowerPalette.textSecondary)
                 .multilineTextAlignment(.center)
             action()
         }

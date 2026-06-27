@@ -39,21 +39,4 @@ internal enum StowerBoardTheme {
 
     /// Spacing between the banner's icon, text, and action.
     internal static let bannerSpacing: CGFloat = 10
-
-    /// The tint behind a monogram avatar.
-    internal static let monogramBackground = Color.accentColor.opacity(0.16)
-
-    /// The tint behind the Contacts-access banner.
-    internal static let bannerBackground = Color.accentColor.opacity(0.12)
-
-    /// The foreground of a monogram's initials.
-    internal static let monogramForeground = Color.accentColor
-
-    /// The fill of an outbound (from-me) thread bubble.
-    internal static let outboundBubble = Color.accentColor
-
-    /// The fill of an inbound (counterpart) thread bubble — a gray that stays
-    /// legible against the window background in both light and dark mode (the
-    /// system control-background gray is nearly the dark window background).
-    internal static let inboundBubble = Color.gray.opacity(0.3)
 }

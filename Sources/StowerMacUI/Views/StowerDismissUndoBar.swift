@@ -66,7 +66,7 @@ internal struct StowerDismissUndoBar: View {
 
     @ViewBuilder private var background: some View {
         if reduceTransparency {
-            Capsule().fill(Color(nsColor: .windowBackgroundColor))
+            Capsule().fill(StowerPalette.surfaceSolid)
         } else {
             Capsule().fill(.ultraThinMaterial)
         }
@@ -79,7 +79,7 @@ internal struct StowerDismissUndoBar: View {
     @ViewBuilder private var drainLine: some View {
         GeometryReader { geometry in
             Capsule()
-                .fill(Color.accentColor.opacity(Self.drainOpacity))
+                .fill(StowerPalette.coral.opacity(Self.drainOpacity))
                 .frame(width: geometry.size.width * (reduceMotion ? 1 : remainingRatio))
         }
         .frame(height: Self.drainHeight)

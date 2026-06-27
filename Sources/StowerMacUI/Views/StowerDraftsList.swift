@@ -26,9 +26,11 @@ internal struct StowerDraftsList: View {
                     } label: {
                         StowerDraftCardView(card: card)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(StowerPressableButtonStyle())
+                    .listRowBackground(StowerPalette.surface)
                 }
             }
+            .scrollContentBackground(.hidden)
         }
     }
 }
@@ -46,21 +48,22 @@ private struct StowerDraftCardView: View {
             VStack(alignment: .leading, spacing: StowerBoardTheme.rowTextSpacing) {
                 HStack(spacing: StowerBoardTheme.rowTextSpacing) {
                     Text(card.row.counterpart)
-                        .font(.body.weight(.medium))
+                        .font(StowerType.rowName)
+                        .foregroundStyle(StowerPalette.textPrimary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     Text("\(card.row.ageInDays)d")
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(StowerPalette.textSecondary)
                         .accessibilityLabel("\(card.row.ageInDays) days")
                 }
                 Text(card.entry.body)
                     .font(.callout)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(StowerPalette.textPrimary)
                     .lineLimit(Self.previewLines)
                 Text("Edited \(card.entry.updatedAt.formatted(.relative(presentation: .named)))")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(StowerPalette.textSecondary)
             }
         }
         .padding(.vertical, StowerBoardTheme.rowVerticalPadding)

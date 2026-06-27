@@ -30,6 +30,10 @@ internal struct StowerBoardView: View {
     /// After the first confirmation, Mute Sender acts without a dialog.
     @AppStorage("stower.board.hasConfirmedMute") internal var hasConfirmedMute = false
 
+    /// Reduce Motion, read once here and threaded into the motion tokens (a view-model
+    /// never reads it — `+Triage` and the lists pull `reduceMotion` from this).
+    @Environment(\.accessibilityReduceMotion) internal var reduceMotion
+
     internal var body: some View {
         NavigationStack {
             content
@@ -37,7 +41,8 @@ internal struct StowerBoardView: View {
                 .overlay(alignment: .bottomTrailing) { composerOverlay }
                 .overlay(alignment: .bottom) { undoBarOverlay }
         }
-        .animation(.easeInOut(duration: Self.undoBarFade), value: model.undoBar?.id)
+        .background(StowerPalette.canvas)
+        .animation(StowerMotion.crossFade(reduceMotion), value: model.undoBar?.id)
         .confirmationDialog(
             "Mute this sender?",
             isPresented: muteConfirmationBinding,
@@ -91,18 +96,24 @@ internal struct StowerBoardView: View {
     }
 
     private var tabBar: some View {
-        Picker("Board tab", selection: $model.selectedTab) {
-            ForEach(StowerBoardTab.allCases) { tab in
-                Text(tab.title).tag(tab)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
+        StowerSegmentedPill(
+            selection: $model.selectedTab,
+            options: StowerBoardTab.allCases,
+            title: { $0.title },
+            reduceMotion: reduceMotion
+        )
+        .accessibilityLabel("Board tab")
         .padding(.horizontal)
         .padding(.vertical, StowerBoardTheme.rowVerticalPadding)
     }
 
     @ViewBuilder private var tabContent: some View {
+        currentTabContent
+            // Switching tabs cross-fades the content (the pill animates its own fill).
+            .animation(StowerMotion.tabSwitch(reduceMotion), value: model.selectedTab)
+    }
+
+    @ViewBuilder private var currentTabContent: some View {
         switch model.selectedTab {
         case .yourTurn:
             lensList(model.board?.rows(for: .neglected) ?? [], emptyMessage: Self.yourTurnEmpty)
@@ -110,7 +121,7 @@ internal struct StowerBoardView: View {
             lensList(model.board?.rows(for: .ghosted) ?? [], emptyMessage: Self.followUpEmpty)
         case .drafts:
             StowerDraftsList(cards: model.onBoardDrafts) { row in
-                model.openComposer(for: row)
+                withAnimation(StowerMotion.composer(reduceMotion)) { model.openComposer(for: row) }
             }
         }
     }
@@ -119,23 +130,36 @@ internal struct StowerBoardView: View {
         _ rows: [StowerBoardRow],
         emptyMessage: String
     ) -> some View {
-        if rows.isEmpty {
-            StowerBoardNotice(
-                symbol: "tray",
-                title: "Nothing in this list",
-                message: emptyMessage
-            ) {
-                mutedHiddenNotice
-            }
-        } else if model.isSelecting {
-            selectableList(rows)
-        } else {
-            List {
-                ForEach(rows) { row in
-                    dismissableRow(row)
+        ZStack {
+            if rows.isEmpty {
+                StowerBoardNotice(
+                    symbol: "tray",
+                    title: "Nothing in this list",
+                    message: emptyMessage
+                ) {
+                    mutedHiddenNotice
                 }
+                .transition(.opacity)
+            } else if model.isSelecting {
+                selectableList(rows)
+            } else {
+                List {
+                    ForEach(rows) { row in
+                        dismissableRow(row)
+                            .listRowBackground(
+                                hoveredRowID == row.id
+                                    ? StowerPalette.rowHover : StowerPalette.surface
+                            )
+                    }
+                }
+                .scrollContentBackground(.hidden)
+                .animation(StowerMotion.removal(reduceMotion), value: rows.map(\.id))
+                .transition(.opacity)
             }
         }
+        // The List↔Notice branch swap cross-fades, so dismissing the LAST row fades into
+        // the empty notice instead of snapping (A6).
+        .animation(StowerMotion.crossFade(reduceMotion), value: rows.isEmpty)
     }
 
     @ViewBuilder private var composerOverlay: some View {
@@ -145,7 +169,11 @@ internal struct StowerBoardView: View {
                 thread: thread,
                 draft: model.draftBinding(for: row.draftKey),
                 onReplyInMessages: { model.dropIntoMessages(row) },
-                onClose: { model.closeComposer() }
+                // Synchronous: closeComposer mutates composerChatID on this tick, so the
+                // spring plays (A3). The async reload-driven close is an accepted edge.
+                onClose: {
+                    withAnimation(StowerMotion.composer(reduceMotion)) { model.closeComposer() }
+                }
             )
             .transition(.move(edge: .trailing).combined(with: .opacity))
         }
@@ -170,20 +198,43 @@ internal struct StowerBoardView: View {
             message: "Stower couldn't prepare your board. Try again in a moment."
         ) {
             Button("Retry") { model.retry() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(StowerProminentButtonStyle())
         }
     }
 
+    /// The day-filter control: a warm peach-pill trigger opening a checked menu.
+    ///
+    /// Restyled off the stock toolbar pop-up (JC-T2) — kept as a compact `Menu` rather
+    /// than a 6-wide pill, since six day presets don't fit a pill in the toolbar. No
+    /// stock gray control survives on the board.
     internal var presetPicker: some View {
-        let binding = Binding(
-            get: { model.selectedPreset },
-            set: { model.selectPreset($0) }
-        )
-        return Picker("Unanswered for", selection: binding) {
+        Menu {
             ForEach(StowerDayPreset.allCases) { preset in
-                Text(preset.title).tag(preset)
+                Button {
+                    model.selectPreset(preset)
+                } label: {
+                    if preset == model.selectedPreset {
+                        Label(preset.title, systemImage: "checkmark")
+                    } else {
+                        Text(preset.title)
+                    }
+                }
             }
+        } label: {
+            HStack(spacing: Self.presetLabelSpacing) {
+                Text(model.selectedPreset.title)
+                    .font(.callout.weight(.medium))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2)
+            }
+            .foregroundStyle(StowerPalette.textPrimary)
+            .padding(.horizontal, Self.presetLabelHorizontalPadding)
+            .padding(.vertical, Self.presetLabelVerticalPadding)
+            .background(StowerPalette.pillFill, in: Capsule())
         }
+        .menuStyle(.borderlessButton)
+        .accessibilityLabel("Unanswered for")
+        .accessibilityValue(model.selectedPreset.title)
     }
 
     internal var refreshButton: some View {
@@ -201,5 +252,8 @@ internal struct StowerBoardView: View {
         "No conversations are waiting on your reply in this window."
     private static let followUpEmpty =
         "No conversations are waiting on their reply in this window."
-    private static let undoBarFade: Double = 0.2
+
+    private static let presetLabelSpacing: CGFloat = 4
+    private static let presetLabelHorizontalPadding: CGFloat = 12
+    private static let presetLabelVerticalPadding: CGFloat = 5
 }

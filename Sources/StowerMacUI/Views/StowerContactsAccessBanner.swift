@@ -15,25 +15,25 @@ internal struct StowerContactsAccessBanner: View {
         HStack(spacing: StowerBoardTheme.bannerSpacing) {
             Image(systemName: "person.crop.circle.badge.questionmark")
                 .font(.title3)
-                .foregroundStyle(.tint)
+                .foregroundStyle(StowerPalette.coral)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Showing phone numbers")
                     .font(.callout.weight(.medium))
+                    .foregroundStyle(StowerPalette.textPrimary)
                 Text("Allow Contacts access to see names instead.")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(StowerPalette.textSecondary)
             }
             // Combine only the copy into one label; the button stays a separate,
             // focusable element so VoiceOver users can still reach the action.
             .accessibilityElement(children: .combine)
             Spacer(minLength: 0)
             Button(actionTitle, action: action)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .buttonStyle(StowerProminentButtonStyle())
         }
         .padding(.horizontal, StowerBoardTheme.bannerHorizontalPadding)
         .padding(.vertical, StowerBoardTheme.bannerVerticalPadding)
-        .background(StowerBoardTheme.bannerBackground)
+        .background(StowerPalette.pillFill)
     }
 }

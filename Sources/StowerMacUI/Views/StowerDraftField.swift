@@ -17,7 +17,7 @@ internal struct StowerDraftField: View {
             .lineLimit(Self.minLines...Self.maxLines)
             .padding(StowerBoardTheme.bubblePadding)
             .background(
-                StowerBoardTheme.inboundBubble.opacity(Self.fieldBackgroundOpacity),
+                StowerPalette.incomingBubble.opacity(Self.fieldBackgroundOpacity),
                 in: RoundedRectangle(cornerRadius: StowerBoardTheme.bubbleCornerRadius)
             )
             .accessibilityLabel("Draft")

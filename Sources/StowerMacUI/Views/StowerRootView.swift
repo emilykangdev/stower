@@ -17,6 +17,9 @@ public struct StowerRootView: View {
     @State private var licenseKey = ""
     private let settings: StowerSystemSettingsOpener
 
+    /// Reduce Motion for the screen cross-fade token (read in the view, never a model).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     /// Builds the production root wired to the shared engine-backed composition and
     /// the real Lemon Squeezy license gate.
     ///
@@ -96,7 +99,11 @@ public struct StowerRootView: View {
     public var body: some View {
         screen
             .frame(minWidth: Self.minWidth, minHeight: Self.minHeight)
-            .animation(.easeInOut(duration: Self.crossFade), value: model.state)
+            // The whole app surface is light-locked: the warm cream+coral palette is
+            // inherently light and no dark mockups exist (JC3). Dark is a later one-file
+            // edit. Popovers/dialogs are separate windows — re-lock them at their roots.
+            .preferredColorScheme(.light)
+            .animation(StowerMotion.crossFade(reduceMotion), value: model.state)
             .task { model.start() }
             .onDisappear { model.cancel() }
     }
@@ -140,5 +147,4 @@ public struct StowerRootView: View {
 
     private static let minWidth: CGFloat = 520
     private static let minHeight: CGFloat = 360
-    private static let crossFade: Double = 0.2
 }

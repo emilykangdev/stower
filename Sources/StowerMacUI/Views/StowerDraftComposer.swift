@@ -15,12 +15,15 @@ internal struct StowerDraftComposer: View {
     internal let onReplyInMessages: () -> Void
     internal let onClose: () -> Void
 
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
     internal var body: some View {
         VStack(alignment: .leading, spacing: StowerBoardTheme.headerSpacing) {
             header
-            Divider()
+            sectionLabel("CONTEXT")
             scrollback
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            sectionLabel("Draft — private note")
             StowerDraftField(text: $draft)
             replyControls
         }
@@ -30,13 +33,35 @@ internal struct StowerDraftComposer: View {
         // gives) instead of overflowing and clipping the header/close (JC-B).
         .frame(width: Self.width)
         .frame(maxHeight: Self.maxHeight)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius))
+        .background(surface)
         .overlay(
             RoundedRectangle(cornerRadius: Self.cornerRadius)
-                .strokeBorder(.separator, lineWidth: 1)
+                .strokeBorder(StowerPalette.divider, lineWidth: 1)
         )
         .shadow(radius: Self.shadowRadius, y: Self.shadowOffset)
         .padding(Self.cornerInset)
+    }
+
+    /// The composer's warm surface: a frosted material warmed by a `surface` tint, with
+    /// an opaque `surfaceSolid` fallback when Reduce Transparency is on (the canonical
+    /// material pattern, A4).
+    @ViewBuilder private var surface: some View {
+        let shape = RoundedRectangle(cornerRadius: Self.cornerRadius)
+        if reduceTransparency {
+            shape.fill(StowerPalette.surfaceSolid)
+        } else {
+            shape.fill(.regularMaterial)
+                .overlay { shape.fill(StowerPalette.surface.opacity(Self.materialWarmth)) }
+        }
+    }
+
+    /// A small uppercase section label (variant-E composer anatomy) marking the
+    /// read-only context above the private draft note.
+    private func sectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(StowerPalette.textSecondary)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private var header: some View {
@@ -44,11 +69,13 @@ internal struct StowerDraftComposer: View {
             StowerCounterpartAvatar(monogram: row.monogram, hasResolvedName: row.hasResolvedName)
             VStack(alignment: .leading, spacing: StowerBoardTheme.rowTextSpacing) {
                 Text(row.counterpart)
-                    .font(.headline)
+                    .font(StowerType.title)
+                    .tracking(StowerType.titleTracking)
+                    .foregroundStyle(StowerPalette.textPrimary)
                     .lineLimit(1)
                 Text("\(row.ageInDays)d")
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(StowerPalette.textSecondary)
                     .accessibilityLabel("\(row.ageInDays) days")
             }
             Spacer(minLength: 0)
@@ -101,7 +128,7 @@ internal struct StowerDraftComposer: View {
                 Label("Reply in Messages", systemImage: "arrowshape.turn.up.right")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(StowerProminentButtonStyle())
             // Stays enabled even without a deep link: `StowerMessagesDropper.drop`
             // always writes the draft to the clipboard first and only skips the
             // open/paste when `deepLink` is nil, so the promised copy-only fallback
@@ -118,6 +145,10 @@ internal struct StowerDraftComposer: View {
     private static let cornerInset: CGFloat = 16
     private static let shadowRadius: CGFloat = 16
     private static let shadowOffset: CGFloat = 4
+
+    /// How strongly the `surface` tint warms the frosted material (0 = bare material,
+    /// 1 = opaque surface).
+    private static let materialWarmth = 0.55
 }
 
 /// A centered notice for the composer scrollback's empty and error states.
