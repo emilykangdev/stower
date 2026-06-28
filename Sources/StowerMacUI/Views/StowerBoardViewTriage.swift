@@ -48,6 +48,9 @@ extension StowerBoardView {
         } label: {
             Image(systemName: "gearshape")
         }
+        // Paid / no-trial has no menu items, so disable the control rather than open
+        // an empty dead-end; the anchor stays visible for when a trial is active.
+        .disabled(trial == nil)
         .help("License & settings")
         .accessibilityLabel("License and settings menu")
     }
