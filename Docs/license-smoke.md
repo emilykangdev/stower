@@ -53,7 +53,7 @@ that's the deterministic refusal, not a crash. An **unknown** arg is ignored.
 `--clear-lease-on-start`; the canonical expiry smoke wants it **OFF** on the
 relaunch so it exercises the stored-lease `/check-in` path. (Leaving it on does not
 *hide* expiry — with the same held fingerprint, mint also returns `.trialExpired`
-from the server's reused expired row, `StowerLicenseGate.swift:162-163` — but it
+from the server's reused expired row, in `StowerLicenseGate.mintFlow(now:)` — but it
 routes through mint and re-mints every launch, which is not the canonical path.)
 
 ## 3. Preflight — reaching the board
@@ -73,7 +73,7 @@ first so the smoke runs in one sitting:
 
 There is no logging in `StowerMacUI` (precheck 6g), so the **startup route UI is the
 readout**. Watch `StowerCheckingView`'s sub-label
-(`StowerCheckingView.swift:27-30`):
+(`StowerCheckingView.subLabel`):
 
 - A **clear-mint first launch** commits `.checkingLicense(.startingTrial)` →
   **"Starting your free trial…"**.
@@ -93,9 +93,9 @@ the wait, not after.
    reach the board (the trial badge shows "Free trial · ends …").
 4. **Remove `--clear-lease-on-start`** from the scheme (keep `--fingerprint dev-1`).
 5. Wait **~65 seconds**, then **⌘Q and relaunch** (same held `dev-1`, no clear).
-6. **Expect:** the `StowerLicenseEntryView` `.trialExpired` screen
-   (`StowerLicenseEntryView.swift:28`). The active-trial badge is gone — on a
-   `.trialExpired` verdict the gate clears the lease (`StowerLicenseGate.swift:76`).
+6. **Expect:** the `StowerLicenseEntryView` `.trialExpired` screen. The active-trial
+   badge is gone — on a `.trialExpired` verdict `StowerLicenseGate.currentStatus(now:)`
+   clears the lease.
 
 The on-screen `.trialExpired` state is the readout (no logging, no badge once
 expired) — this is the manual leg I-H8 the automated suite can't cover.
@@ -129,7 +129,7 @@ pointed at the staging `…/ls-webhook` route, with `LS_PAID_VARIANT_ID` +
 [`EnvironmentVariables.md`](./EnvironmentVariables.md) §4). Then:
 
 1. On an active trial, open the board toolbar **gear menu → "Buy Stower v0"**
-   (`StowerBoardViewTriage.swift:38` `licenseMenu`) — this opens the LS checkout
+   (`StowerBoardView.licenseMenu`) — this opens the LS checkout
    bound to this device's `license_id`.
 2. Complete a **test-mode** purchase.
 3. The `order_created` webhook upgrades the license (`handleWebhook` → `upgradeToPaid`

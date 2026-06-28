@@ -89,6 +89,25 @@ Deno.test("I-H2 empty / whitespace / non-numeric / ≤0 ⇒ 30-day default (neve
   }
 });
 
+Deno.test("I-H2 an overflowing TRIAL_DURATION_SECONDS ⇒ 30-day default (no Date overflow)", () => {
+  // A typo like 1e308 or a long run of digits is finite and > 0 but would push
+  // Date.now() + duration past the max valid Date, making toISOString() throw a
+  // RangeError and turning every /mint-trial into a 500. It must clamp to default.
+  const nowMs = 1_700_000_000_000; // fixed clock so the test is deterministic
+  for (const value of ["1e308", "9000000000000", "99999999999999999"]) {
+    assertEquals(
+      trialDurationMs(reader({ TRIAL_DURATION_SECONDS: value }), nowMs),
+      THIRTY_DAYS_MS,
+      `TRIAL_DURATION_SECONDS=${value} must fall back to default`,
+    );
+  }
+  // The resulting expiry must be a valid ISO-8601 string, never a throw.
+  const expiry = new Date(
+    nowMs + trialDurationMs(reader({ TRIAL_DURATION_SECONDS: "1e308" }), nowMs),
+  ).toISOString();
+  assert(expiry.endsWith("Z"), "expiry must be a valid ISO-8601 timestamp");
+});
+
 Deno.test("I-H3 TRIAL_DURATION_SECONDS is NOT required to boot", () => {
   assert(
     !(REQUIRED_ENV as readonly string[]).includes("TRIAL_DURATION_SECONDS"),

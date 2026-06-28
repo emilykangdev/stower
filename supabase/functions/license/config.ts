@@ -31,19 +31,31 @@ export function missingRequiredEnv(
 export const TRIAL_DURATION_DEFAULT_SECONDS = 30 * 24 * 60 * 60; // 2592000
 
 /**
+ * ECMAScript's maximum valid `Date` time value (±8.64e15 ms). A timestamp past
+ * this makes `new Date(ms).toISOString()` throw, so a trial duration is clamped
+ * to keep `Date.now() + duration` within range.
+ */
+const MAX_DATE_MS = 8.64e15;
+
+/**
  * The trial length in milliseconds, from the optional `TRIAL_DURATION_SECONDS`
  * env (a DEBUG/staging lever to expire trials in seconds). Unset, empty,
- * non-numeric, or `≤ 0` falls back to the 30-day default — never a 0/`NaN`
- * expiry that would mint an instantly-expired (or `Invalid Date`) trial. NOT in
- * `REQUIRED_ENV`: prod boots with it unset and gets 30 days. Pure + injected so
- * the Deno tests need no real env.
+ * non-numeric, `≤ 0`, or so large it would push the expiry past the max valid
+ * `Date` falls back to the 30-day default — never a 0/`NaN`/`Infinity` expiry
+ * that would mint an instantly-expired (or `Invalid Date`) trial, or make
+ * `createTrialLicense`'s `toISOString()` throw and turn `/mint-trial` into a 500.
+ * NOT in `REQUIRED_ENV`: prod boots with it unset and gets 30 days. Pure +
+ * injected (`get`, `nowMs`) so the Deno tests need no real env or clock.
  */
 export function trialDurationMs(
   get: (name: string) => string | undefined,
+  nowMs: number = Date.now(),
 ): number {
   const raw = get("TRIAL_DURATION_SECONDS");
   const seconds = raw ? Number(raw) : NaN;
-  const effective = Number.isFinite(seconds) && seconds > 0
+  const maxSeconds = Math.floor((MAX_DATE_MS - nowMs) / 1000);
+  const effective = Number.isFinite(seconds) && seconds > 0 &&
+      seconds <= maxSeconds
     ? seconds
     : TRIAL_DURATION_DEFAULT_SECONDS;
   return effective * 1000;

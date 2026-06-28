@@ -226,10 +226,20 @@ fi
 # 6i — The /health non-default-trial-duration canary is actually WIRED, not just
 #      the helper unit-tested: index.ts's /health handler must call
 #      trialDurationHealthFields( so a TRIAL_DURATION_SECONDS leak onto prod is loud
-#      (I-H10). Must-be-PRESENT polarity: a no-match fails. The `(` excludes the bare
-#      import (which has no paren), so only the real call site satisfies it.
-if ! grep -qE 'trialDurationHealthFields\(' supabase/functions/license/index.ts 2>/dev/null; then
-    echo "ERROR: index.ts's /health handler must call trialDurationHealthFields( — the non-default trial-duration canary is unwired (I-H10)" >&2
+#      (I-H10). Must-be-PRESENT polarity: a no-match fails. Block-scoped to the
+#      `path.endsWith("/health")` branch (awk, not grep): a plain grep would pass if
+#      the call drifted into another handler while /health was left unwired, so awk
+#      tracks `{`/`}` depth from the /health `if` and asserts the call is INSIDE it.
+if ! awk '
+        /path\.endsWith\("\/health"\)/ && /{/ { inblock=1; depth=0 }
+        inblock {
+            depth += gsub(/{/, "{") - gsub(/}/, "}")
+            if ($0 ~ /trialDurationHealthFields\(/) found=1
+            if (depth<=0) inblock=0
+        }
+        END { exit (found ? 0 : 1) }
+    ' supabase/functions/license/index.ts 2>/dev/null; then
+    echo "ERROR: index.ts's GET /health handler must call trialDurationHealthFields( inside the path.endsWith(\"/health\") branch — the non-default trial-duration canary is unwired (I-H10)" >&2
     exit 1
 fi
 
@@ -239,10 +249,14 @@ fi
 #      `swift build -c release` (different build system) nor the 6h source guard would
 #      catch it (I-H11). Block-scoped: walk each XCBuildConfiguration, remember its
 #      SWIFT_ACTIVE_COMPILATION_CONDITIONS, fail if a `name = Release;` block carries
-#      DEBUG. Dependency-free awk (no plutil/jq/python).
+#      DEBUG. Dependency-free awk (no plutil/jq/python). SWIFT_ACTIVE_COMPILATION_
+#      CONDITIONS can be a parenthesized multiline list, so the value's DEBUG may sit
+#      on a continuation line, not the assignment line — track the whole value region
+#      (from the setting until its terminating `;`) so a multiline DEBUG isn't missed.
 if ! awk '
-        /isa = XCBuildConfiguration;/         { hasDebug=0; next }
-        /SWIFT_ACTIVE_COMPILATION_CONDITIONS/ { if ($0 ~ /DEBUG/) hasDebug=1; next }
+        /isa = XCBuildConfiguration;/         { hasDebug=0; inSwiftCond=0; next }
+        inSwiftCond                           { if ($0 ~ /DEBUG/) hasDebug=1; if ($0 ~ /;/) inSwiftCond=0; next }
+        /SWIFT_ACTIVE_COMPILATION_CONDITIONS/ { if ($0 ~ /DEBUG/) hasDebug=1; if ($0 !~ /;/) inSwiftCond=1; next }
         /name = Release;/                     { if (hasDebug) { print "Release config defines DEBUG at line " NR; bad=1 } hasDebug=0; next }
         /name = Debug;/                       { hasDebug=0; next }
         END { exit (bad ? 1 : 0) }

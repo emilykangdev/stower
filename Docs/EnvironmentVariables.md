@@ -21,15 +21,15 @@ reports any that are unset (by name, never value).
 
 | Var | What it is | Read at |
 |-----|-----------|---------|
-| `SUPABASE_URL` | The Supabase project the function reads/writes state in (`device_trials`, `purchases`, `trial_extension_grants`) | `index.ts:99` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key for that project (full DB access; server-only secret) | `index.ts:99` |
-| `KEYGEN_ACCOUNT` | Keygen account (tenant) UUID — the license authority | `index.ts:287` |
-| `KEYGEN_TOKEN` | Keygen **admin** token; mints/validates/upgrades licenses, checks out signed machine files. Never ships in the app | `index.ts:288` |
-| `KEYGEN_V0_ENTITLEMENT` | The Keygen entitlement **resource id** (UUID) attached to a license on a v0 purchase. Missing → throws at boot (never ships a paid license with no major stamp) | `index.ts:291` |
-| `KEYGEN_TRIAL_POLICY` | The trial policy id new trial licenses are minted under (any-version unlock; length is `TRIAL_DURATION_SECONDS` below, default 30 days) | `index.ts:344` |
-| `KEYGEN_PAID_POLICY` | The paid policy id a license flips to on purchase (no expiry) | `index.ts:365` |
-| `LS_WEBHOOK_SECRET` | Lemon Squeezy webhook signing secret; passed (injected) into `verifyLemonSqueezySignature` (`handlers.ts`) to verify the `order_created` webhook is genuine | `index.ts:563` |
-| `LS_PAID_VARIANT_ID` | The Lemon Squeezy **variant** id that counts as "bought v0". Any other variant in a webhook is ignored | `index.ts:564` |
+| `SUPABASE_URL` | The Supabase project the function reads/writes state in (`device_trials`, `purchases`, `trial_extension_grants`) | `supabase()` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key for that project (full DB access; server-only secret) | `supabase()` |
+| `KEYGEN_ACCOUNT` | Keygen account (tenant) UUID — the license authority | `keygenAdmin()` |
+| `KEYGEN_TOKEN` | Keygen **admin** token; mints/validates/upgrades licenses, checks out signed machine files. Never ships in the app | `keygenAdmin()` |
+| `KEYGEN_V0_ENTITLEMENT` | The Keygen entitlement **resource id** (UUID) attached to a license on a v0 purchase. Missing → throws at boot (never ships a paid license with no major stamp) | `keygenAdmin()` |
+| `KEYGEN_TRIAL_POLICY` | The trial policy id new trial licenses are minted under (any-version unlock; length is `TRIAL_DURATION_SECONDS` below, default 30 days) | `keygenAdmin().createTrialLicense` |
+| `KEYGEN_PAID_POLICY` | The paid policy id a license flips to on purchase (no expiry) | `keygenAdmin().upgradeToPaid` |
+| `LS_WEBHOOK_SECRET` | Lemon Squeezy webhook signing secret; passed (injected) into `verifyLemonSqueezySignature` (`handlers.ts`) to verify the `order_created` webhook is genuine | `webhookDeps()` |
+| `LS_PAID_VARIANT_ID` | The Lemon Squeezy **variant** id that counts as "bought v0". Any other variant in a webhook is ignored | `webhookDeps()` |
 
 **Optional** — GitHub releases feed the once-per-major +7-day trial extension. If
 `GITHUB_REPO` is unset, the extension is simply skipped (no error).
@@ -39,10 +39,10 @@ it unset).
 
 | Var | What it is | Default if unset | Read at |
 |-----|-----------|------------------|---------|
-| `TRIAL_DURATION_SECONDS` | Trial length in seconds (a DEBUG/staging lever — e.g. `60` to expire trials in a minute). Empty / non-numeric / `≤0` also falls back to the default. A non-default value is echoed by `GET /health` (`trialDurationSeconds` + `warning`) so a prod leak is loud | unset → `2592000` (30 days) | `config.ts trialDurationMs`, called at `index.ts:333` (mint) + `trialDurationHealthFields` at `index.ts:674` (`/health`) |
-| `GITHUB_REPO` | `owner/name` of the repo whose releases define "current latest major" | unset → extension disabled | `index.ts:583` |
-| `GITHUB_API_BASE` | GitHub API base URL (override for testing/enterprise) | `https://api.github.com` | `index.ts:591` |
-| `GITHUB_TOKEN` | GitHub token to raise the releases-API rate limit | unset → unauthenticated requests | `index.ts:596` |
+| `TRIAL_DURATION_SECONDS` | Trial length in seconds (a DEBUG/staging lever — e.g. `60` to expire trials in a minute). Empty / non-numeric / `≤0` / overflowing the `Date` range also falls back to the default. A non-default value is echoed by `GET /health` (`trialDurationSeconds` + `warning`) so a prod leak is loud | unset → `2592000` (30 days) | `config.ts trialDurationMs`, called in `keygenAdmin().createTrialLicense` (mint) + `trialDurationHealthFields` in the `GET /health` handler |
+| `GITHUB_REPO` | `owner/name` of the repo whose releases define "current latest major" | unset → extension disabled | `githubAdapter()` |
+| `GITHUB_API_BASE` | GitHub API base URL (override for testing/enterprise) | `https://api.github.com` | `githubAdapter()` |
+| `GITHUB_TOKEN` | GitHub token to raise the releases-API rate limit | unset → unauthenticated requests | `githubAdapter()` |
 
 **Not env vars** (hardcoded, identical everywhere): `KEYGEN_BASE_URL`
 (`https://api.keygen.sh`) and the default GitHub base, both constants in `index.ts`.
@@ -93,7 +93,7 @@ every secret (the Keygen admin `KEYGEN_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`,
 `STOWER_*` `ProcessInfo` override applied **in DEBUG only**. So a Debug build points
 at the test deployment automatically and can be redirected with `STOWER_*` env vars;
 a **Release** build pins the compiled `production` config and **ignores** `STOWER_*`
-(`effectiveConfig(allowOverrides:)` passes `false` in Release — `StowerLicenseConfig.swift:77-99`), so a launch-environment variable can't swap the pinned Keygen trust anchor or endpoints.
+(`StowerLicenseConfig.effectiveConfig(allowOverrides:)` passes `false` in Release), so a launch-environment variable can't swap the pinned Keygen trust anchor or endpoints.
 
 | # | Value | `StowerLicenseConfig` field | What it is | Differs test↔prod? |
 |---|-------|-----------------------------|-----------|--------------------|
