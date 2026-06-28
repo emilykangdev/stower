@@ -2,10 +2,16 @@ name: CI
 on: [push, pull_request]
 jobs:
   build:
-    runs-on: macos-15
+    # macos-26 (NOT macos-15): StowerMac requires macOS 26 (it uses FoundationModels /
+    # on-device Apple Intelligence; the Xcode app's MACOSX_DEPLOYMENT_TARGET = 26.4), so
+    # macos-15 cannot build OR run it. macos-15's newest Xcode (26.3) ships only the
+    # macOS 26.2 SDK — below the 26.4 deployment target — so an `xcodebuild archive`
+    # fails there. macos-26 (default Xcode 26.5, SDK 26.5) builds it and matches local
+    # dev. Verified against GitHub runner-images manifests (2026-06-28).
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-      # Select the latest stable Xcode on the macos-15 runner. This pins a full
+      # Select the latest stable Xcode on the macos-26 runner. This pins a full
       # Swift 6.x toolchain with Swift Testing bundled — swift-actions/setup-swift
       # does not publish exact patch releases like 6.3.1, so we use the runner's
       # Xcode-provided toolchain instead (which is >= our local 6.3.1 in features).
@@ -20,12 +26,14 @@ jobs:
       # (swift-format, swiftlint, build, test, module-boundary, and future greps a
       # harden-guardrail pass may add) is then enforced in CI automatically, with
       # no second place to keep in sync. The ONE deliberate divergence is the
-      # FoundationModels integration suite below: it needs macOS 26 + Apple
-      # Intelligence, which macos-15 cannot provide, so it would fail-hard here
-      # forever. STOWER_SKIP_FM_INTEGRATION=1 excludes ONLY that suite in CI;
-      # every other test still runs fail-hard, and the suite runs for real on the
-      # macOS 26 dev machine where the var is unset. Drop this env once the runner
-      # image is macOS 26 with Apple Intelligence available.
+      # FoundationModels integration suite below: it exercises the REAL on-device
+      # model, which needs Apple Intelligence provisioned (models downloaded +
+      # enabled). The macos-26 runner IS macOS 26, but it's a CI VM with no Apple
+      # Intelligence provisioned, so the suite would still fail-hard here.
+      # STOWER_SKIP_FM_INTEGRATION=1 excludes ONLY that suite in CI; every other
+      # test still runs fail-hard, and the suite runs for real on the local dev
+      # machine where the var is unset. Revisit (drop this env) if/when GitHub
+      # provisions Apple Intelligence on the runner — worth a one-off test.
       - name: Run precheck gate
         env:
           STOWER_SKIP_FM_INTEGRATION: "1"
