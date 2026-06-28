@@ -79,7 +79,17 @@ internal struct StowerKeychainItem: StowerLeaseStorage {
 
     @discardableResult
     internal func write(_ data: Data) -> Bool {
-        delete()
+        // Update the existing item in place; add only when none exists. A plain
+        // delete-then-add would destroy a valid stored lease if the add then failed
+        // (a transient Keychain error), losing the offline authority. delete() stays
+        // reserved for an explicit clear().
+        let updates: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+        ]
+        let updateStatus = SecItemUpdate(baseQuery as CFDictionary, updates as CFDictionary)
+        if updateStatus == errSecSuccess { return true }
+        guard updateStatus == errSecItemNotFound else { return false }
         var attributes = baseQuery
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock

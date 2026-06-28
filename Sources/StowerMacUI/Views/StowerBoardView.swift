@@ -14,28 +14,36 @@ import SwiftUI
 /// draining-bar undo, a batch Select mode, a `Muted Senders…` toolbar popover, and a
 /// conditional zero-state line — every surface gated to stay calm at rest.
 ///
-/// When `trial` is non-nil the board shows a quiet "Free trial · ends <date>"
-/// status banner and a gear menu "Buy Stower v0" item. The banner is
-/// dismissible; the gear menu is not (it is the permanent license home). Both
-/// are absent for paid users (`trial == nil`).
+/// When `trial` is non-nil the board shows a gear menu "Buy Stower v0" item, and —
+/// while `showsTrialBanner` is true — a quiet, dismissible "Free trial · ends
+/// <date>" status banner. The banner is dismissible; the gear menu Buy is not (it
+/// is the permanent license home, so the buy path survives a banner dismissal).
+/// Both are absent for paid users (`trial == nil`).
 internal struct StowerBoardView: View {
     @Bindable internal var model: StowerBoardViewModel
 
-    /// The trial badge data, or `nil` on a paid license or after the user dismisses.
+    /// The active trial badge data, or `nil` on a paid license or no trial.
     ///
-    /// The dismissal flag is owned by the caller (`StowerRootView`) so
-    /// `StowerBoardView` stays a pure display component.
+    /// Independent of banner dismissal: it powers the permanent gear-menu Buy path,
+    /// so it stays non-nil for an active trial even after the user dismisses the
+    /// banner. Banner visibility is governed separately by `showsTrialBanner`.
     internal let trial: StowerTrialBadge?
+
+    /// Whether the dismissible top banner is shown.
+    ///
+    /// `StowerRootView` sets this false once the user dismisses the banner (and on a
+    /// relaunch where the dismissal flag is set); the gear-menu Buy is unaffected.
+    internal let showsTrialBanner: Bool
 
     /// Opens the Lemon Squeezy checkout for the given `licenseID`.
     ///
     /// The only payment path in the board. Called exclusively from the gear menu item.
     internal let onBuy: (String) -> Void
 
-    /// Persists the badge dismissal.
+    /// Persists the banner dismissal.
     ///
-    /// Called when the user taps the badge's dismiss control; `StowerRootView` then
-    /// nils out `trial` on the next render.
+    /// Called when the user taps the banner's dismiss control; `StowerRootView` then
+    /// hides the banner (but keeps `trial` so the gear-menu Buy persists).
     internal let onDismissTrial: () -> Void
 
     /// The row hovered right now, so only its trailing dismiss control is revealed
@@ -165,12 +173,12 @@ internal struct StowerBoardView: View {
     /// reserves its own space above the Contacts banner and tab picker rather than
     /// floating over (and intercepting) them.
     ///
-    /// Shown only when `trial` is non-nil (the caller has already gated on
-    /// both "has a trial" and "not dismissed"); when nil it is an empty view that
-    /// reserves no space. The dismiss control writes through `onDismissTrial`;
-    /// `StowerRootView` then nils out `trial`.
+    /// Shown only while `showsTrialBanner` is true and `trial` is non-nil; otherwise
+    /// it is an empty view that reserves no space. The dismiss control writes through
+    /// `onDismissTrial`; `StowerRootView` then hides the banner while keeping `trial`
+    /// so the gear-menu Buy persists.
     @ViewBuilder internal var trialBadgeOverlay: some View {
-        if let badge = trial {
+        if showsTrialBanner, let badge = trial {
             StowerTrialBadgeView(badge: badge, onDismiss: onDismissTrial)
         }
     }

@@ -15,9 +15,18 @@ public struct StowerRootView: View {
     @State private var model: StowerStartupModel
     @State private var boardModel: StowerBoardViewModel
 
-    /// Cached trial badge data, resolved once when entering the board state and
-    /// cleared when leaving. Nil means "no active trial or badge dismissed."
+    /// Cached active-trial badge data, resolved when entering the board state.
+    ///
+    /// Nil means "no active trial" (paid/perpetual); it is NOT cleared on banner
+    /// dismissal, so the gear-menu Buy path persists. Banner visibility is tracked
+    /// separately by `trialBannerDismissed`.
     @State private var trialBadge: StowerTrialBadge?
+
+    /// Whether the user has dismissed the trial banner this session.
+    ///
+    /// Seeded from the persisted dismissal flag on board entry. Hides the banner
+    /// only; `trialBadge` — and therefore the gear-menu Buy — is unaffected.
+    @State private var trialBannerDismissed = false
 
     private let settings: StowerSystemSettingsOpener
 
@@ -139,15 +148,16 @@ public struct StowerRootView: View {
             StowerBoardView(
                 model: boardModel,
                 trial: trialBadge,
+                showsTrialBanner: !trialBannerDismissed,
                 onBuy: { openCheckout(licenseID: $0) },
                 onDismissTrial: {
                     badgeDismissal.dismiss()
-                    trialBadge = nil
+                    trialBannerDismissed = true
                 }
             )
             .onAppear {
-                let badge = model.trialBadge()
-                trialBadge = badgeDismissal.isDismissed ? nil : badge
+                trialBadge = model.trialBadge()
+                trialBannerDismissed = badgeDismissal.isDismissed
             }
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
