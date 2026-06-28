@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		DB486A812FE398BF00BCEE1B /* StowerMacUI in Frameworks */ = {isa = PBXBuildFile; productRef = DB486A802FE398BF00BCEE1B /* StowerMacUI */; };
+		DBA5037C2FF1D7A200B53B2F /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = DBA5037B2FF1D7A200B53B2F /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +29,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				DB486A812FE398BF00BCEE1B /* StowerMacUI in Frameworks */,
+				DBA5037C2FF1D7A200B53B2F /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -71,6 +73,7 @@
 			name = StowerMac;
 			packageProductDependencies = (
 				DB486A802FE398BF00BCEE1B /* StowerMacUI */,
+				DBA5037B2FF1D7A200B53B2F /* Sparkle */,
 			);
 			productName = StowerMac;
 			productReference = DB486A5E2FDF725E00BCEE1B /* StowerMac.app */;
@@ -102,6 +105,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				DB486A7F2FE398BF00BCEE1B /* XCLocalSwiftPackageReference ".." */,
+				DBA5037A2FF1D7A200B53B2F /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = DB486A5F2FDF725E00BCEE1B /* Products */;
@@ -374,10 +378,26 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		DBA5037A2FF1D7A200B53B2F /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		DB486A802FE398BF00BCEE1B /* StowerMacUI */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = StowerMacUI;
+		};
+		DBA5037B2FF1D7A200B53B2F /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DBA5037A2FF1D7A200B53B2F /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
