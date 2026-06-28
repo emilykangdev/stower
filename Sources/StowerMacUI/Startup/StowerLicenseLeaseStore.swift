@@ -167,6 +167,28 @@ internal struct StowerLicenseLeaseStore: Sendable {
         return StowerOfflineAuthority(machineFileExpiry: expiry, entitlementCodes: codes)
     }
 
+    /// The trial end date from the signed machine file, matched by `licenseID`.
+    ///
+    /// Returns the `included[type=="licenses" && id==licenseID].attributes.expiry`
+    /// date, or `nil` when the lease is absent, the machine file fails signature
+    /// verification, the license entry is missing, or its expiry is null/absent
+    /// (the paid/perpetual case). `meta.expiry` (the 7-day TTL) is never used here.
+    ///
+    /// A returned `nil` for a paid user is the expected outcome — the caller must
+    /// treat nil as "no active trial" and suppress the badge.
+    internal func trialExpiry(forLicenseID id: String) -> Date? {
+        guard let lease = load(),
+            let payload = Self.decodePayload(lease.machineFile),
+            let entry = payload.included.first(where: {
+                $0.type == Self.licensesType && $0.id == id
+            }),
+            let isoString = entry.attributes?.expiry
+        else {
+            return nil
+        }
+        return Self.parseExpiry(isoString)
+    }
+
     /// Verifies a machine-file's Ed25519 signature against the embedded public key.
     ///
     /// The signed payload is `"machine/" + enc` per Keygen's cryptography spec; a
@@ -247,6 +269,7 @@ internal struct StowerLicenseLeaseStore: Sendable {
     private static let leaseKeychainService = "com.stower.license.lease"
     private static let leaseKeychainAccount = "machine-file"
     private static let entitlementsType = "entitlements"
+    private static let licensesType = "licenses"
 }
 
 /// The signed offline-gate data decoded from the verified machine file's `enc`
@@ -287,19 +310,30 @@ private struct StowerMachineCertificate: Decodable {
 }
 
 /// The slice of a Keygen machine-file `enc` payload the offline gate reads: the
-/// `meta.expiry` TTL boundary and the `included` entitlement codes.
+/// `meta.expiry` TTL boundary and the `included` entitlement codes and license
+/// expiry.
 private struct StowerMachineFilePayload: Decodable {
     struct Meta: Decodable {
         let expiry: String
     }
 
     struct Included: Decodable {
+        /// The resource type, e.g. `"entitlements"` or `"licenses"`.
         let type: String
+
+        /// The Keygen resource id — used to match the correct license entry by id.
+        let id: String?
+
         let attributes: Attributes?
     }
 
     struct Attributes: Decodable {
+        /// The entitlement code, present on `type == "entitlements"` entries.
         let code: String?
+
+        /// The license expiry ISO-8601 timestamp, present on `type == "licenses"`
+        /// entries when the license is on an active trial; `nil` once paid (perpetual).
+        let expiry: String?
     }
 
     let meta: Meta

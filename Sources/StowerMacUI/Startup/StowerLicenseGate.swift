@@ -47,6 +47,15 @@ internal struct StowerLicenseGate: StowerLicenseGating {
         leaseStore.load() != nil
     }
 
+    internal func trialBadge() -> StowerTrialBadge? {
+        guard let lease = leaseStore.load(),
+            let expiry = leaseStore.trialExpiry(forLicenseID: lease.licenseID)
+        else {
+            return nil
+        }
+        return StowerTrialBadge(licenseID: lease.licenseID, expiry: expiry)
+    }
+
     internal func currentStatus(now: Date) async -> StowerLicenseStatus {
         guard let lease = leaseStore.load() else {
             return await mintFlow(now: now)

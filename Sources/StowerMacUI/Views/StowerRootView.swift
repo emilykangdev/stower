@@ -14,7 +14,19 @@ import SwiftUI
 public struct StowerRootView: View {
     @State private var model: StowerStartupModel
     @State private var boardModel: StowerBoardViewModel
+
+    /// Cached trial badge data, resolved once when entering the board state and
+    /// cleared when leaving. Nil means "no active trial or badge dismissed."
+    @State private var trialBadge: StowerTrialBadge?
+
     private let settings: StowerSystemSettingsOpener
+
+    /// The dismissal seam for the trial badge.
+    ///
+    /// Reads and writes the UserDefaults flag that hides the badge persistently
+    /// across launches. The production path uses `UserDefaults.standard`; tests
+    /// inject a fake.
+    private let badgeDismissal: any StowerTrialBadgeDismissing
 
     /// Builds the production root wired to the shared engine-backed composition and
     /// the real Edge-Function-backed license gate.
@@ -45,6 +57,7 @@ public struct StowerRootView: View {
             contacts: composition.contacts,
             licenseGate: StowerLicenseGate(),
             settings: StowerSystemSettingsOpener(),
+            badgeDismissal: StowerUserDefaultsBadgeDismissal(),
             flusher: flusher
         )
     }
@@ -71,6 +84,7 @@ public struct StowerRootView: View {
         contacts: StowerContactsAccess = .denied,
         licenseGate: any StowerLicenseGating,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
+        badgeDismissal: any StowerTrialBadgeDismissing = StowerUserDefaultsBadgeDismissal(),
         flusher: StowerTerminationFlusher? = nil
     ) {
         let startupModel = StowerStartupModel(provider: startup, licenseGate: licenseGate)
@@ -89,6 +103,7 @@ public struct StowerRootView: View {
         _boardModel = State(initialValue: boardModel)
         flusher?.onFlush { [weak boardModel] in await boardModel?.flushAll() }
         self.settings = settings
+        self.badgeDismissal = badgeDismissal
     }
 
     /// The startup screen for the current state, cross-fading on change.
@@ -121,7 +136,19 @@ public struct StowerRootView: View {
         case .needsFullDiskAccessStillMissing(let path):
             fdaView(path: path, stillMissing: true)
         case .connectedPreparingBoard:
-            StowerBoardView(model: boardModel)
+            StowerBoardView(
+                model: boardModel,
+                trial: trialBadge,
+                onBuy: { openCheckout(licenseID: $0) },
+                onDismissTrial: {
+                    badgeDismissal.dismiss()
+                    trialBadge = nil
+                }
+            )
+            .onAppear {
+                let badge = model.trialBadge()
+                trialBadge = badgeDismissal.isDismissed ? nil : badge
+            }
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
         }

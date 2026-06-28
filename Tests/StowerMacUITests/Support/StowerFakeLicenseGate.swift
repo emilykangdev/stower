@@ -24,6 +24,7 @@ internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Send
     private let lock = NSLock()
     private let lease: Bool
     private let behaviors: [StowerFakeStatusBehavior]
+    private let badge: StowerTrialBadge?
     private var behaviorIndex = 0
     private var recordedNows: [Date] = []
     private var released = false
@@ -36,12 +37,16 @@ internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Send
     ///   - statuses: The scripted `currentStatus` behaviors, reusing the last once
     ///     spent. Defaults to a single `.valid` so the pre-license routing tests
     ///     reach the board unchanged.
+    ///   - trialBadge: The value returned by `trialBadge()`. Defaults to `nil`
+    ///     (paid / no active trial) so existing tests are unaffected.
     internal init(
         hasLease: Bool = false,
-        statuses: [StowerFakeStatusBehavior] = [.status(.valid)]
+        statuses: [StowerFakeStatusBehavior] = [.status(.valid)],
+        trialBadge: StowerTrialBadge? = nil
     ) {
         self.lease = hasLease
         self.behaviors = statuses
+        self.badge = trialBadge
     }
 
     /// How many times `currentStatus` was invoked.
@@ -67,6 +72,10 @@ internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Send
 
     internal func hasLease() -> Bool {
         lock.withLock { lease }
+    }
+
+    internal func trialBadge() -> StowerTrialBadge? {
+        lock.withLock { badge }
     }
 
     internal func currentStatus(now: Date) async -> StowerLicenseStatus {

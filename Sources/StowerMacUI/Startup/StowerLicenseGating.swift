@@ -54,6 +54,24 @@ internal enum StowerCheckingLicenseReason: Sendable, Equatable {
     case revalidating
 }
 
+/// The trial status badge data: the license id (for the checkout URL) and the
+/// trial end date decoded from the signed machine file's license resource.
+///
+/// Present only on an active free trial. Paid (perpetual) licenses have no
+/// `attributes.expiry` → `trialBadge()` returns `nil`.
+internal struct StowerTrialBadge: Sendable, Equatable {
+    /// The Keygen license resource id.
+    ///
+    /// Passed to `checkoutURL(licenseID:)` to build the Lemon Squeezy checkout URL
+    /// bound to this device's license.
+    internal let licenseID: String
+
+    /// The trial end date, decoded from `included[licenses].attributes.expiry`.
+    ///
+    /// Matched by `licenseID` against the signed machine file, never `meta.expiry`.
+    internal let expiry: Date
+}
+
 /// The startup license seam (contract §5b): a pure-local launch read and one
 /// async status check.
 ///
@@ -72,4 +90,12 @@ internal protocol StowerLicenseGating: Sendable {
     /// a lease exists, mint-on-first-run otherwise, falling back to the signed
     /// offline lease (bounded by its TTL) when the server is unreachable.
     func currentStatus(now: Date) async -> StowerLicenseStatus
+
+    /// The trial badge data decoded from the signed machine file, or `nil` when
+    /// there is no lease, the machine file can't be decoded, or the license expiry
+    /// is absent (the paid/perpetual case).
+    ///
+    /// Pure local read — no network. The badge exposes no payment affordance;
+    /// payment lives in the board toolbar's gear menu.
+    func trialBadge() -> StowerTrialBadge?
 }

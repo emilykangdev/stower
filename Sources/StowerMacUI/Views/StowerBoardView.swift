@@ -13,8 +13,30 @@ import SwiftUI
 /// Triage (Phase B/C) lives here too: a hover-reveal + context-menu dismiss with a
 /// draining-bar undo, a batch Select mode, a `Muted Senders…` toolbar popover, and a
 /// conditional zero-state line — every surface gated to stay calm at rest.
+///
+/// When `trial` is non-nil the board shows a quiet "Free trial · ends <date>"
+/// status banner and a gear menu "Buy Stower v0" item. The banner is
+/// dismissible; the gear menu is not (it is the permanent license home). Both
+/// are absent for paid users (`trial == nil`).
 internal struct StowerBoardView: View {
     @Bindable internal var model: StowerBoardViewModel
+
+    /// The trial badge data, or `nil` on a paid license or after the user dismisses.
+    ///
+    /// The dismissal flag is owned by the caller (`StowerRootView`) so
+    /// `StowerBoardView` stays a pure display component.
+    internal let trial: StowerTrialBadge?
+
+    /// Opens the Lemon Squeezy checkout for the given `licenseID`.
+    ///
+    /// The only payment path in the board. Called exclusively from the gear menu item.
+    internal let onBuy: (String) -> Void
+
+    /// Persists the badge dismissal.
+    ///
+    /// Called when the user taps the badge's dismiss control; `StowerRootView` then
+    /// nils out `trial` on the next render.
+    internal let onDismissTrial: () -> Void
 
     /// The row hovered right now, so only its trailing dismiss control is revealed
     /// (the list stays clean at rest). `internal` so the `+Triage` view extension reads it.
@@ -36,6 +58,7 @@ internal struct StowerBoardView: View {
                 .toolbar { toolbarContent }
                 .overlay(alignment: .bottomTrailing) { composerOverlay }
                 .overlay(alignment: .bottom) { undoBarOverlay }
+                .overlay(alignment: .top) { trialBadgeOverlay }
         }
         .animation(.easeInOut(duration: Self.undoBarFade), value: model.undoBar?.id)
         .confirmationDialog(
@@ -135,6 +158,17 @@ internal struct StowerBoardView: View {
                     dismissableRow(row)
                 }
             }
+        }
+    }
+
+    /// The quiet trial status banner, pinned to the top edge of the content area.
+    ///
+    /// Shown only when `trial` is non-nil (the caller has already gated on
+    /// both "has a trial" and "not dismissed"). The dismiss control writes
+    /// through `onDismissTrial`; `StowerRootView` then nils out `trial`.
+    @ViewBuilder internal var trialBadgeOverlay: some View {
+        if let badge = trial {
+            StowerTrialBadgeView(badge: badge, onDismiss: onDismissTrial)
         }
     }
 

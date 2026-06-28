@@ -165,6 +165,54 @@ import Testing
         await run?.value
         #expect(model.state != .needsLicense(.trialExpired(licenseID: "lic-1")))
     }
+
+    // MARK: - Dismissal isolation (I3)
+
+    @Test("dismissed badge does NOT suppress .trialExpired routing (I3)")
+    internal func dismissedBadgeDoesNotSuppressTrialExpired() async {
+        // Even when the badge has been dismissed (isDismissed == true in the
+        // presentation layer), the warranted .trialExpired license status must still
+        // route to the entry screen. The startup model is completely unaware of
+        // the dismissal flag; only the view layer reads it.
+        let gate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.status(.trialExpired(licenseID: "lic-42"))],
+            trialBadge: StowerTrialBadge(
+                licenseID: "lic-42",
+                expiry: Date(timeIntervalSince1970: 1_800_000_000)
+            )
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        model.start()
+        await model.activeRun?.value
+        // The model routes to the paywall — no badge suppression here.
+        #expect(model.state == .needsLicense(.trialExpired(licenseID: "lic-42")))
+    }
+
+    @Test("trialBadge() on the model delegates to the gate and carries the decoded expiry")
+    internal func modelTrialBadgeDelegatesToGate() async {
+        let expiry = Date(timeIntervalSince1970: 1_800_000_000)
+        let expectedBadge = StowerTrialBadge(licenseID: "lic-1", expiry: expiry)
+        let gate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.status(.valid)],
+            trialBadge: expectedBadge
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        // The read-through is available immediately, before start() (pure local read).
+        #expect(model.trialBadge() == expectedBadge)
+    }
+
+    @Test("trialBadge() is nil when the gate returns nil (paid license)")
+    internal func modelTrialBadgeNilForPaid() async {
+        let gate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.status(.valid)],
+            trialBadge: nil
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        #expect(model.trialBadge() == nil)
+    }
 }
 
 /// Records every committed state for the `onCommit` transition tests.

@@ -260,6 +260,81 @@ import Testing
     }
 }
 
+// MARK: - trialBadge() tests
+
+extension StowerLicenseGateTests {
+    /// A signed machine file whose `enc` payload includes the given license entry
+    /// (with `id` and optional `expiry`) alongside the given entitlement codes.
+    private func machineFileWithLicense(
+        metaExpiry: String,
+        licenseID: String,
+        licenseExpiry: String?,
+        codes: [String]
+    ) throws -> String {
+        let entitlements =
+            codes
+            .map { #"{"type":"entitlements","attributes":{"code":"\#($0)"}}"# }
+            .joined(separator: ",")
+        let licenseEntry: String
+        if let exp = licenseExpiry {
+            licenseEntry =
+                #"{"type":"licenses","id":"\#(licenseID)","attributes":{"expiry":"\#(exp)"}}"#
+        } else {
+            licenseEntry =
+                #"{"type":"licenses","id":"\#(licenseID)","attributes":{"expiry":null}}"#
+        }
+        let allIncluded = [entitlements, licenseEntry].filter { !$0.isEmpty }.joined(separator: ",")
+        let payload = #"{"meta":{"expiry":"\#(metaExpiry)"},"included":[\#(allIncluded)]}"#
+        let enc = Data(payload.utf8).base64EncodedString()
+        let signature = try signingKey.signature(for: Data(("machine/" + enc).utf8))
+        let json =
+            #"{"enc":"\#(enc)","sig":"\#(signature.base64EncodedString())","alg":"base64+ed25519"}"#
+        let body = Data(json.utf8).base64EncodedString()
+        return "-----BEGIN MACHINE FILE-----\n\(body)\n-----END MACHINE FILE-----"
+    }
+
+    @Test("trialBadge returns badge with id-matched license expiry for an active trial")
+    internal func trialBadgeReturnsBadgeOnActiveTrial() async throws {
+        let licenseExpiry = "2026-07-28T00:00:00.000Z"
+        let file = try machineFileWithLicense(
+            metaExpiry: futureExpiry,
+            licenseID: "lic-trial",
+            licenseExpiry: licenseExpiry,
+            codes: ["STOWER_TRIAL"]
+        )
+        let store = makeStore()
+        store.save(lease(key: "KEY", id: "lic-trial", file: file))
+        let gate = makeGate(client: SpyCheckInClient(), store: store)
+
+        let badge = try #require(gate.trialBadge())
+        #expect(badge.licenseID == "lic-trial")
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        #expect(badge.expiry == formatter.date(from: licenseExpiry))
+    }
+
+    @Test("trialBadge is nil when the license expiry is null (paid/perpetual)")
+    internal func trialBadgeNilForPaidLicense() async throws {
+        let file = try machineFileWithLicense(
+            metaExpiry: futureExpiry,
+            licenseID: "lic-paid",
+            licenseExpiry: nil,
+            codes: ["STOWER_V0"]
+        )
+        let store = makeStore()
+        store.save(lease(key: "KEY", id: "lic-paid", file: file))
+        let gate = makeGate(client: SpyCheckInClient(), store: store)
+
+        #expect(gate.trialBadge() == nil)
+    }
+
+    @Test("trialBadge is nil when no lease is stored")
+    internal func trialBadgeNilWithNoLease() {
+        let gate = makeGate(client: SpyCheckInClient(), store: makeStore())
+        #expect(gate.trialBadge() == nil)
+    }
+}
+
 /// A scripted `StowerLicenseCheckInProviding` spy recording the fingerprint sent
 /// to mint and the full `(licenseID, fingerprint, licenseKey)` of each check-in.
 private final class SpyCheckInClient: StowerLicenseCheckInProviding, @unchecked Sendable {

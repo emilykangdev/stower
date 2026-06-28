@@ -86,6 +86,15 @@ internal final class StowerStartupModel {
     /// Not used by the views.
     internal var activeRun: Task<Void, Never>? { inFlight }
 
+    /// The trial badge data decoded from the signed machine file, or `nil` when
+    /// there is no active trial or the machine file can't be read.
+    ///
+    /// Read-through to `licenseGate.trialBadge()`. Callers gate on this before
+    /// showing the badge; the dismissal flag is NOT wired here (I3).
+    internal func trialBadge() -> StowerTrialBadge? {
+        licenseGate.trialBadge()
+    }
+
     /// Routes a board-load failure back into the startup screen flow.
     ///
     /// The board runs as a child `StowerBoardViewModel` rooted at

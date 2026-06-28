@@ -165,6 +165,130 @@ import Testing
         #expect(store.offlineAuthority(now: now) == nil)
     }
 
+    // MARK: - trialExpiry(forLicenseID:) — Task 2
+
+    /// A machine-file `enc` body with a named license entry keyed by `licenseID`.
+    ///
+    /// Used by the `trialExpiry` tests, which require `id`-matching. The
+    /// existing `payload(expiry:codes:)` helper is kept unchanged so that the
+    /// `offlineAuthority` tests above remain unmodified.
+    private func payloadWithLicenseID(
+        metaExpiry: String,
+        licenseID: String,
+        licenseExpiry: String?,
+        extraLicenseIDs: [(id: String, expiry: String?)] = []
+    ) -> String {
+        let licenseExpiryJSON: String
+        if let exp = licenseExpiry {
+            licenseExpiryJSON =
+                #"{"type":"licenses","id":"\#(licenseID)","attributes":{"expiry":"\#(exp)"}}"#
+        } else {
+            licenseExpiryJSON =
+                #"{"type":"licenses","id":"\#(licenseID)","attributes":{"expiry":null}}"#
+        }
+        let extras = extraLicenseIDs.map { entry -> String in
+            if let exp = entry.expiry {
+                return #"{"type":"licenses","id":"\#(entry.id)","attributes":{"expiry":"\#(exp)"}}"#
+            } else {
+                return #"{"type":"licenses","id":"\#(entry.id)","attributes":{"expiry":null}}"#
+            }
+        }
+        let allIncluded = ([licenseExpiryJSON] + extras).joined(separator: ",")
+        return #"{"meta":{"expiry":"\#(metaExpiry)"},"included":[\#(allIncluded)]}"#
+    }
+
+    @Test("trialExpiry returns id-matched license expiry, distinct from meta.expiry")
+    internal func trialExpiryReturnsIdMatchedExpiry() throws {
+        let licenseExpiry = "2026-07-28T00:00:00.000Z"
+        let metaExpiry = "2026-07-05T00:00:00.000Z"
+        let store = makeStore(InMemoryLeaseStorage())
+        let file = try signedMachineFile(
+            payload: payloadWithLicenseID(
+                metaExpiry: metaExpiry,
+                licenseID: "lic-A",
+                licenseExpiry: licenseExpiry
+            )
+        )
+        store.save(lease(machineFile: file))
+
+        let expiry = try #require(store.trialExpiry(forLicenseID: "lic-A"))
+        // Must match the license expiry, NOT the meta expiry.
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        #expect(expiry == formatter.date(from: licenseExpiry))
+        #expect(expiry != formatter.date(from: metaExpiry))
+    }
+
+    @Test("trialExpiry returns the id-matched entry when two license entries are present")
+    internal func trialExpiryMatchesByID() throws {
+        let expiryA = "2026-07-28T00:00:00.000Z"
+        let expiryB = "2026-08-15T00:00:00.000Z"
+        let store = makeStore(InMemoryLeaseStorage())
+        let file = try signedMachineFile(
+            payload: payloadWithLicenseID(
+                metaExpiry: futureExpiry,
+                licenseID: "lic-A",
+                licenseExpiry: expiryA,
+                extraLicenseIDs: [(id: "lic-B", expiry: expiryB)]
+            )
+        )
+        store.save(lease(machineFile: file))
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        // Requesting lic-A returns expiry A.
+        #expect(try store.trialExpiry(forLicenseID: "lic-A") == formatter.date(from: expiryA))
+        // Requesting lic-B returns expiry B, not A.
+        #expect(try store.trialExpiry(forLicenseID: "lic-B") == formatter.date(from: expiryB))
+    }
+
+    @Test("trialExpiry is nil when license expiry is null (paid/perpetual)")
+    internal func trialExpiryNilWhenLicenseExpiryNull() throws {
+        let store = makeStore(InMemoryLeaseStorage())
+        let file = try signedMachineFile(
+            payload: payloadWithLicenseID(
+                metaExpiry: futureExpiry,
+                licenseID: "lic-paid",
+                licenseExpiry: nil  // null = paid
+            )
+        )
+        store.save(lease(machineFile: file))
+        #expect(store.trialExpiry(forLicenseID: "lic-paid") == nil)
+    }
+
+    @Test("trialExpiry is nil when the licenseID is not present in included")
+    internal func trialExpiryNilForUnknownID() throws {
+        let store = makeStore(InMemoryLeaseStorage())
+        let file = try signedMachineFile(
+            payload: payloadWithLicenseID(
+                metaExpiry: futureExpiry,
+                licenseID: "lic-A",
+                licenseExpiry: "2026-07-28T00:00:00.000Z"
+            )
+        )
+        store.save(lease(machineFile: file))
+        // "lic-OTHER" is not in the payload → nil.
+        #expect(store.trialExpiry(forLicenseID: "lic-OTHER") == nil)
+    }
+
+    @Test("trialExpiry is nil when license expiry string is malformed")
+    internal func trialExpiryNilForMalformedExpiry() throws {
+        let store = makeStore(InMemoryLeaseStorage())
+        // Inject a garbage expiry string via a hand-crafted JSON payload.
+        let licenseEntry = #"{"type":"licenses","id":"lic-A","attributes":{"expiry":"not-a-date"}}"#
+        let payloadBody =
+            #"{"meta":{"expiry":"\#(futureExpiry)"},"included":[\#(licenseEntry)]}"#
+        let file = try signedMachineFile(payload: payloadBody)
+        store.save(lease(machineFile: file))
+        #expect(store.trialExpiry(forLicenseID: "lic-A") == nil)
+    }
+
+    @Test("trialExpiry is nil when no lease is stored")
+    internal func trialExpiryNilWithNoLease() {
+        let store = makeStore(InMemoryLeaseStorage())
+        #expect(store.trialExpiry(forLicenseID: "lic-A") == nil)
+    }
+
     @Test("clear removes a stored lease")
     internal func clearRemovesLease() throws {
         let storage = InMemoryLeaseStorage()
