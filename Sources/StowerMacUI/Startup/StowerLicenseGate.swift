@@ -160,6 +160,10 @@ internal struct StowerLicenseGate: StowerLicenseGating {
                 leaseStore.clear()
                 return .trialExpired(licenseID: licenseID)
             }
+            // Hold the minted file to the same bar as a check-in .ok: it must load
+            // (signature), authorize this build (entitlement OR), and be bound to
+            // this device before the gate trusts it.
+            guard grantsAccess(now: now) else { return .couldNotReach }
             return .valid
         case .retryShortly:
             return .couldNotReach

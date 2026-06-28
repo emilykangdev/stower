@@ -230,6 +230,16 @@ import Testing
         #expect(store.load() == nil)
     }
 
+    @Test("mint with a file that does not authorize this build is couldNotReach, not valid")
+    internal func mintUnauthorizedFileIsCouldNotReach() async throws {
+        let badFile = try machineFile(expiry: futureExpiry, codes: ["STOWER_LEGACY"])
+        let client = SpyCheckInClient(
+            mint: [.minted(licenseKey: "K", licenseID: "lic-1", machineFile: badFile)]
+        )
+        let gate = makeGate(client: client, store: makeStore())
+        #expect(await gate.currentStatus(now: now) == .couldNotReach)
+    }
+
     @Test("check-in ok with a file that does not authorize this build is couldNotReach")
     internal func checkInOkUnauthorizedFileIsCouldNotReach() async throws {
         let store = makeStore()
