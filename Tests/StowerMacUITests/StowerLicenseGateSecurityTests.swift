@@ -190,4 +190,61 @@ import Testing
         let gate = makeGate(client: client, store: store)
         #expect(await gate.currentStatus(now: now) == .valid)
     }
+
+    @Test("an online trial-expired verdict clears the lease so going offline cannot re-enter")
+    internal func trialExpiredClearsLeaseSoOfflineCannotReenter() async throws {
+        // The cached machine file's TTL is still in the future, but the trial expired
+        // server-side. Once the paywall is seen online, the file must not re-grant
+        // access simply by disconnecting.
+        let file = try machineFile(
+            expiry: futureExpiry,
+            codes: ["STOWER_TRIAL"],
+            fingerprint: expectedFingerprint
+        )
+        let store = makeStore()
+        store.save(lease(key: "KEY", id: "lic-1", file: file))
+        let client = SpyCheckInClient(checkIn: [.trialExpired(licenseID: "lic-1"), .unreachable])
+        let gate = makeGate(client: client, store: store)
+
+        #expect(await gate.currentStatus(now: now) == .trialExpired(licenseID: "lic-1"))
+        #expect(store.load() == nil)
+        #expect(!gate.hasLease())
+        // Now offline with no lease: the mint path is unreachable → connect-once, not
+        // a TTL-fallback .valid on the stale file.
+        #expect(await gate.currentStatus(now: now) == .needsTrialOnline)
+    }
+
+    @Test("mint of an expired reused trial leaves no cached lease for offline re-entry")
+    internal func mintExpiredReusedTrialLeavesNoCachedLease() async throws {
+        let file = try machineFileWithLicense(
+            licenseID: "lic-exp",
+            licenseExpiry: pastExpiry,
+            codes: ["STOWER_TRIAL"]
+        )
+        let client = SpyCheckInClient(
+            mint: [.minted(licenseKey: "K", licenseID: "lic-exp", machineFile: file)]
+        )
+        let store = makeStore()
+        let gate = makeGate(client: client, store: store)
+        #expect(await gate.currentStatus(now: now) == .trialExpired(licenseID: "lic-exp"))
+        #expect(store.load() == nil)
+    }
+
+    @Test("check-in ok with a file that does not authorize this build is couldNotReach")
+    internal func checkInOkUnauthorizedFileIsCouldNotReach() async throws {
+        let store = makeStore()
+        store.save(
+            lease(
+                key: "KEY",
+                id: "lic-1",
+                file: try machineFile(expiry: futureExpiry, codes: ["STOWER_TRIAL"])
+            )
+        )
+        // The server replies ok but with a file lacking STOWER_TRIAL/STOWER_V0; the
+        // gate must verify the stored file authorizes this build before .valid.
+        let badFile = try machineFile(expiry: futureExpiry, codes: ["STOWER_LEGACY"])
+        let client = SpyCheckInClient(checkIn: [.ok(machineFile: badFile)])
+        let gate = makeGate(client: client, store: store)
+        #expect(await gate.currentStatus(now: now) == .couldNotReach)
+    }
 }

@@ -74,11 +74,20 @@ internal struct StowerLicenseGate: StowerLicenseGating {
                 validatedAt: now
             )
             // A failed Keychain write leaves no durable lease for next-launch
-            // revalidation or the offline fallback; report the transient failure
-            // rather than a `.valid` the app cannot honor past this session.
-            guard leaseStore.save(refreshed) else { return .couldNotReach }
+            // revalidation or the offline fallback; and a stored file we cannot
+            // re-verify (signature/entitlement/device) is one we cannot honor next
+            // launch. Report the transient failure rather than a `.valid` the app
+            // cannot stand behind.
+            guard leaseStore.save(refreshed), grantsAccess(now: now) else {
+                return .couldNotReach
+            }
             return .valid
         case .trialExpired(let id):
+            // Drop the cached file so its remaining machine-file TTL cannot re-grant
+            // access offline after the user has already seen the paywall —
+            // offlineStatus is TTL-only (I14) and would otherwise let an expired
+            // trial back in simply by disconnecting.
+            leaseStore.clear()
             return .trialExpired(licenseID: id)
         case .wrongVersion(let id):
             return .wrongVersion(licenseID: id)
@@ -99,20 +108,28 @@ internal struct StowerLicenseGate: StowerLicenseGating {
         }
     }
 
-    /// The offline fallback when the check-in is unreachable.
-    ///
-    /// `.valid` while the signed lease's TTL is in the future (I14), its
-    /// entitlements allow this build (I5), and it was checked out for THIS device —
-    /// else `.couldNotReach`. The device match stops a signed file copied from
-    /// another Mac from granting offline access here.
+    /// The offline fallback when the check-in is unreachable: `.valid` when the
+    /// stored lease still grants access, else `.couldNotReach`.
     private func offlineStatus(now: Date) -> StowerLicenseStatus {
+        grantsAccess(now: now) ? .valid : .couldNotReach
+    }
+
+    /// Whether the stored signed lease authorizes THIS build right now.
+    ///
+    /// True when it loads (signature verifies, I6), its machine-file TTL is in the
+    /// future (I14), its entitlements allow this build (I5), and it was checked out
+    /// for THIS device (the device match stops a file copied from another Mac). The
+    /// trial's own expiry is NOT re-checked here — the TTL is the offline boundary
+    /// (I14), and an online `expired` verdict clears the lease, so a stale expired
+    /// file never reaches this path.
+    private func grantsAccess(now: Date) -> Bool {
         guard let authority = leaseStore.offlineAuthority(now: now),
             authority.allowsThisBuild,
             authority.matchesDevice(fingerprint.fingerprint())
         else {
-            return .couldNotReach
+            return false
         }
-        return .valid
+        return true
     }
 
     /// The shared mint path — the no-lease branch and the `unknown_license`
@@ -137,6 +154,10 @@ internal struct StowerLicenseGate: StowerLicenseGating {
             // A paid/perpetual license carries a nil expiry and is allowed through.
             let signedExpiry = leaseStore.trialExpiry(forLicenseID: licenseID)
             if let signedExpiry, signedExpiry <= now {
+                // An expired reused trial: do not leave it cached, or its machine-file
+                // TTL would re-grant offline next launch (offlineStatus is TTL-only).
+                // Clear + route to the paywall.
+                leaseStore.clear()
                 return .trialExpired(licenseID: licenseID)
             }
             return .valid
