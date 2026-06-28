@@ -59,7 +59,10 @@ interface KeygenResource {
   id: string;
   type: string;
   attributes?: Record<string, unknown>;
-  relationships?: Record<string, { data?: { type?: string; id?: string } | null }>;
+  relationships?: Record<
+    string,
+    { data?: { type?: string; id?: string } | null }
+  >;
 }
 
 interface ListResponse {
@@ -80,7 +83,9 @@ function readConfig(): {
   if (!account) fail("missing env KEYGEN_ACCOUNT");
   if (!token) fail("missing env KEYGEN_PRODUCT_TOKEN");
   if (!productId) {
-    fail("missing KEYGEN_PRODUCT_ID (env or first CLI arg) — pass StowerTest's product id");
+    fail(
+      "missing KEYGEN_PRODUCT_ID (env or first CLI arg) — pass StowerTest's product id",
+    );
   }
   return {
     baseUrl: Deno.env.get("KEYGEN_BASE_URL") || DEFAULT_BASE_URL,
@@ -106,7 +111,11 @@ function keygenClient(config: ReturnType<typeof readConfig>) {
   const toURL = (path: string) =>
     path.startsWith("http") ? path : `${config.baseUrl}${path}`;
 
-  async function send(method: string, path: string, body?: unknown): Promise<Response> {
+  async function send(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<Response> {
     return await fetch(toURL(path), {
       method,
       headers: config.authHeaders,
@@ -131,7 +140,10 @@ function keygenClient(config: ReturnType<typeof readConfig>) {
     return out;
   }
 
-  async function create(collection: string, body: unknown): Promise<KeygenResource> {
+  async function create(
+    collection: string,
+    body: unknown,
+  ): Promise<KeygenResource> {
     const response = await send("POST", `${base}/${collection}`, body);
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
@@ -147,14 +159,45 @@ function keygenClient(config: ReturnType<typeof readConfig>) {
 type KeygenClient = ReturnType<typeof keygenClient>;
 
 /** Verifies the given product id exists; a typo'd id must fail, not orphan policies. */
-async function assertProductExists(client: KeygenClient, productId: string): Promise<void> {
-  const response = await client.send("GET", `${client.base}/products/${productId}`);
+async function assertProductExists(
+  client: KeygenClient,
+  productId: string,
+): Promise<void> {
+  const response = await client.send(
+    "GET",
+    `${client.base}/products/${productId}`,
+  );
   if (response.status === 404) {
     await response.body?.cancel();
     fail(`product ${productId} not found in this account — check the id`);
   }
   if (!response.ok) fail(`keygen get product ${response.status}`);
   await response.body?.cancel();
+}
+
+/**
+ * Fails loudly when a reused policy drifts from the exact rules this script
+ * promises. We compare only the attributes we positively set on create (an
+ * allowlist), so an operator who edited the policy in the Keygen dashboard must
+ * fix or delete it and rerun — we never emit a drifted policy id as if it were
+ * correctly provisioned. Matches Scripts/Keygen/bootstrap-keygen.ts's
+ * `assertConforms`; this provisioner just exits via `fail()` instead of throwing.
+ */
+function assertPolicyConforms(
+  existing: KeygenResource,
+  expected: Record<string, unknown>,
+): void {
+  const drifted = Object.entries(expected)
+    .filter(([key, value]) =>
+      JSON.stringify(existing.attributes?.[key]) !== JSON.stringify(value)
+    )
+    .map(([key]) => key);
+  if (drifted.length > 0) {
+    fail(
+      `policy ${existing.id} ("${expected.name}") drifts from the exact rules on: ` +
+        `${drifted.join(", ")} — fix or delete it in Keygen, then rerun`,
+    );
+  }
 }
 
 /** Finds a policy by name *under this product*, else creates it with exact rules. */
@@ -164,19 +207,39 @@ async function findOrCreatePolicy(
   name: string,
   variableAttrs: Record<string, unknown>,
 ): Promise<KeygenResource> {
+  const attributes = { name, ...SHARED_POLICY_ATTRS, ...variableAttrs };
   const existing = (await client.listAll("policies")).find(
     (p) =>
       p.attributes?.name === name &&
       p.relationships?.product?.data?.id === productId,
   );
-  if (existing) return existing;
+  if (existing) {
+    assertPolicyConforms(existing, attributes);
+    return existing;
+  }
   return await client.create("policies", {
     data: {
       type: "policies",
-      attributes: { name, ...SHARED_POLICY_ATTRS, ...variableAttrs },
+      attributes,
       relationships: { product: { data: { type: "products", id: productId } } },
     },
   });
+}
+
+/**
+ * Fails loudly if the Paid policy carries a `duration`. `assertPolicyConforms`
+ * only checks the attributes we set (an allowlist), so a reused or hand-edited
+ * Paid policy with a stray `duration` would pass the drift check — and silently
+ * expire paid licenses, which must be perpetual. `!= null` treats absent and null
+ * alike, so this never false-positives on a correctly perpetual policy.
+ */
+function assertPaidPolicyPerpetual(policy: KeygenResource): void {
+  if (policy.attributes?.duration != null) {
+    fail(
+      `paid policy ${policy.id} has a duration (${policy.attributes.duration}) — ` +
+        `paid licenses must be perpetual. Clear the duration in Keygen, then rerun`,
+    );
+  }
 }
 
 /** Finds an entitlement by code (account-level), else creates it (name == code). */
@@ -215,14 +278,31 @@ const config = readConfig();
 const client = keygenClient(config);
 
 await assertProductExists(client, config.productId);
-const trialPolicy = await findOrCreatePolicy(client, config.productId, TRIAL_POLICY_NAME, {
-  duration: TRIAL_DURATION_SECONDS,
-});
-const paidPolicy = await findOrCreatePolicy(client, config.productId, PAID_POLICY_NAME, {
-  transferStrategy: "RESET_EXPIRY",
-});
-const trialEntitlement = await findOrCreateEntitlement(client, TRIAL_ENTITLEMENT_CODE);
-const v0Entitlement = await findOrCreateEntitlement(client, V0_ENTITLEMENT_CODE);
+const trialPolicy = await findOrCreatePolicy(
+  client,
+  config.productId,
+  TRIAL_POLICY_NAME,
+  {
+    duration: TRIAL_DURATION_SECONDS,
+  },
+);
+const paidPolicy = await findOrCreatePolicy(
+  client,
+  config.productId,
+  PAID_POLICY_NAME,
+  {
+    transferStrategy: "RESET_EXPIRY",
+  },
+);
+assertPaidPolicyPerpetual(paidPolicy);
+const trialEntitlement = await findOrCreateEntitlement(
+  client,
+  TRIAL_ENTITLEMENT_CODE,
+);
+const v0Entitlement = await findOrCreateEntitlement(
+  client,
+  V0_ENTITLEMENT_CODE,
+);
 await ensureTrialAttached(client, trialPolicy.id, trialEntitlement.id);
 
 // The ids you set as the Edge Function's KEYGEN_* secrets. STOWER_V0 is created but
