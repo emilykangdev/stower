@@ -12,7 +12,7 @@ const JSON_API_CONTENT_TYPE = "application/vnd.api+json";
 export interface HarnessEnv {
   /** The Caddy proxy base URL, e.g. http://localhost:8080. */
   baseUrl: string;
-  /** The Keygen account id (a fixed UUID from Scripts/Keygen/.env). */
+  /** The Keygen account id (a fixed UUID from Scripts/Keygen/.env.docker.fake). */
   account: string;
   /** A freshly-minted admin token (`admin-…`). */
   token: string;

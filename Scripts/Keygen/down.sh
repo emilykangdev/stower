@@ -5,6 +5,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-docker compose --profile setup down -v --remove-orphans
+# --env-file: compose interpolates ${...} in the compose file on `down` too, and only
+# auto-loads a file literally named ".env" — point it at the renamed fake config so it
+# resolves cleanly instead of warning about unset variables.
+docker compose --env-file .env.docker.fake --profile setup down -v --remove-orphans
 rm -f .runtime.env
 echo "==> Harness down, volumes wiped, .runtime.env removed"

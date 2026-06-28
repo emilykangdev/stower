@@ -34,7 +34,7 @@ Scripts/Keygen/down.sh      # tear down + wipe volumes + remove .runtime.env
 
 ```
 KEYGEN_BASE_URL=http://localhost:8080
-KEYGEN_ACCOUNT=<the account UUID from .env>
+KEYGEN_ACCOUNT=<the account UUID from .env.docker.fake>
 KEYGEN_TOKEN=admin-...        # minted fresh each run; gitignored, never committed
 KEYGEN_PUBLIC_KEY=<64 hex>    # the account Ed25519 public key, for offline machine-file verify
 ```
@@ -47,7 +47,7 @@ absent — a missing harness is a hard error, never a silent skip.
 | File | Role |
 |------|------|
 | `docker-compose.yml` | Postgres 15 + Redis 7 + `keygen/api:v1.6.0` (web) + Caddy proxy |
-| `.env` | Throwaway config (fake account UUID, admin creds, encryption keys) — committed |
+| `.env.docker.fake` | Throwaway config (fake account UUID, admin creds, encryption keys) — committed. Named `.docker.fake` (not `.env`) so it's unmistakably non-real to humans and AI; loaded via `--env-file`, since compose only auto-loads a file named `.env` |
 | `Caddyfile` | Injects `X-Forwarded-Proto: https` so Keygen's `force_ssl` serves 200 |
 | `up.sh` | Boot → headless setup → mint admin token → write `.runtime.env` |
 | `down.sh` | `docker compose down -v` + remove `.runtime.env` |
@@ -69,7 +69,7 @@ absent — a missing harness is a hard error, never a silent skip.
   talk to `:8080`, never the API's `:3000` directly.
 - **Headless `setup`** creates the account + admin **and runs migrations** in one
   step — no separate migrate. It needs the encryption keys + `KEYGEN_ACCOUNT_ID` +
-  admin email/password (all in `.env`).
+  admin email/password (all in `.env.docker.fake`).
 - **The admin token is minted at runtime**, not stored: `bundle exec rails runner
   "...admins.first.tokens.create(name:).raw"` (the entrypoint has no bare `rails`,
   and echoes `Running command:` to stdout — so `up.sh` greps the `admin-` prefix).
@@ -90,5 +90,7 @@ absent — a missing harness is a hard error, never a silent skip.
     if not (the SSE 4.2 dependency), we stay CI-only. Low priority — CI already covers
     it, and the integration tests run locally against a *real Keygen account* (env
     override) with no Docker at all.
-- **`.env` is committed and throwaway** because the DB is ephemeral (`down.sh -v`
-  wipes it). The only secret-bearing file is `.runtime.env`, which is gitignored.
+- **`.env.docker.fake` is committed and throwaway** because the DB is ephemeral
+  (`down.sh -v` wipes it). It's named `.docker.fake` rather than `.env` precisely so
+  nobody (human or AI) mistakes it for real credentials. The only secret-bearing file
+  is `.runtime.env`, which is gitignored.
