@@ -76,6 +76,10 @@ internal struct StowerLicenseGate: StowerLicenseGating {
             leaseStore.clear()
             return .trialExpired(licenseID: id)
         case .wrongVersion(let id):
+            // Same reasoning as `.trialExpired`: the server has denied this build, so
+            // drop the cached file rather than let its TTL re-authorize offline if the
+            // client/server entitlement rules ever diverge.
+            leaseStore.clear()
             return .wrongVersion(licenseID: id)
         case .unknownLicense:
             // 404 — the server has no row for our license id. Clear the stale lease

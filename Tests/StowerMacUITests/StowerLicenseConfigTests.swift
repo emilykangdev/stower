@@ -51,4 +51,28 @@ import Testing
         )
         #expect(resolved.functionBaseURL == compiled.functionBaseURL)
     }
+
+    @Test("a release build ignores STOWER_* overrides, pinning the compiled trust anchor")
+    internal func releaseIgnoresOverrides() {
+        let resolved = StowerLicenseConfig.effectiveConfig(
+            environment: [
+                "STOWER_KEYGEN_PUBLIC_KEY": "deadbeef",
+                "STOWER_FUNCTION_URL": "https://attacker.example/license"
+            ],
+            compiled: compiled,
+            allowOverrides: false
+        )
+        // The forged trust anchor and endpoint are both ignored.
+        #expect(resolved == compiled)
+    }
+
+    @Test("a debug build applies STOWER_* overrides")
+    internal func debugAppliesOverrides() {
+        let resolved = StowerLicenseConfig.effectiveConfig(
+            environment: ["STOWER_KEYGEN_PUBLIC_KEY": "bb"],
+            compiled: compiled,
+            allowOverrides: true
+        )
+        #expect(resolved.keygenPublicKeyHex == "bb")
+    }
 }

@@ -67,12 +67,36 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
         )
     }
 
-    /// The config the app runs with: the compiled default with `STOWER_*` overrides
-    /// applied from the launch environment.
-    internal static let resolved = resolve(
-        environment: ProcessInfo.processInfo.environment,
-        compiled: compiledDefault
-    )
+    /// The effective config: the compiled default with `STOWER_*` overrides applied
+    /// only when `allowOverrides` is true, else the compiled config verbatim.
+    ///
+    /// Pure (environment + flag injected) so both branches are unit tested. Release
+    /// passes `allowOverrides: false` so a launch-environment variable cannot swap
+    /// the pinned Keygen public key (the offline trust anchor) or endpoints and make
+    /// the app accept forged machine files; overrides are a DEBUG dev/CI affordance.
+    internal static func effectiveConfig(
+        environment: [String: String],
+        compiled: StowerLicenseConfig,
+        allowOverrides: Bool
+    ) -> StowerLicenseConfig {
+        guard allowOverrides else { return compiled }
+        return resolve(environment: environment, compiled: compiled)
+    }
+
+    /// The config the app runs with: compiled defaults, plus `STOWER_*` overrides in
+    /// DEBUG only (Release pins the compiled config — see `effectiveConfig`).
+    internal static let resolved: StowerLicenseConfig = {
+        #if DEBUG
+            let allowOverrides = true
+        #else
+            let allowOverrides = false
+        #endif
+        return effectiveConfig(
+            environment: ProcessInfo.processInfo.environment,
+            compiled: compiledDefault,
+            allowOverrides: allowOverrides
+        )
+    }()
 
     /// The Stower Keygen account's Ed25519 public key (hex), used to verify signed
     /// machine files offline (I6).

@@ -214,6 +214,23 @@ import Testing
         #expect(await gate.currentStatus(now: now) == .needsTrialOnline)
     }
 
+    @Test("an online wrong_version verdict clears the lease so going offline cannot reuse it")
+    internal func wrongVersionClearsLease() async throws {
+        let file = try machineFile(
+            expiry: futureExpiry,
+            codes: ["STOWER_TRIAL"],
+            fingerprint: expectedFingerprint
+        )
+        let store = makeStore()
+        store.save(lease(key: "KEY", id: "lic-1", file: file))
+        let client = SpyCheckInClient(checkIn: [.wrongVersion(licenseID: "lic-1")])
+        let gate = makeGate(client: client, store: store)
+
+        #expect(await gate.currentStatus(now: now) == .wrongVersion(licenseID: "lic-1"))
+        #expect(store.load() == nil)
+        #expect(!gate.hasLease())
+    }
+
     @Test("mint of an expired reused trial leaves no cached lease for offline re-entry")
     internal func mintExpiredReusedTrialLeavesNoCachedLease() async throws {
         let file = try machineFileWithLicense(
