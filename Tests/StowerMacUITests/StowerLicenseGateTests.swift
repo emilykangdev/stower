@@ -333,4 +333,25 @@ extension StowerLicenseGateTests {
         let gate = makeGate(client: SpyCheckInClient(), store: makeStore())
         #expect(gate.trialBadge() == nil)
     }
+
+    @Test("trialBadge is nil when the stored lease fails to load/verify (tampered file)")
+    internal func trialBadgeNilOnUnloadableLease() throws {
+        let valid = try machineFileWithLicense(
+            metaExpiry: futureExpiry,
+            licenseID: "lic-trial",
+            licenseExpiry: "2026-07-28T00:00:00.000Z",
+            codes: ["STOWER_TRIAL"]
+        )
+        // Corrupt the PEM body so it no longer parses/verifies — load() returns nil
+        // and trialBadge() degrades to nil rather than crashing.
+        let tampered = valid.replacingOccurrences(
+            of: "MACHINE FILE-----\n",
+            with: "MACHINE FILE-----\nAA"
+        )
+        let store = makeStore()
+        store.save(lease(key: "KEY", id: "lic-trial", file: tampered))
+        let gate = makeGate(client: SpyCheckInClient(), store: store)
+
+        #expect(gate.trialBadge() == nil)
+    }
 }

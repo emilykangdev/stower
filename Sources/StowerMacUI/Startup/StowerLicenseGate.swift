@@ -31,15 +31,50 @@ internal struct StowerLicenseGate: StowerLicenseGating {
     /// store, and the real device fingerprint.
     ///
     /// Endpoints + the Keygen public key come from `StowerLicenseConfig.resolved`
-    /// (staging in DEBUG, production otherwise, with `STOWER_*` env overrides). In a
-    /// Release build before prod ops fills the `production` defaults (G10), the
-    /// online calls are unreachable and a first run lands on `.connectOnce`.
+    /// (staging in DEBUG, production otherwise, with `STOWER_*` env overrides applied
+    /// in DEBUG only — Release pins the compiled config). In a Release build before
+    /// prod ops fills the `production` defaults (G10), the online calls are
+    /// unreachable and a first run lands on `.connectOnce`.
+    ///
+    /// In a DEBUG build the `StowerLicenseDebugArguments` launch-arg seam can clear
+    /// the lease (`--clear-lease-on-start`) and pin the fingerprint
+    /// (`--fingerprint <value>`) before the gate runs; the whole seam is
+    /// compile-stripped from Release.
     internal init() {
         let config = StowerLicenseConfig.resolved
+        let leaseStore = StowerLicenseLeaseStore(publicKeyHex: config.keygenPublicKeyHex)
+        let fingerprint: StowerDeviceFingerprint
+        #if DEBUG
+            switch StowerLicenseDebugArguments.parse(CommandLine.arguments) {
+            case .failure(.missingValue(let flag)):
+                // A malformed debug arg is a deterministic refusal, not a crash: name
+                // the flag on stderr (the one permitted diagnostic — a static flag
+                // name, no key/PII) and exit BEFORE the gate runs, so a typo can't
+                // silently no-op. `exit` returns Never, so `fingerprint` stays
+                // definitely-assigned on every continuing path.
+                let message = "stower: \(flag) requires a value — malformed debug launch argument\n"
+                FileHandle.standardError.write(Data(message.utf8))
+                exit(EXIT_FAILURE)
+            case .success(let debug):
+                if debug.clearLeaseOnStart { leaseStore.clear() }
+                // Bind `override` by name — a bare `{ $0 }` would be a zero-arg
+                // reader closure (a compile error that captures nothing).
+                if let override = debug.fingerprintOverride {
+                    fingerprint = StowerDeviceFingerprint(
+                        readHardwareUUID: { override },
+                        fallbackUUID: { override }
+                    )
+                } else {
+                    fingerprint = StowerDeviceFingerprint()
+                }
+            }
+        #else
+            fingerprint = StowerDeviceFingerprint()
+        #endif
         self.init(
             client: StowerLicenseCheckInClient(functionBaseURL: config.functionBaseURL),
-            leaseStore: StowerLicenseLeaseStore(publicKeyHex: config.keygenPublicKeyHex),
-            fingerprint: StowerDeviceFingerprint()
+            leaseStore: leaseStore,
+            fingerprint: fingerprint
         )
     }
 

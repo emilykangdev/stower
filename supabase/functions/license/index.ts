@@ -24,9 +24,14 @@ import {
   type Reply,
   type TrialRow,
   type TrialStore,
+  verifyLemonSqueezySignature,
   type WebhookDeps,
 } from "./handlers.ts";
-import { missingRequiredEnv } from "./config.ts";
+import {
+  missingRequiredEnv,
+  trialDurationHealthFields,
+  trialDurationMs,
+} from "./config.ts";
 import {
   emptyGithubCache,
   githubReleases,
@@ -34,12 +39,10 @@ import {
 } from "./github.ts";
 import {
   extractSignatureHeaders,
-  timingSafeEqualHex,
   verifyRequestSignature,
 } from "./requestSignature.ts";
 
 const KEYGEN_BASE_URL = "https://api.keygen.sh";
-const TRIAL_DURATION_MS = 30 * 24 * 60 * 60 * 1000; // 30-day trial
 const RECLAIM_WINDOW_MS = 60 * 1000; // abandoned 'pending' claim age
 const JSON_API_CONTENT_TYPE = "application/vnd.api+json";
 // Keygen paginates the license-entitlements list (default 10, newest-first); 100
@@ -323,7 +326,12 @@ function keygenAdmin(): KeygenAdmin {
 
   return {
     async createTrialLicense() {
-      const expiry = new Date(Date.now() + TRIAL_DURATION_MS).toISOString();
+      // Read TRIAL_DURATION_SECONDS per mint (this runs per request); unset → the
+      // 30-day default. Do not hoist to a module const — that would re-freeze the
+      // duration the staging lever exists to shorten.
+      const expiry = new Date(
+        Date.now() + trialDurationMs((n) => Deno.env.get(n)),
+      ).toISOString();
       const response = await timedFetch(`${accountPath}/licenses`, {
         method: "POST",
         headers: adminHeaders,
@@ -537,29 +545,6 @@ function keygenAdmin(): KeygenAdmin {
   };
 }
 
-async function verifyLemonSqueezySignature(
-  rawBody: string,
-  signature: string,
-): Promise<boolean> {
-  const secret = env("LS_WEBHOOK_SECRET");
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const mac = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(rawBody),
-  );
-  const expected = [...new Uint8Array(mac)].map((b) =>
-    b.toString(16).padStart(2, "0")
-  ).join("");
-  return timingSafeEqualHex(expected, signature);
-}
-
 function mintDeps(): MintDeps {
   return {
     trials: trialStore(supabase()),
@@ -574,7 +559,8 @@ function webhookDeps(): WebhookDeps {
   return {
     purchases: purchaseStore(db),
     keygen: keygenAdmin(),
-    verifySignature: verifyLemonSqueezySignature,
+    verifySignature: (raw, sig) =>
+      verifyLemonSqueezySignature(raw, sig, env("LS_WEBHOOK_SECRET")),
     paidVariantID: env("LS_PAID_VARIANT_ID"),
     async licenseIsMinted(licenseID) {
       const { data, error } = await db
@@ -678,7 +664,16 @@ Deno.serve(async (request: Request) => {
         body: { status: "degraded", missingEnv },
       });
     }
-    return jsonResponse({ status: 200, body: { status: "ok" } });
+    // A non-default trial duration (a TRIAL_DURATION_SECONDS leak onto prod) is
+    // surfaced loudly here; the default omits the field so a healthy prod stays
+    // quiet (I-H10).
+    return jsonResponse({
+      status: 200,
+      body: {
+        status: "ok",
+        ...trialDurationHealthFields((name) => Deno.env.get(name)),
+      },
+    });
   }
 
   if (request.method === "POST" && path.endsWith("/mint-trial")) {

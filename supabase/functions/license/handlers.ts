@@ -2,11 +2,18 @@
 // per-license signature, clock), so the Deno tests run with no network, disk, or
 // env. The HTTP entrypoint (index.ts) wires the real implementations;
 // index.test.ts wires fakes. Secrets never appear here — only ids and verdicts,
-// and check-in NEVER returns the license key.
+// and check-in NEVER returns the license key. The one exception is
+// `verifyLemonSqueezySignature`, whose webhook secret is passed in as an INJECTED
+// argument (still never read from env or logged here, consistent with the
+// "every side effect injected" contract).
 
 import type { StableRelease } from "./github.ts";
 import { parseMajor } from "./github.ts";
-import type { RequestSignatureResult } from "./requestSignature.ts";
+import {
+  hmacSha256Hex,
+  type RequestSignatureResult,
+  timingSafeEqualHex,
+} from "./requestSignature.ts";
 
 /** A `device_trials` row, as the mint + check-in logic read it. */
 export interface TrialRow {
@@ -123,7 +130,7 @@ export class KeygenMachineLimitError extends Error {}
 
 /** The Keygen admin seam (holds the secret token in index.ts, never here). */
 export interface KeygenAdmin {
-  /** Creates a 30-day trial license; resolves its resource id + secret key. */
+  /** Creates a trial license whose duration the entrypoint chooses (env-backed via `trialDurationMs`); resolves its resource id + secret key. */
   createTrialLicense(): Promise<{ id: string; key: string }>;
   /**
    * Upgrades a license to Paid: swaps the policy to the Paid policy AND clears the
@@ -576,6 +583,23 @@ async function validateWithRepair(
   }
   // Unknown invalid code: fail closed (blocked) rather than let an unrecognized state through.
   return { terminal: reply(200, { status: "expired", licenseID }) };
+}
+
+/**
+ * Verifies a Lemon Squeezy webhook signature: the lower-case hex HMAC-SHA256 of
+ * the raw request body under `secret` must match `signature` (constant-time).
+ * The secret is INJECTED (never read from env or logged here), so the real HMAC
+ * gate is unit-testable; reuses the function's single `hmacSha256Hex` +
+ * `timingSafeEqualHex` (shared with check-in's signature path). Resolves a bool —
+ * never throws — so the caller maps a mismatch to a single `401`.
+ */
+export async function verifyLemonSqueezySignature(
+  rawBody: string,
+  signature: string,
+  secret: string,
+): Promise<boolean> {
+  const expected = await hmacSha256Hex(secret, rawBody);
+  return timingSafeEqualHex(expected, signature);
 }
 
 /**
