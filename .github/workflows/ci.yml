@@ -36,6 +36,15 @@ jobs:
         env:
           STOWER_SKIP_FM_INTEGRATION: "1"
         run: ./Scripts/precheck.sh
+      # Release-config build: proves the `#if DEBUG` seams compile OUT of a Release
+      # binary. precheck's Step 3 `swift build` is Debug (DEBUG defined), so a
+      # reference to a `#if DEBUG`-only symbol from non-debug code passes locally
+      # yet would break — or silently ship a debug-only lever into — the Release
+      # app. This step turns that into a hard CI failure. Kept OUT of the per-commit
+      # precheck hook on purpose (a full release build ~doubles build time); CI is
+      # the right altitude, alongside the FM-suite and keygen-integration divergences.
+      - name: Release-config build (debug seams must compile out)
+        run: swift build -c release
 
   # Licensing integration tier: stands up a real local Keygen CE and runs the Deno
   # integration suite against it, proving our JSON:API payloads + the offline
