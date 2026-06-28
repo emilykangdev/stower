@@ -8,10 +8,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Compose reads .env itself for interpolation; the script also needs KEYGEN_ACCOUNT_ID.
+# The committed config is .env.docker.fake (renamed from .env so it's unmistakably
+# fake throwaway harness values, never real env). Sourcing it exports KEYGEN_ACCOUNT_ID
+# for this script; compose gets the same values via --env-file (see compose() below) —
+# it no longer auto-loads them, since auto-load only applies to a file named ".env".
 set -a
 # shellcheck disable=SC1091
-source ./.env
+source ./.env.docker.fake
 set +a
 
 readonly BASE_URL="http://localhost:8080"
@@ -20,7 +23,7 @@ readonly RUNTIME_ENV=".runtime.env"
 # (200/400/401/403/404) means Keygen is serving. 000 is curl's "no response yet".
 readonly READY_TIMEOUT_SECONDS=180
 
-compose() { docker compose "$@"; }
+compose() { docker compose --env-file .env.docker.fake "$@"; }
 
 echo "==> Starting Postgres + Redis"
 compose up -d pg redis

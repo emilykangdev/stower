@@ -7,7 +7,8 @@ name: stower-keygen-harness
 
 # Shared Keygen env. v1.6.0 requires KEYGEN_DOMAIN at runtime in addition to
 # KEYGEN_HOST (undocumented — boot crashes on a nil Keygen::DOMAIN without it).
-# Values are interpolated from .env in this directory.
+# Values are interpolated from .env.docker.fake in this directory (passed via
+# `--env-file` by up.sh/down.sh — compose only auto-loads a file named ".env").
 x-keygen-env: &keygen-env
   SECRET_KEY_BASE: ${SECRET_KEY_BASE}
   ENCRYPTION_DETERMINISTIC_KEY: ${ENCRYPTION_DETERMINISTIC_KEY}
