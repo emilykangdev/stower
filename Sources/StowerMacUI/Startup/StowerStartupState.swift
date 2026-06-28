@@ -14,13 +14,13 @@ internal enum StowerStartupState: Sendable, Equatable {
     /// The model can't serve verdicts; the reason selects the screen variant.
     case modelUnavailable(StowerStartupModelUnavailableReason)
 
-    /// The model is available but no license is stored yet; the entry screen is
-    /// shown. A non-nil error means a prior activate attempt failed (retryable).
-    case needsLicense(StowerLicenseGateError?)
+    /// The model is available but the license check did not pass; the context
+    /// selects the entry-screen variant (trial-ended / upgrade / connect / retry).
+    case needsLicense(StowerLicenseEntryContext)
 
-    /// Activating the entered key against Lemon Squeezy — the only network call,
-    /// first run only. Shown solely during the activate round-trip.
-    case checkingLicense
+    /// Resolving the license — minting a trial or revalidating an existing lease.
+    /// The reason selects the spinner sub-label ("Starting…" vs. "Checking…").
+    case checkingLicense(StowerCheckingLicenseReason)
 
     /// Model is available; attempting the board load behind the permission gate.
     case checkingMessages

@@ -3,8 +3,9 @@ import Testing
 
 @testable import StowerMacUI
 
-/// The licensing ordering, activation, persistence, and re-entrancy invariants
-/// (I1–I8, I11, I14).
+/// The model-side licensing wiring: the gate runs only after availability
+/// (B-I11), the `.checkingLicense` reason is picked from `hasLease()` (B-I13), and
+/// each `StowerLicenseStatus` routes to the right state (B-I4/B-I7 + the rest).
 ///
 /// Split from `StowerStartupModelTests` to keep each suite within the type-body
 /// length budget. Same `StowerFakeStartupProvider` + `StowerFakeLicenseGate`
@@ -24,151 +25,86 @@ import Testing
         )
     }
 
-    @Test("I1: a stored license proceeds without any activate network call")
-    internal func storedLicenseSkipsActivation() async {
-        let gate = StowerFakeLicenseGate(hasLicense: true)
+    @Test("a valid status proceeds into the board flow")
+    internal func validStatusProceeds() async {
+        let gate = StowerFakeLicenseGate(hasLease: true, statuses: [.status(.valid)])
         let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
         model.start()
         await model.activeRun?.value
         #expect(model.state == .connectedPreparingBoard)
-        #expect(gate.activateCallCount == 0)
+        #expect(gate.statusCallCount == 1)
     }
 
-    @Test("I2: no stored license routes to the entry screen after the model check")
-    internal func noLicenseRoutesToEntry() async {
-        let gate = StowerFakeLicenseGate(hasLicense: false)
-        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
-        model.start()
-        await model.activeRun?.value
-        #expect(model.state == .needsLicense(nil))
-        #expect(gate.activateCallCount == 0)
-    }
-
-    @Test("I3/I11: a valid activation persists the trimmed key and routes to the board")
-    internal func activationPersistsTrimmedKeyAndRoutes() async {
-        let gate = StowerFakeLicenseGate(
-            hasLicense: false,
-            activate: [.outcome(.activated(instanceID: "inst-1"))]
-        )
-        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
-        model.start()
-        await model.activeRun?.value
-        model.submitLicense("  KEY  ")
-        await model.activeRun?.value
-        #expect(model.state == .connectedPreparingBoard)
-        #expect(gate.persistedLicenses == [StowerStoredLicense(key: "KEY", instanceID: "inst-1")])
-    }
-
-    @Test("I3: a valid activation still routes an FDA-missing load to the FDA screen")
-    internal func activationRoutesFDAFailure() async {
+    @Test("a valid status still routes an FDA-missing load to the FDA screen")
+    internal func validStatusRoutesFDAFailure() async {
         let path = "~/Library/Messages/chat.db"
         let provider = StowerFakeStartupProvider(
             loadBehaviors: [.failure(.fullDiskAccessMissing(path: path))]
         )
-        let gate = StowerFakeLicenseGate(
-            hasLicense: false,
-            activate: [.outcome(.activated(instanceID: "inst"))]
-        )
+        let gate = StowerFakeLicenseGate(hasLease: true, statuses: [.status(.valid)])
         let model = makeModel(provider: provider, licenseGate: gate)
         model.start()
-        await model.activeRun?.value
-        model.submitLicense("KEY")
         await model.activeRun?.value
         #expect(model.state == .needsFullDiskAccess(path: path))
     }
 
-    @Test("I4: an invalid activation persists nothing and shows the invalid error")
-    internal func invalidActivationShowsError() async {
-        let gate = StowerFakeLicenseGate(hasLicense: false, activate: [.outcome(.invalid)])
-        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
-        model.start()
-        await model.activeRun?.value
-        model.submitLicense("KEY")
-        await model.activeRun?.value
-        #expect(model.state == .needsLicense(.invalid))
-        #expect(gate.persistedLicenses.isEmpty)
-    }
-
-    @Test("I5: a couldNotReach activation persists nothing and shows the retry error")
-    internal func couldNotReachActivationShowsError() async {
-        let gate = StowerFakeLicenseGate(hasLicense: false, activate: [.outcome(.couldNotReach)])
-        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
-        model.start()
-        await model.activeRun?.value
-        model.submitLicense("KEY")
-        await model.activeRun?.value
-        #expect(model.state == .needsLicense(.couldNotReach))
-        #expect(gate.persistedLicenses.isEmpty)
-    }
-
-    @Test("I6: an activation superseded by cancel() neither persists nor commits")
-    internal func supersededActivationDoesNotPersist() async {
+    @Test("B-I4: a trialExpired status routes to needsLicense(.trialExpired) carrying the id")
+    internal func trialExpiredRoutesToEntry() async {
         let gate = StowerFakeLicenseGate(
-            hasLicense: false,
-            activate: [.blockUntilReleased(.activated(instanceID: "inst"))]
+            hasLease: true,
+            statuses: [.status(.trialExpired(licenseID: "lic-42"))]
         )
         let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
         model.start()
         await model.activeRun?.value
-        model.submitLicense("A")
-        while gate.activateCallCount < 1 {
-            await Task.yield()
-        }
-        let runA = model.activeRun
-        // A cancel() (e.g. the root view disappears) bumps the generation while the
-        // activate is blocked; the generation guard must then drop the late persist.
-        model.cancel()
-        gate.release()
-        await runA?.value
-        #expect(gate.persistedLicenses.isEmpty)
+        #expect(model.state == .needsLicense(.trialExpired(licenseID: "lic-42")))
     }
 
-    @Test("I7: the license gate is never asked when the model is unavailable")
-    internal func unavailableModelNeverActivates() async {
-        let gate = StowerFakeLicenseGate(hasLicense: false)
+    @Test("B-I7: a wrongVersion status routes to needsLicense(.upgradeRequired) carrying the id")
+    internal func wrongVersionRoutesToUpgrade() async {
+        let gate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.status(.wrongVersion(licenseID: "lic-7"))]
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        model.start()
+        await model.activeRun?.value
+        #expect(model.state == .needsLicense(.upgradeRequired(licenseID: "lic-7")))
+    }
+
+    @Test("a couldNotReach status routes to needsLicense(.couldNotReach)")
+    internal func couldNotReachRoutesToRetry() async {
+        let gate = StowerFakeLicenseGate(hasLease: true, statuses: [.status(.couldNotReach)])
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        model.start()
+        await model.activeRun?.value
+        #expect(model.state == .needsLicense(.couldNotReach))
+    }
+
+    @Test("B-I8 (model): a needsTrialOnline status routes to needsLicense(.connectOnce)")
+    internal func needsTrialOnlineRoutesToConnectOnce() async {
+        let gate = StowerFakeLicenseGate(hasLease: false, statuses: [.status(.needsTrialOnline)])
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        model.start()
+        await model.activeRun?.value
+        #expect(model.state == .needsLicense(.connectOnce))
+    }
+
+    @Test("B-I11: the license gate is never asked when the model is unavailable")
+    internal func unavailableModelNeverChecksLicense() async {
+        let gate = StowerFakeLicenseGate(hasLease: false)
         let provider = StowerFakeStartupProvider(availability: .unavailable(.deviceNotEligible))
         let model = makeModel(provider: provider, licenseGate: gate)
         model.start()
         await model.activeRun?.value
         #expect(model.state == .modelUnavailable(.deviceNotEligible))
-        #expect(gate.activateCallCount == 0)
+        #expect(gate.statusCallCount == 0)
     }
 
-    @Test("I8: a submit while an activation is in flight is ignored — only one POST fires")
-    internal func reentrantSubmitIgnoredWhileActivating() async {
-        let gate = StowerFakeLicenseGate(
-            hasLicense: false,
-            activate: [.blockUntilReleased(.activated(instanceID: "inst"))]
-        )
-        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
-        model.start()
-        await model.activeRun?.value
-        model.submitLicense("A")
-        while gate.activateCallCount < 1 {
-            await Task.yield()
-        }
-        model.submitLicense("B")  // ignored: an activation is already in flight
-        gate.release()
-        await model.activeRun?.value
-        #expect(gate.activateCallCount == 1)
-        #expect(model.state == .connectedPreparingBoard)
-    }
-
-    @Test("I11: an all-whitespace key does not submit")
-    internal func whitespaceKeyDoesNotSubmit() async {
-        let gate = StowerFakeLicenseGate(hasLicense: false)
-        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
-        model.start()
-        await model.activeRun?.value
-        model.submitLicense("   \n")
-        #expect(gate.activateCallCount == 0)
-        #expect(model.state == .needsLicense(nil))
-    }
-
-    @Test("I14: an activation commits .checkingLicense before resolving")
-    internal func activationShowsCheckingLicense() async {
+    @Test("B-I13: a warm lease commits .checkingLicense(.revalidating)")
+    internal func warmLeaseShowsRevalidating() async {
         let recorder = StowerStateRecorder()
-        let gate = StowerFakeLicenseGate(hasLicense: false, activate: [.outcome(.invalid)])
+        let gate = StowerFakeLicenseGate(hasLease: true, statuses: [.status(.valid)])
         let model = makeModel(
             provider: StowerFakeStartupProvider(),
             licenseGate: gate,
@@ -176,9 +112,106 @@ import Testing
         )
         model.start()
         await model.activeRun?.value
-        model.submitLicense("KEY")
+        #expect(recorder.states.contains(.checkingLicense(.revalidating)))
+        #expect(!recorder.states.contains(.checkingLicense(.startingTrial)))
+    }
+
+    @Test("B-I13: first run (no lease) commits .checkingLicense(.startingTrial)")
+    internal func firstRunShowsStartingTrial() async {
+        let recorder = StowerStateRecorder()
+        let gate = StowerFakeLicenseGate(hasLease: false, statuses: [.status(.valid)])
+        let model = makeModel(
+            provider: StowerFakeStartupProvider(),
+            licenseGate: gate,
+            onCommit: { recorder.append($0) }
+        )
+        model.start()
         await model.activeRun?.value
-        #expect(recorder.states.contains(.checkingLicense))
+        #expect(recorder.states.contains(.checkingLicense(.startingTrial)))
+        #expect(!recorder.states.contains(.checkingLicense(.revalidating)))
+    }
+
+    @Test("the model passes its clock's now into currentStatus")
+    internal func passesClockNow() async {
+        let fixedNow = Date(timeIntervalSince1970: 1_700_000_000)
+        let gate = StowerFakeLicenseGate(hasLease: true, statuses: [.status(.valid)])
+        let model = StowerStartupModel(
+            provider: StowerFakeStartupProvider(),
+            licenseGate: gate,
+            clock: { fixedNow },
+            sleep: { _ in }
+        )
+        model.start()
+        await model.activeRun?.value
+        #expect(gate.recordedNowValues == [fixedNow])
+    }
+
+    @Test("a status check superseded by cancel() never commits its result")
+    internal func supersededStatusDoesNotCommit() async {
+        let gate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.blockUntilReleased(.trialExpired(licenseID: "lic-1"))]
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        model.start()
+        while gate.statusCallCount < 1 {
+            await Task.yield()
+        }
+        let run = model.activeRun
+        // A cancel() bumps the generation while currentStatus is blocked; the
+        // generation guard must then drop the late commit.
+        model.cancel()
+        gate.release()
+        await run?.value
+        #expect(model.state != .needsLicense(.trialExpired(licenseID: "lic-1")))
+    }
+
+    // MARK: - Dismissal isolation (I3)
+
+    @Test("dismissed badge does NOT suppress .trialExpired routing (I3)")
+    internal func dismissedBadgeDoesNotSuppressTrialExpired() async {
+        // Even when the badge has been dismissed (isDismissed == true in the
+        // presentation layer), the warranted .trialExpired license status must still
+        // route to the entry screen. The startup model is completely unaware of
+        // the dismissal flag; only the view layer reads it.
+        let gate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.status(.trialExpired(licenseID: "lic-42"))],
+            trialBadge: StowerTrialBadge(
+                licenseID: "lic-42",
+                expiry: Date(timeIntervalSince1970: 1_800_000_000)
+            )
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        model.start()
+        await model.activeRun?.value
+        // The model routes to the paywall — no badge suppression here.
+        #expect(model.state == .needsLicense(.trialExpired(licenseID: "lic-42")))
+    }
+
+    @Test("trialBadge() on the model delegates to the gate and carries the decoded expiry")
+    internal func modelTrialBadgeDelegatesToGate() async {
+        let expiry = Date(timeIntervalSince1970: 1_800_000_000)
+        let expectedBadge = StowerTrialBadge(licenseID: "lic-1", expiry: expiry)
+        let gate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.status(.valid)],
+            trialBadge: expectedBadge
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        // The read-through is available immediately, before start() (pure local read).
+        #expect(model.trialBadge() == expectedBadge)
+    }
+
+    @Test("trialBadge() is nil when the gate returns nil (paid license)")
+    internal func modelTrialBadgeNilForPaid() async {
+        let gate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.status(.valid)],
+            trialBadge: nil
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        #expect(model.trialBadge() == nil)
     }
 }
 

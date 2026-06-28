@@ -3,9 +3,9 @@ import Testing
 
 @testable import StowerMacUI
 
-/// The trial-mint client returns `{key, licenseID}` on success, `.retryShortly`
-/// on the server's transient status, and `.unreachable` on a transport throw —
-/// never a half-minted `{null, null}` — all from a stub transport.
+/// The trial-mint client returns `{licenseKey, licenseID, machineFile}` on
+/// success, `.retryShortly` on the server's transient status, and `.unreachable`
+/// on a transport throw — never a half-minted license — all from a stub transport.
 @Suite internal struct StowerTrialMintClientTests {
     private let baseURL = "https://example.invalid/functions/v1/license"
 
@@ -25,10 +25,17 @@ import Testing
         )
     }
 
-    @Test("a 200 with key and licenseID mints")
+    @Test("a 200 with licenseKey, licenseID, and machineFile mints")
     internal func mints() async throws {
-        let client = try client(status: 200, json: #"{"key":"KEY-1","licenseID":"lic-1"}"#)
-        #expect(await client.mint(fingerprint: "fp") == .minted(key: "KEY-1", licenseID: "lic-1"))
+        let client = try client(
+            status: 200,
+            json: #"{"minted":true,"licenseKey":"KEY-1","licenseID":"lic-1","#
+                + #""machineID":"m-1","machineFile":"MF-1"}"#
+        )
+        #expect(
+            await client.mint(fingerprint: "fp")
+                == .minted(licenseKey: "KEY-1", licenseID: "lic-1", machineFile: "MF-1")
+        )
     }
 
     @Test("a 503 is a transient retry, not a failure")
@@ -46,15 +53,18 @@ import Testing
         #expect(await client.mint(fingerprint: "fp") == .unreachable)
     }
 
-    @Test("a 200 missing a field is unreachable, never a half-minted license")
+    @Test("a 200 missing the machineFile is unreachable, never a half-minted license")
     internal func unreachableOnPartialBody() async throws {
-        let client = try client(status: 200, json: #"{"key":"KEY-1"}"#)
+        let client = try client(status: 200, json: #"{"licenseKey":"KEY-1","licenseID":"lic-1"}"#)
         #expect(await client.mint(fingerprint: "fp") == .unreachable)
     }
 
     @Test("a 200 with empty fields is unreachable")
     internal func unreachableOnEmptyFields() async throws {
-        let client = try client(status: 200, json: #"{"key":"","licenseID":""}"#)
+        let client = try client(
+            status: 200,
+            json: #"{"licenseKey":"","licenseID":"","machineFile":""}"#
+        )
         #expect(await client.mint(fingerprint: "fp") == .unreachable)
     }
 
@@ -69,7 +79,9 @@ import Testing
                 let response = try #require(
                     HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)
                 )
-                return (Data(#"{"key":"k","licenseID":"l"}"#.utf8), response)
+                return (
+                    Data(#"{"licenseKey":"k","licenseID":"l","machineFile":"m"}"#.utf8), response
+                )
             }
         )
 

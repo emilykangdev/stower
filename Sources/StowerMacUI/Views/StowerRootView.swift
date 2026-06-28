@@ -14,11 +14,31 @@ import SwiftUI
 public struct StowerRootView: View {
     @State private var model: StowerStartupModel
     @State private var boardModel: StowerBoardViewModel
-    @State private var licenseKey = ""
+
+    /// Cached active-trial badge data, resolved when entering the board state.
+    ///
+    /// Nil means "no active trial" (paid/perpetual); it is NOT cleared on banner
+    /// dismissal, so the gear-menu Buy path persists. Banner visibility is tracked
+    /// separately by `trialBannerDismissed`.
+    @State private var trialBadge: StowerTrialBadge?
+
+    /// Whether the user has dismissed the trial banner this session.
+    ///
+    /// Seeded from the persisted dismissal flag on board entry. Hides the banner
+    /// only; `trialBadge` — and therefore the gear-menu Buy — is unaffected.
+    @State private var trialBannerDismissed = false
+
     private let settings: StowerSystemSettingsOpener
 
+    /// The dismissal seam for the trial badge.
+    ///
+    /// Reads and writes the UserDefaults flag that hides the badge persistently
+    /// across launches. The production path uses `UserDefaults.standard`; tests
+    /// inject a fake.
+    private let badgeDismissal: any StowerTrialBadgeDismissing
+
     /// Builds the production root wired to the shared engine-backed composition and
-    /// the real Lemon Squeezy license gate.
+    /// the real Edge-Function-backed license gate.
     ///
     /// Throws only when an essential store can't be opened (a true disk-level draft
     /// store failure) — the same posture as any other essential-store startup fault.
@@ -44,8 +64,9 @@ public struct StowerRootView: View {
             undoManager: undoManager,
             dropper: composition.dropper,
             contacts: composition.contacts,
-            licenseGate: StowerLemonSqueezyLicenseGate(),
+            licenseGate: StowerLicenseGate(),
             settings: StowerSystemSettingsOpener(),
+            badgeDismissal: StowerUserDefaultsBadgeDismissal(),
             flusher: flusher
         )
     }
@@ -72,6 +93,7 @@ public struct StowerRootView: View {
         contacts: StowerContactsAccess = .denied,
         licenseGate: any StowerLicenseGating,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
+        badgeDismissal: any StowerTrialBadgeDismissing = StowerUserDefaultsBadgeDismissal(),
         flusher: StowerTerminationFlusher? = nil
     ) {
         let startupModel = StowerStartupModel(provider: startup, licenseGate: licenseGate)
@@ -90,6 +112,7 @@ public struct StowerRootView: View {
         _boardModel = State(initialValue: boardModel)
         flusher?.onFlush { [weak boardModel] in await boardModel?.flushAll() }
         self.settings = settings
+        self.badgeDismissal = badgeDismissal
     }
 
     /// The startup screen for the current state, cross-fading on change.
@@ -105,11 +128,11 @@ public struct StowerRootView: View {
         switch model.state {
         case .checkingModel, .checkingLicense, .checkingMessages:
             StowerCheckingView(state: model.state)
-        case .needsLicense(let error):
+        case .needsLicense(let context):
             StowerLicenseEntryView(
-                key: $licenseKey,
-                error: error,
-                onActivate: { model.submitLicense($0) }
+                context: context,
+                onBuy: { openCheckout(licenseID: $0) },
+                onRetry: { model.checkAgain() }
             )
         case .modelUnavailable(let reason):
             StowerModelUnavailableView(
@@ -122,10 +145,32 @@ public struct StowerRootView: View {
         case .needsFullDiskAccessStillMissing(let path):
             fdaView(path: path, stillMissing: true)
         case .connectedPreparingBoard:
-            StowerBoardView(model: boardModel)
+            StowerBoardView(
+                model: boardModel,
+                trial: trialBadge,
+                showsTrialBanner: !trialBannerDismissed,
+                onBuy: { openCheckout(licenseID: $0) },
+                onDismissTrial: {
+                    badgeDismissal.dismiss()
+                    trialBannerDismissed = true
+                }
+            )
+            .onAppear {
+                trialBadge = model.trialBadge()
+                trialBannerDismissed = badgeDismissal.isDismissed
+            }
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
         }
+    }
+
+    /// Opens the Lemon Squeezy checkout bound to `licenseID`.
+    ///
+    /// The purchase webhook then upgrades this exact device license. A no-op if the
+    /// URL won't build.
+    private func openCheckout(licenseID: String) {
+        guard let url = StowerLicenseCheckInClient.checkoutURL(licenseID: licenseID) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private func fdaView(path: String, stillMissing: Bool) -> some View {

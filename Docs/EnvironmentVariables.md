@@ -7,10 +7,10 @@ Every env var the licensing system reads, what it's for, and what changes betwee
 reports any that are unset (by name, never value).
 
 > **Scope.** This covers the **Edge Function** (the licensing brain), which is
-> built. The Mac-app-side config (store/product IDs, function base URL) is
-> placeholder/unwired today (Plan B) — see the last section. The local Keygen CE
-> test harness has its own separate env, documented in
-> [`Scripts/Keygen/README.md`](../Scripts/Keygen/README.md), not here.
+> built. The Mac-app-side config (Edge Function URL, Keygen public key, checkout
+> URL) is now **wired by Plan B** but still placeholder values until prod ops
+> (G10) — see §3. The local Keygen CE test harness has its own separate env,
+> documented in [`Scripts/Keygen/README.md`](../Scripts/Keygen/README.md), not here.
 
 ---
 
@@ -74,16 +74,36 @@ A clean way to keep the two sets apart is dotenvx multi-environment files
 
 ---
 
-## 3. App-side config (not env vars — for completeness)
+## 3. App-side config (not env vars — one `StowerLicenseConfig`, public values)
 
-The Mac app doesn't read OS env vars; these are compiled/injected values, and the
-purchase side is **placeholder/unwired today** (Plan B). They still differ
-test↔prod once wired:
+The Mac app doesn't read OS env vars for licensing; the three values it needs live
+in one place: **`StowerLicenseConfig`** (`Sources/StowerMacUI/Startup/StowerLicenseConfig.swift`).
+All three are **public** — the vendor-split invariant (§3 of `licensing-contract.md`):
+every secret (the Keygen admin `KEYGEN_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`,
+`LS_WEBHOOK_SECRET` — all in §1 above) lives **only** in the Edge Function env and
+**never ships in the binary**. The app holds only public values.
 
-| Thing | Where | Today | Differs test↔prod? |
-|-------|-------|-------|--------------------|
-| Lemon Squeezy `expectedStoreID` / `expectedProductID` | compiled constants in `StowerLemonSqueezyLicenseGate.swift` | **placeholder `0` / `0`** — must be set to real ids before selling | yes (test vs live store/product) |
-| Edge Function base URL | injected `functionBaseURL` on `StowerTrialMintClient` (e.g. `https://<ref>.supabase.co/functions/v1/license`) | unwired (Plan B) | yes (test vs prod Supabase ref) |
+`StowerLicenseConfig` resolves in three layers: the compiled default
+(`staging` in a `DEBUG` build, `production` otherwise) → a per-field
+`STOWER_*` `ProcessInfo` override when present. So a Debug build points at the test
+deployment automatically; a Release build uses `production`; and any build can be
+redirected via env vars without recompiling.
+
+| # | Value | `StowerLicenseConfig` field | What it is | Differs test↔prod? |
+|---|-------|-----------------------------|-----------|--------------------|
+| 1 | Edge Function base URL | `functionBaseURL` (override `STOWER_FUNCTION_URL`) | the public endpoint the app mints/checks-in against | yes — `staging` = the test Supabase ref; `production` = placeholder until prod ops |
+| 2 | Keygen account **public** key (hex) | `keygenPublicKeyHex` (override `STOWER_KEYGEN_PUBLIC_KEY`) | the Ed25519 **public** key that verifies a signed machine file **offline** (`load()`/`offlineAuthority`, I6). Public — NOT the admin `KEYGEN_TOKEN` | **same** — account-level keypair, so staging + production share it (one Keygen account); differs only if prod moves to its own account |
+| 3 | Lemon Squeezy **checkout URL** | `checkoutBaseURL` (override `STOWER_CHECKOUT_URL`) | the public product/variant Buy link; the app appends `checkout[custom][license_id]=<licenseID>` | yes (test vs live product/variant) |
+
+`production` is the prod-ops checklist (G10): fill its three fields before paid
+sales. `/health` does not cover them (they're app-side). Until `production` is set,
+a Release first run can't reach the function and lands on `.connectOnce`.
+
+> **No store/product IDs anymore.** The old Lemon Squeezy `/activate` path
+> (`expectedStoreID`/`expectedProductID` on the deleted `StowerLemonSqueezyLicenseGate`)
+> is gone — the app no longer calls Keygen or Lemon Squeezy directly. Purchase
+> attribution is now the `license_id` carried in the checkout URL → the
+> `order_created` webhook → `handleWebhook` (server-side).
 
 ---
 

@@ -23,6 +23,36 @@ extension StowerBoardView {
         }
         ToolbarItem(placement: .primaryAction) { presetPicker }
         ToolbarItem(placement: .primaryAction) { refreshButton }
+        // The permanent license home: always mounted so the Buy path is
+        // discoverable even after the badge is dismissed. Shows the trial end
+        // date + a "Buy Stower v0" action only while on an active trial.
+        ToolbarItem(placement: .primaryAction) { licenseMenu }
+    }
+
+    /// A gear menu that surfaces the license status and the single buy action.
+    ///
+    /// The trial date label is non-actionable (status only); the "Buy Stower v0"
+    /// item opens the checkout. The gear is always visible so users can find the
+    /// buy path even after dismissing the badge. Paid / no-trial → the menu
+    /// renders with no trial label and no buy item.
+    internal var licenseMenu: some View {
+        Menu {
+            if let badge = trial {
+                Section {
+                    Text(StowerTrialBadgeView.endLabel(for: badge.expiry))
+                }
+                Button("Buy Stower v0") {
+                    onBuy(badge.licenseID)
+                }
+            }
+        } label: {
+            Image(systemName: "gearshape")
+        }
+        // Paid / no-trial has no menu items, so disable the control rather than open
+        // an empty dead-end; the anchor stays visible for when a trial is active.
+        .disabled(trial == nil)
+        .help("License & settings")
+        .accessibilityLabel("License and settings menu")
     }
 
     /// The clean at-rest row: a real Button opens the composer (so keyboard/VoiceOver

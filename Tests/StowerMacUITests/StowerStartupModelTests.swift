@@ -15,7 +15,7 @@ import Testing
     /// tests reach the board flow unchanged; the licensing tests pass their own.
     private func makeModel(
         provider: StowerFakeStartupProvider,
-        licenseGate: any StowerLicenseGating = StowerFakeLicenseGate(hasLicense: true),
+        licenseGate: any StowerLicenseGating = StowerFakeLicenseGate(hasLease: true),
         config: StowerStartupDebtConfig = .appDefault,
         onCommit: (@MainActor @Sendable (StowerStartupState) -> Void)? = nil
     ) -> StowerStartupModel {
