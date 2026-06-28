@@ -67,26 +67,12 @@ internal struct StowerLicenseGate: StowerLicenseGating {
         )
         switch result {
         case .ok(let machineFile):
-            let refreshed = StowerLicenseLease(
-                licenseKey: lease.licenseKey,
-                licenseID: lease.licenseID,
-                machineFile: machineFile,
-                validatedAt: now
-            )
-            // A failed Keychain write leaves no durable lease for next-launch
-            // revalidation or the offline fallback; and a stored file we cannot
-            // re-verify (signature/entitlement/device) is one we cannot honor next
-            // launch. Report the transient failure rather than a `.valid` the app
-            // cannot stand behind.
-            guard leaseStore.save(refreshed), grantsAccess(now: now) else {
-                return .couldNotReach
-            }
-            return .valid
+            return refreshedStatus(machineFile: machineFile, lease: lease, now: now)
         case .trialExpired(let id):
             // Drop the cached file so its remaining machine-file TTL cannot re-grant
-            // access offline after the user has already seen the paywall —
-            // offlineStatus is TTL-only (I14) and would otherwise let an expired
-            // trial back in simply by disconnecting.
+            // access offline after the user has already seen the paywall — the offline
+            // fallback is TTL-only (I14) and would otherwise let an expired trial back
+            // in simply by disconnecting.
             leaseStore.clear()
             return .trialExpired(licenseID: id)
         case .wrongVersion(let id):
@@ -104,26 +90,46 @@ internal struct StowerLicenseGate: StowerLicenseGating {
             // owns the real UX) both degrade to a transient retry in Plan B.
             return .couldNotReach
         case .unreachable:
-            return offlineStatus(now: now)
+            // Offline fallback: the cached signed lease authorizes this build. The
+            // machine-file TTL is the offline boundary (I14); an online `expired`
+            // verdict clears the lease, so no stale expired file reaches here.
+            return authorizes(machineFile: lease.machineFile, now: now)
+                ? .valid : .couldNotReach
         }
     }
 
-    /// The offline fallback when the check-in is unreachable: `.valid` when the
-    /// stored lease still grants access, else `.couldNotReach`.
-    private func offlineStatus(now: Date) -> StowerLicenseStatus {
-        grantsAccess(now: now) ? .valid : .couldNotReach
+    /// Stores a fresh check-in `.ok` file and returns `.valid`, or `.couldNotReach`.
+    ///
+    /// Validates the fresh file in memory BEFORE overwriting the cached lease: a bad
+    /// checkout must not destroy a still-valid offline lease, and a file the app
+    /// cannot honor must not become a `.valid` it can't stand behind.
+    private func refreshedStatus(
+        machineFile: String,
+        lease: StowerLicenseLease,
+        now: Date
+    ) -> StowerLicenseStatus {
+        guard authorizes(machineFile: machineFile, now: now) else { return .couldNotReach }
+        let refreshed = StowerLicenseLease(
+            licenseKey: lease.licenseKey,
+            licenseID: lease.licenseID,
+            machineFile: machineFile,
+            validatedAt: now
+        )
+        guard leaseStore.save(refreshed) else { return .couldNotReach }
+        return .valid
     }
 
-    /// Whether the stored signed lease authorizes THIS build right now.
+    /// Whether `machineFile` authorizes THIS build right now.
     ///
-    /// True when it loads (signature verifies, I6), its machine-file TTL is in the
-    /// future (I14), its entitlements allow this build (I5), and it was checked out
-    /// for THIS device (the device match stops a file copied from another Mac). The
-    /// trial's own expiry is NOT re-checked here — the TTL is the offline boundary
-    /// (I14), and an online `expired` verdict clears the lease, so a stale expired
-    /// file never reaches this path.
-    private func grantsAccess(now: Date) -> Bool {
-        guard let authority = leaseStore.offlineAuthority(now: now),
+    /// True when it verifies (signature, I6), its machine-file TTL is in the future
+    /// (I14), its entitlements allow this build (I5), and it was checked out for THIS
+    /// device (the device match stops a file copied from another Mac). Pure decode —
+    /// touches no storage, so a candidate check-out can be validated BEFORE it
+    /// overwrites a still-valid cached lease. The trial's own expiry is not checked
+    /// here; the mint path handles that explicitly, and an online `expired` verdict
+    /// clears the lease.
+    private func authorizes(machineFile: String, now: Date) -> Bool {
+        guard let authority = leaseStore.offlineAuthority(forMachineFile: machineFile, now: now),
             authority.allowsThisBuild,
             authority.matchesDevice(fingerprint.fingerprint())
         else {
@@ -138,6 +144,25 @@ internal struct StowerLicenseGate: StowerLicenseGating {
     private func mintFlow(now: Date) async -> StowerLicenseStatus {
         switch await client.mint(fingerprint: fingerprint.fingerprint()) {
         case .minted(let licenseKey, let licenseID, let machineFile):
+            // Do not blind-trust the mint reply, and validate from the file itself
+            // BEFORE storing so an expired/unauthorized reply never overwrites state.
+            // The Edge Function reuses an existing trial row for a known fingerprint
+            // (handlers.ts `mintTrial`), so an already-expired trial comes back as a
+            // signed file with no `expired` verdict: a past signed license expiry
+            // routes to the paywall (never stored, so no machine-file TTL re-grants it
+            // offline). A paid/perpetual license carries a nil expiry and passes.
+            let signedExpiry = leaseStore.trialExpiry(
+                forMachineFile: machineFile,
+                licenseID: licenseID
+            )
+            if let signedExpiry, signedExpiry <= now {
+                return .trialExpired(licenseID: licenseID)
+            }
+            // Hold the minted file to the same bar as a check-in `.ok` — it must
+            // verify, authorize this build, and be bound to this device — then store.
+            guard authorizes(machineFile: machineFile, now: now) else {
+                return .couldNotReach
+            }
             let lease = StowerLicenseLease(
                 licenseKey: licenseKey,
                 licenseID: licenseID,
@@ -145,25 +170,6 @@ internal struct StowerLicenseGate: StowerLicenseGating {
                 validatedAt: now
             )
             guard leaseStore.save(lease) else { return .couldNotReach }
-            // Do not blind-trust the mint reply. The Edge Function reuses an existing
-            // trial row for a known fingerprint (handlers.ts `mintTrial`), so a device
-            // whose trial already expired — relaunching after its local lease was
-            // cleared — gets a signed file back with no `expired` verdict. Gate
-            // `.valid` on the signed license expiry the file itself carries: a past
-            // expiry routes to the paywall instead of silently re-entering the trial.
-            // A paid/perpetual license carries a nil expiry and is allowed through.
-            let signedExpiry = leaseStore.trialExpiry(forLicenseID: licenseID)
-            if let signedExpiry, signedExpiry <= now {
-                // An expired reused trial: do not leave it cached, or its machine-file
-                // TTL would re-grant offline next launch (offlineStatus is TTL-only).
-                // Clear + route to the paywall.
-                leaseStore.clear()
-                return .trialExpired(licenseID: licenseID)
-            }
-            // Hold the minted file to the same bar as a check-in .ok: it must load
-            // (signature), authorize this build (entitlement OR), and be bound to
-            // this device before the gate trusts it.
-            guard grantsAccess(now: now) else { return .couldNotReach }
             return .valid
         case .retryShortly:
             return .couldNotReach

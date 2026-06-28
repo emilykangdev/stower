@@ -251,10 +251,30 @@ import Testing
             )
         )
         // The server replies ok but with a file lacking STOWER_TRIAL/STOWER_V0; the
-        // gate must verify the stored file authorizes this build before .valid.
+        // gate must verify the file authorizes this build before .valid.
         let badFile = try machineFile(expiry: futureExpiry, codes: ["STOWER_LEGACY"])
         let client = SpyCheckInClient(checkIn: [.ok(machineFile: badFile)])
         let gate = makeGate(client: client, store: store)
         #expect(await gate.currentStatus(now: now) == .couldNotReach)
+    }
+
+    @Test("check-in ok with a bad file does not overwrite the still-valid cached lease")
+    internal func checkInOkBadFilePreservesCachedLease() async throws {
+        let goodFile = try machineFile(
+            expiry: futureExpiry,
+            codes: ["STOWER_TRIAL"],
+            fingerprint: expectedFingerprint
+        )
+        let store = makeStore()
+        let goodLease = lease(key: "KEY", id: "lic-1", file: goodFile)
+        store.save(goodLease)
+        // The server replies ok but with an unauthorized file: the gate validates it
+        // in memory first, so the good lease must survive untouched.
+        let badFile = try machineFile(expiry: futureExpiry, codes: ["STOWER_LEGACY"])
+        let client = SpyCheckInClient(checkIn: [.ok(machineFile: badFile)])
+        let gate = makeGate(client: client, store: store)
+
+        #expect(await gate.currentStatus(now: now) == .couldNotReach)
+        #expect(store.load() == goodLease)
     }
 }

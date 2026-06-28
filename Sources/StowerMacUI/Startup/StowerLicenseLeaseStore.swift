@@ -155,17 +155,27 @@ internal struct StowerLicenseLeaseStore: Sendable {
         storage.delete()
     }
 
-    /// The signed offline authority for the cached lease, or `nil` when there is
-    /// no lease, its machine-file signature fails (I6), its `enc` payload won't
-    /// decode, or its TTL (`meta.expiry`) is already at/behind `now` (I14 — no
-    /// grace).
-    ///
-    /// The caller still checks `allowsThisBuild` (the entitlement OR) before
-    /// proceeding offline; this enforces the presence-and-TTL half from signed
-    /// data only — never an unsigned local flag (I5).
+    /// The signed offline authority for the cached lease, or `nil` when there is no
+    /// lease or it does not decode/verify (delegates to the machine-file form).
     internal func offlineAuthority(now: Date) -> StowerOfflineAuthority? {
-        guard let lease = load(),
-            let payload = Self.decodePayload(lease.machineFile),
+        guard let lease = load() else { return nil }
+        return offlineAuthority(forMachineFile: lease.machineFile, now: now)
+    }
+
+    /// The signed offline authority for an arbitrary `machineFile`, or `nil` when its
+    /// signature fails (I6), its `enc` won't decode, or its TTL (`meta.expiry`) is
+    /// at/behind `now` (I14 — no grace).
+    ///
+    /// Verifies the signature itself (the file may be a fresh check-out not yet
+    /// stored), so the gate can validate a candidate BEFORE it overwrites a valid
+    /// cached lease. The caller still checks `allowsThisBuild` (the entitlement OR,
+    /// I5).
+    internal func offlineAuthority(
+        forMachineFile machineFile: String,
+        now: Date
+    ) -> StowerOfflineAuthority? {
+        guard verifyMachineFile(machineFile),
+            let payload = Self.decodePayload(machineFile),
             let expiry = Self.parseExpiry(payload.meta.expiry),
             expiry > now
         else {
@@ -181,18 +191,22 @@ internal struct StowerLicenseLeaseStore: Sendable {
         )
     }
 
-    /// The trial end date from the signed machine file, matched by `licenseID`.
-    ///
-    /// Returns the `included[type=="licenses" && id==licenseID].attributes.expiry`
-    /// date, or `nil` when the lease is absent, the machine file fails signature
-    /// verification, the license entry is missing, or its expiry is null/absent
-    /// (the paid/perpetual case). `meta.expiry` (the 7-day TTL) is never used here.
-    ///
-    /// A returned `nil` for a paid user is the expected outcome — the caller must
-    /// treat nil as "no active trial" and suppress the badge.
+    /// The trial end date from the cached lease's signed machine file, matched by
+    /// `licenseID` (delegates to the machine-file form).
     internal func trialExpiry(forLicenseID id: String) -> Date? {
-        guard let lease = load(),
-            let payload = Self.decodePayload(lease.machineFile),
+        guard let lease = load() else { return nil }
+        return trialExpiry(forMachineFile: lease.machineFile, licenseID: id)
+    }
+
+    /// The trial end date from an arbitrary signed `machineFile`, matched by
+    /// `licenseID` — the `included[licenses][id].attributes.expiry`.
+    ///
+    /// `nil` when the signature fails, the license entry is missing, or its expiry is
+    /// null (the paid/perpetual case — the caller treats nil as "no active trial").
+    /// `meta.expiry` (the TTL) is never used here.
+    internal func trialExpiry(forMachineFile machineFile: String, licenseID id: String) -> Date? {
+        guard verifyMachineFile(machineFile),
+            let payload = Self.decodePayload(machineFile),
             let entry = payload.included.first(where: {
                 $0.type == Self.licensesType && $0.id == id
             }),
