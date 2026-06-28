@@ -207,6 +207,33 @@ Legend for **Sweep-able**:
 - **Sweep-able:** no — each literal needs a named home and a meaning (per-site judgment; the right
   scope/owner differs). Route recurrences here; fix by hand.
 
+## 17. Ad-hoc gate instead of a `precheck.sh` static-source-guard family member
+
+- **Bad:** enforcing a *"X is/isn't present, here"* source-tree fact with a one-off
+  mechanism — a bespoke script, a new CI job, a hand-added `AGENTS.md` "do not…" rule —
+  or with the wrong tool (a line-oriented `grep` for a region/block-scoped fact like
+  "only inside `#if DEBUG`", which grep cannot track).
+- **Why it spreads:** each ad-hoc gate is a parallel mechanism the next agent has to
+  rediscover and imitate, so the enforcement story fragments; and a grep that can't see
+  region structure silently passes the very case it was meant to catch (reports green
+  while the rule isn't actually enforced).
+- **Good:** add the next numbered member of the `Scripts/precheck.sh` `6x`
+  static-source-guard family — a `# 6x — WHAT, WHY` block that does
+  `echo "ERROR: <what + fix>" >&2; exit 1` on violation, anchored to real call sites.
+  Pick the tool by the assertion's shape: **grep** (`grep -RInE`) for line-local facts;
+  **awk** for region/block-scoped facts ("only inside a `#if DEBUG` region," "only
+  inside a named pbxproj `XCBuildConfiguration` block"). Polarity = which outcome trips
+  `exit 1`: must-be-**absent** → a match fails; must-be-**present** → a no-match fails.
+  No external deps (no plutil/jq/python). In-tree members: `6a–6g` (module/UI
+  boundaries, chat.db literal, no-logging), `6h` (`#if DEBUG` containment, awk), `6i`
+  (`/health` wiring, grep), `6j` (no `DEBUG` in any Xcode Release config, awk).
+- **Caught by:** `gate` — the family lives in `precheck.sh` (runs every commit + CI), so
+  each member is enforced both places. The *convention* (add a member, don't fork a
+  mechanism; grep-vs-awk by shape; polarity by which outcome fails) is `judgment`,
+  documented in `AGENTS.md` "Static source guards".
+- **Sweep-able:** no — each guard asserts a different fact with a different tool; the fix
+  is to author the correct family member by hand, never a mechanical replace.
+
 ## How to add an entry
 
 Append a numbered section in the same shape: **Bad / Why it spreads / Good / Caught
