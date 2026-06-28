@@ -58,7 +58,7 @@ internal struct StowerBoardView: View {
                 .toolbar { toolbarContent }
                 .overlay(alignment: .bottomTrailing) { composerOverlay }
                 .overlay(alignment: .bottom) { undoBarOverlay }
-                .overlay(alignment: .top) { trialBadgeOverlay }
+                .safeAreaInset(edge: .top, spacing: 0) { trialBadgeOverlay }
         }
         .animation(.easeInOut(duration: Self.undoBarFade), value: model.undoBar?.id)
         .confirmationDialog(
@@ -161,11 +161,14 @@ internal struct StowerBoardView: View {
         }
     }
 
-    /// The quiet trial status banner, pinned to the top edge of the content area.
+    /// The quiet trial status banner, inset into the top of the content area so it
+    /// reserves its own space above the Contacts banner and tab picker rather than
+    /// floating over (and intercepting) them.
     ///
     /// Shown only when `trial` is non-nil (the caller has already gated on
-    /// both "has a trial" and "not dismissed"). The dismiss control writes
-    /// through `onDismissTrial`; `StowerRootView` then nils out `trial`.
+    /// both "has a trial" and "not dismissed"); when nil it is an empty view that
+    /// reserves no space. The dismiss control writes through `onDismissTrial`;
+    /// `StowerRootView` then nils out `trial`.
     @ViewBuilder internal var trialBadgeOverlay: some View {
         if let badge = trial {
             StowerTrialBadgeView(badge: badge, onDismiss: onDismissTrial)

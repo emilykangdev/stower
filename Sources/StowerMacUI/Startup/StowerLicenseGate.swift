@@ -67,14 +67,16 @@ internal struct StowerLicenseGate: StowerLicenseGating {
         )
         switch result {
         case .ok(let machineFile):
-            leaseStore.save(
-                StowerLicenseLease(
-                    licenseKey: lease.licenseKey,
-                    licenseID: lease.licenseID,
-                    machineFile: machineFile,
-                    validatedAt: now
-                )
+            let refreshed = StowerLicenseLease(
+                licenseKey: lease.licenseKey,
+                licenseID: lease.licenseID,
+                machineFile: machineFile,
+                validatedAt: now
             )
+            // A failed Keychain write leaves no durable lease for next-launch
+            // revalidation or the offline fallback; report the transient failure
+            // rather than a `.valid` the app cannot honor past this session.
+            guard leaseStore.save(refreshed) else { return .couldNotReach }
             return .valid
         case .trialExpired(let id):
             return .trialExpired(licenseID: id)
@@ -97,13 +99,20 @@ internal struct StowerLicenseGate: StowerLicenseGating {
         }
     }
 
-    /// The offline fallback: `.valid` while the signed lease's TTL is in the future
-    /// and its entitlements allow this build (I5/I14), else `.couldNotReach`.
+    /// The offline fallback when the check-in is unreachable.
+    ///
+    /// `.valid` while the signed lease's TTL is in the future (I14), its
+    /// entitlements allow this build (I5), and it was checked out for THIS device —
+    /// else `.couldNotReach`. The device match stops a signed file copied from
+    /// another Mac from granting offline access here.
     private func offlineStatus(now: Date) -> StowerLicenseStatus {
-        if let authority = leaseStore.offlineAuthority(now: now), authority.allowsThisBuild {
-            return .valid
+        guard let authority = leaseStore.offlineAuthority(now: now),
+            authority.allowsThisBuild,
+            authority.matchesDevice(fingerprint.fingerprint())
+        else {
+            return .couldNotReach
         }
-        return .couldNotReach
+        return .valid
     }
 
     /// The shared mint path — the no-lease branch and the `unknown_license`
@@ -112,14 +121,24 @@ internal struct StowerLicenseGate: StowerLicenseGating {
     private func mintFlow(now: Date) async -> StowerLicenseStatus {
         switch await client.mint(fingerprint: fingerprint.fingerprint()) {
         case .minted(let licenseKey, let licenseID, let machineFile):
-            leaseStore.save(
-                StowerLicenseLease(
-                    licenseKey: licenseKey,
-                    licenseID: licenseID,
-                    machineFile: machineFile,
-                    validatedAt: now
-                )
+            let lease = StowerLicenseLease(
+                licenseKey: licenseKey,
+                licenseID: licenseID,
+                machineFile: machineFile,
+                validatedAt: now
             )
+            guard leaseStore.save(lease) else { return .couldNotReach }
+            // Do not blind-trust the mint reply. The Edge Function reuses an existing
+            // trial row for a known fingerprint (handlers.ts `mintTrial`), so a device
+            // whose trial already expired — relaunching after its local lease was
+            // cleared — gets a signed file back with no `expired` verdict. Gate
+            // `.valid` on the signed license expiry the file itself carries: a past
+            // expiry routes to the paywall instead of silently re-entering the trial.
+            // A paid/perpetual license carries a nil expiry and is allowed through.
+            let signedExpiry = leaseStore.trialExpiry(forLicenseID: licenseID)
+            if let signedExpiry, signedExpiry <= now {
+                return .trialExpired(licenseID: licenseID)
+            }
             return .valid
         case .retryShortly:
             return .couldNotReach

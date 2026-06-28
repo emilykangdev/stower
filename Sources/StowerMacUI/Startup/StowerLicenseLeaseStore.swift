@@ -164,7 +164,11 @@ internal struct StowerLicenseLeaseStore: Sendable {
         let codes = payload.included
             .filter { $0.type == Self.entitlementsType }
             .compactMap { $0.attributes?.code }
-        return StowerOfflineAuthority(machineFileExpiry: expiry, entitlementCodes: codes)
+        return StowerOfflineAuthority(
+            machineFileExpiry: expiry,
+            entitlementCodes: codes,
+            machineFingerprint: payload.data?.attributes?.fingerprint
+        )
     }
 
     /// The trial end date from the signed machine file, matched by `licenseID`.
@@ -285,6 +289,10 @@ internal struct StowerOfflineAuthority: Sendable, Equatable {
     /// The signed entitlement codes carried in the machine file.
     internal let entitlementCodes: [String]
 
+    /// The device fingerprint the file was checked out for, decoded from the signed
+    /// `data.attributes.fingerprint`, or `nil` when the signed payload omits it.
+    internal let machineFingerprint: String?
+
     /// Whether the signed entitlements allow this build to run offline — the OR
     /// over `STOWER_TRIAL` / `STOWER_V0` (I5).
     ///
@@ -293,6 +301,19 @@ internal struct StowerOfflineAuthority: Sendable, Equatable {
     internal var allowsThisBuild: Bool {
         entitlementCodes.contains(Self.trialEntitlementCode)
             || entitlementCodes.contains(Self.v0EntitlementCode)
+    }
+
+    /// Whether the signed machine file was checked out for `deviceFingerprint`.
+    ///
+    /// A genuine Keygen machine file carries the device it was issued to in the
+    /// signed `data.attributes.fingerprint`, so a file copied to another Mac fails
+    /// this — closing the offline trial-sharing path. A `nil` signed fingerprint
+    /// does not block: an attacker cannot strip `data` from a signed file without
+    /// breaking its Ed25519 signature (so any replayable genuine file always carries
+    /// it), and failing open keeps the offline path working if the field is absent.
+    internal func matchesDevice(_ deviceFingerprint: String) -> Bool {
+        guard let machineFingerprint else { return true }
+        return machineFingerprint == deviceFingerprint
     }
 
     private static let trialEntitlementCode = "STOWER_TRIAL"
@@ -317,6 +338,15 @@ private struct StowerMachineFilePayload: Decodable {
         let expiry: String
     }
 
+    /// The primary `data` resource of a machine file — the machine document.
+    ///
+    /// Its `attributes.fingerprint` is the device the file was checked out for; the
+    /// offline gate matches it against this Mac so a signed file copied from another
+    /// device cannot grant offline access here.
+    struct MachineData: Decodable {
+        let attributes: Attributes?
+    }
+
     struct Included: Decodable {
         /// The resource type, e.g. `"entitlements"` or `"licenses"`.
         let type: String
@@ -334,8 +364,13 @@ private struct StowerMachineFilePayload: Decodable {
         /// The license expiry ISO-8601 timestamp, present on `type == "licenses"`
         /// entries when the license is on an active trial; `nil` once paid (perpetual).
         let expiry: String?
+
+        /// The device fingerprint, present on the machine `data.attributes`; the
+        /// offline gate matches it against this Mac.
+        let fingerprint: String?
     }
 
+    let data: MachineData?
     let meta: Meta
     let included: [Included]
 }
