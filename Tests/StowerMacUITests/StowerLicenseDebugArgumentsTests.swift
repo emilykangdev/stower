@@ -108,12 +108,9 @@ import Testing
             ).get()
             #expect(parsed.fingerprintOverride == "dev-1")
 
-            let fingerprint = StowerDeviceFingerprint(
-                readHardwareUUID: { "dev-1" },
-                fallbackUUID: { "dev-1" }
-            )
+            let fingerprint = StowerKeychainFingerprint(installUUID: { "dev-1" })
             let sent = fingerprint.fingerprint()
-            #expect(sent == StowerDeviceFingerprint.sha256Hex("dev-1"))
+            #expect(sent == StowerKeychainFingerprint.sha256Hex("dev-1"))
             #expect(sent != "dev-1")
         }
     }

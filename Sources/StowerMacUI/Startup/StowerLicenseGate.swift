@@ -1,7 +1,7 @@
 import Foundation
 
 /// The production `StowerLicenseGating`: composes the online check-in client, the
-/// signed-lease Keychain store, and the device fingerprint into the gate the
+/// signed-lease Keychain store, and the install fingerprint into the gate the
 /// startup model drives.
 ///
 /// `currentStatus` is the one branching point — a reachable JC5-signed `/check-in`
@@ -12,7 +12,7 @@ import Foundation
 internal struct StowerLicenseGate: StowerLicenseGating {
     private let client: any StowerLicenseCheckInProviding
     private let leaseStore: StowerLicenseLeaseStore
-    private let fingerprint: StowerDeviceFingerprint
+    private let fingerprint: StowerKeychainFingerprint
 
     /// Creates a gate from its three collaborators; injectable so tests pass a spy
     /// client, an in-memory lease store keyed with a known signing key, and a
@@ -20,7 +20,7 @@ internal struct StowerLicenseGate: StowerLicenseGating {
     internal init(
         client: any StowerLicenseCheckInProviding,
         leaseStore: StowerLicenseLeaseStore,
-        fingerprint: StowerDeviceFingerprint
+        fingerprint: StowerKeychainFingerprint
     ) {
         self.client = client
         self.leaseStore = leaseStore
@@ -28,7 +28,7 @@ internal struct StowerLicenseGate: StowerLicenseGating {
     }
 
     /// Builds the production gate wired to the Edge Function, the Keychain lease
-    /// store, and the real device fingerprint.
+    /// store, and the real install fingerprint.
     ///
     /// Endpoints + the Keygen public key come from `StowerLicenseConfig.resolved`
     /// (staging in DEBUG, production otherwise, with `STOWER_*` env overrides applied
@@ -43,7 +43,7 @@ internal struct StowerLicenseGate: StowerLicenseGating {
     internal init() {
         let config = StowerLicenseConfig.resolved
         let leaseStore = StowerLicenseLeaseStore(publicKeyHex: config.keygenPublicKeyHex)
-        let fingerprint: StowerDeviceFingerprint
+        let fingerprint: StowerKeychainFingerprint
         #if DEBUG
             switch StowerLicenseDebugArguments.parse(CommandLine.arguments) {
             case .failure(.missingValue(let flag)):
@@ -58,18 +58,15 @@ internal struct StowerLicenseGate: StowerLicenseGating {
             case .success(let debug):
                 if debug.clearLeaseOnStart { leaseStore.clear() }
                 // Bind `override` by name — a bare `{ $0 }` would be a zero-arg
-                // reader closure (a compile error that captures nothing).
+                // provider closure (a compile error that captures nothing).
                 if let override = debug.fingerprintOverride {
-                    fingerprint = StowerDeviceFingerprint(
-                        readHardwareUUID: { override },
-                        fallbackUUID: { override }
-                    )
+                    fingerprint = StowerKeychainFingerprint(installUUID: { override })
                 } else {
-                    fingerprint = StowerDeviceFingerprint()
+                    fingerprint = StowerKeychainFingerprint()
                 }
             }
         #else
-            fingerprint = StowerDeviceFingerprint()
+            fingerprint = StowerKeychainFingerprint()
         #endif
         self.init(
             client: StowerLicenseCheckInClient(functionBaseURL: config.functionBaseURL),
