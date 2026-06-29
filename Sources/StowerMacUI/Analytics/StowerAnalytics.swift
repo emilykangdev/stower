@@ -90,6 +90,15 @@ public final class StowerAnalytics {
             return
         }
 
+        if Self.didStartSDK {
+            // SDK already started this session (A4: no stop/restart); refresh live reporter only.
+            Self.shared = StowerAnalytics(
+                reporter: StowerTelemetryDeckReporter(consent: consent),
+                consent: consent
+            )
+            return
+        }
+
         // TelemetryDeck double-hashes the userID (UUID → SHA-256 with the salt →
         // its own hash on the wire) so the raw UUID never leaves the device.
         makeClient(appID, stableSalt, identity.clientUser())
@@ -126,6 +135,21 @@ public final class StowerAnalytics {
     /// A no-op when off.
     public static func reportSessionEnded() {
         report(.sessionEnded)
+    }
+
+    // MARK: — Test support
+
+    /// Resets all static state so each test starts from a clean slate.
+    ///
+    /// Clears `shared`, `didStartSDK`, and the kill latch. Call at the start of
+    /// every test that calls `initialize(consent:identity:makeClient:)` to prevent
+    /// static state from one test leaking into the next (A4: no SDK restart).
+    /// Not for production use.
+    @MainActor
+    internal static func resetForTesting() {
+        shared = nil
+        didStartSDK = false
+        StowerAnalyticsKillLatch.reset()
     }
 
     // MARK: — Consent management
@@ -174,9 +198,21 @@ public final class StowerAnalytics {
     /// "Off wins" — this never auto-re-enables. Call this after a successful
     /// license check-in when `diagnostics_opt_out` is returned.
     ///
+    /// When `licenseOptOut` is `true`, also fails closed in memory: latches off
+    /// `StowerAnalyticsKillLatch` and swaps `shared` to a no-op reporter, so
+    /// every in-session reporter stops immediately even if the Keychain write fails.
+    ///
     /// - Parameter licenseOptOut: `true` when the license record carries
     ///   `diagnostics_opt_out = true`.
     internal static func reconcileLicenseConsent(licenseOptOut: Bool) {
-        shared?.consent.reconcile(licenseOptOut: licenseOptOut)
+        guard let current = shared else { return }
+        current.consent.reconcile(licenseOptOut: licenseOptOut)
+        if licenseOptOut {
+            StowerAnalyticsKillLatch.latchOff()
+            Self.shared = StowerAnalytics(
+                reporter: StowerNoOpAnalyticsReporter(),
+                consent: current.consent
+            )
+        }
     }
 }

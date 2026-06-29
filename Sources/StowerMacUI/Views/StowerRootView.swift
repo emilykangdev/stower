@@ -250,6 +250,7 @@ public struct StowerRootView: View {
         consentCardTask = Task { @MainActor in
             try? await Task.sleep(for: Self.consentCardDelay)
             guard !Task.isCancelled, !consent.hasShownDisclosure else { return }
+            consent.markDisclosureShown()
             withAnimation { showConsentCard = true }
         }
     }

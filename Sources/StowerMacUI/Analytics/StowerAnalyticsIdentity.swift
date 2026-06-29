@@ -62,7 +62,11 @@ internal struct StowerAnalyticsIdentity: Sendable {
 
     private func storedRecord() -> AnalyticsInstallRecord? {
         guard let data = storage.readData() else { return nil }
-        return try? JSONDecoder().decode(AnalyticsInstallRecord.self, from: data)
+        guard
+            let record = try? JSONDecoder().decode(AnalyticsInstallRecord.self, from: data),
+            UUID(uuidString: record.id) != nil
+        else { return nil }
+        return record
     }
 }
 

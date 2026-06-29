@@ -41,4 +41,24 @@ import Testing
         // Default-on for a fresh install.
         #expect(consent.isEnabled == true)
     }
+
+    @Test internal func garbageIDTreatedAsFreshInstall() throws {
+        // Pre-write a record whose `id` is not a valid UUID (simulating corruption).
+        let storage = StowerInMemoryLeaseStorage()
+        let garbled = Data(#"{"id":"not-a-uuid","enabled":true}"#.utf8)
+        storage.write(garbled)
+
+        let identity = StowerAnalyticsIdentity(storage: storage)
+        let returned = identity.clientUser()
+
+        // The garbage id must be rejected and a new valid UUID minted.
+        #expect(
+            returned != "not-a-uuid",
+            "clientUser() must not return a garbage id from a corrupted record"
+        )
+        #expect(
+            UUID(uuidString: returned) != nil,
+            "clientUser() must always return a valid UUID string"
+        )
+    }
 }

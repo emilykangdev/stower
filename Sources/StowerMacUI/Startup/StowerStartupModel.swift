@@ -121,7 +121,8 @@ internal final class StowerStartupModel {
         inFlight?.cancel()
         inFlight = nil
         generation += 1
-        state = route(failure, wasAwaitingFDA: state.isAwaitingFullDiskAccess)
+        let next = route(failure, wasAwaitingFDA: state.isAwaitingFullDiskAccess)
+        commit(next, generation: generation)
     }
 
     /// Re-checks the license without disrupting the board — called when the app

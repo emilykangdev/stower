@@ -5,16 +5,18 @@ import Testing
 
 /// Tests the kill-switch invariant: disabled consent → `makeClient` never called,
 /// zero signals sent (JC6, §Invariants row 1).
-@Suite @MainActor internal struct StowerAnalyticsGateTests {
+@Suite(.serialized) @MainActor internal struct StowerAnalyticsGateTests {
 
     @Test internal func disabledConsentSkipsInitAndEmitsNothing() async {
+        StowerAnalytics.resetForTesting()
+        defer { StowerAnalytics.resetForTesting() }
+
         let storage = StowerInMemoryLeaseStorage()
         // Pre-write a record with enabled=false.
         let consent = StowerAnalyticsConsent(storage: storage)
         consent.setEnabled(false)
 
         var makeClientCalled = false
-        let spy = StowerInMemoryAnalyticsReporter()
 
         // Initialize with disabled consent — makeClient must NOT be called.
         StowerAnalytics.initialize(
@@ -29,14 +31,14 @@ import Testing
         )
         #expect(StowerAnalytics.isEnabled() == false)
 
-        // Attempting to report must be a no-op.
+        // Attempting to report must be a no-op (facade holds a no-op reporter when disabled).
         StowerAnalytics.report(.appLaunched)
-        // The facade uses a no-op reporter when disabled; spy is separate here to
-        // verify the gate — since the gate prevents calls, we verify via isEnabled.
-        #expect(spy.recorded().isEmpty)
     }
 
     @Test internal func enabledConsentCallsMakeClient() async {
+        StowerAnalytics.resetForTesting()
+        defer { StowerAnalytics.resetForTesting() }
+
         let storage = StowerInMemoryLeaseStorage()
         // Fresh storage = default-on.
         var makeClientCalled = false
@@ -74,8 +76,8 @@ import Testing
     /// reporter (which gates on `consent.isEnabled`) stops immediately even if a
     /// failed opt-out write left the cache reading "on" (F4/JC6).
     @Test internal func killLatchOverridesEnabledCacheForAllReporters() {
-        StowerAnalyticsKillLatch.reset()
-        defer { StowerAnalyticsKillLatch.reset() }
+        StowerAnalytics.resetForTesting()
+        defer { StowerAnalytics.resetForTesting() }
 
         let storage = StowerInMemoryLeaseStorage()
         let consent = StowerAnalyticsConsent(storage: storage)

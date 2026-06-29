@@ -273,7 +273,7 @@ TD_ALLOWED="$(printf '%s\n' \
     "Sources/StowerMacUI/Analytics/StowerTelemetryDeckReporter.swift" \
     | LC_ALL=C sort)"
 TD_IMPORTERS="$(grep -RIlE --include="*.swift" \
-    '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*([[:space:]]|$))*import[[:space:]]+TelemetryDeck([[:space:]]|$)' \
+    '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*([[:space:]]|$))*import[[:space:]]+([a-z]+[[:space:]]+)?TelemetryDeck([[:space:].]|$)' \
     Sources/ StowerMac/StowerMac/ 2>/dev/null | LC_ALL=C sort || true)"
 if [ "$TD_IMPORTERS" != "$TD_ALLOWED" ]; then
     echo "ERROR: TelemetryDeck must be imported by exactly one file (StowerTelemetryDeckReporter.swift)." >&2
