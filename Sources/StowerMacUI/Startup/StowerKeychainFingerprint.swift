@@ -69,15 +69,18 @@ internal struct StowerKeychainFingerprint: Sendable {
 
     /// A random UUID generated once and cached in the login Keychain.
     ///
-    /// A read miss generates and stores a fresh UUID; if the Keychain write fails
-    /// the generated UUID is still returned (stable for the process via the
-    /// instance memo, not across launches — the documented degraded case).
+    /// A read miss — or a stored value that is not a well-formed UUID — generates
+    /// and stores a fresh UUID; if the Keychain write fails the generated UUID is
+    /// still returned (stable for the process via the instance memo, not across
+    /// launches — the documented degraded case). The UUID-shape check keeps a
+    /// corrupt/empty stored value from collapsing identity onto `sha256("")`.
     internal static func keychainInstallUUID() -> String {
         let item = StowerKeychainItem(
             service: installKeychainService,
             account: installKeychainAccount
         )
-        if let data = item.readData(), let existing = String(data: data, encoding: .utf8) {
+        let stored = item.readData().flatMap { String(data: $0, encoding: .utf8) }
+        if let existing = stored, UUID(uuidString: existing) != nil {
             return existing
         }
         let generated = UUID().uuidString
