@@ -37,7 +37,9 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     internal static let staging = StowerLicenseConfig(
         functionBaseURL: "https://qxsrnsxvsgofaeblbmmv.supabase.co/functions/v1/license",
         keygenPublicKeyHex: accountPublicKeyHex,
-        checkoutBaseURL: "https://stower.lemonsqueezy.com/checkout"
+        checkoutBaseURL:
+            "https://emilykangdev.lemonsqueezy.com/checkout/buy/"
+            + "4b930b6d-727b-4f93-9f9a-b4b8b738ab46"
     )
 
     /// The compiled default for this build configuration.
