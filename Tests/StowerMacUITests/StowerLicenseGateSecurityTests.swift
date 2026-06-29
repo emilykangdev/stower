@@ -191,27 +191,34 @@ import Testing
         #expect(await gate.currentStatus(now: now) == .valid)
     }
 
-    @Test("an online trial-expired verdict clears the lease so going offline cannot re-enter")
-    internal func trialExpiredClearsLeaseSoOfflineCannotReenter() async throws {
-        // The cached machine file's TTL is still in the future, but the trial expired
-        // server-side. Once the paywall is seen online, the file must not re-grant
-        // access simply by disconnecting.
-        let file = try machineFile(
-            expiry: futureExpiry,
-            codes: ["STOWER_TRIAL"],
-            fingerprint: expectedFingerprint
+    @Test("online .trialExpired keeps the lease; offline boundary still blocks re-entry")
+    internal func trialExpiredKeepsLeaseButOfflineCannotReenter() async throws {
+        // A production-shaped machine file: checked out for THIS device, TTL still in the
+        // future, STOWER_TRIAL — so it WOULD authorize offline on TTL alone — but its
+        // signed trial expiry is in the PAST. The lease is no longer cleared on an online
+        // `.trialExpired` (so Buy / Re-check can still resolve the licenseID), yet going
+        // offline must NOT re-grant access: the offline expiry boundary (I14) blocks it.
+        let file = try signedFile(
+            payload:
+                #"{"data":{"attributes":{"fingerprint":"\#(expectedFingerprint)"}},"#
+                + #""meta":{"expiry":"\#(futureExpiry)"},"included":["#
+                + #"{"type":"entitlements","attributes":{"code":"STOWER_TRIAL"}},"#
+                + #"{"type":"licenses","id":"lic-1","attributes":{"expiry":"\#(pastExpiry)"}}]}"#
         )
         let store = makeStore()
         store.save(lease(key: "KEY", id: "lic-1", file: file))
         let client = SpyCheckInClient(checkIn: [.trialExpired(licenseID: "lic-1"), .unreachable])
         let gate = makeGate(client: client, store: store)
 
+        // Online: paywall — and the lease is KEPT (the behavior change).
         #expect(await gate.currentStatus(now: now) == .trialExpired(licenseID: "lic-1"))
-        #expect(store.load() == nil)
-        #expect(!gate.hasLease())
-        // Now offline with no lease: the mint path is unreachable → connect-once, not
-        // a TTL-fallback .valid on the stale file.
-        #expect(await gate.currentStatus(now: now) == .needsTrialOnline)
+        #expect(gate.hasLease())
+        #expect(store.load()?.licenseID == "lic-1")
+
+        // Now offline on the SAME cached file: the signed trial expiry is in the past, so
+        // the boundary routes to the paywall instead of a TTL-fallback `.valid` —
+        // disconnecting cannot re-enter an expired trial.
+        #expect(await gate.currentStatus(now: now) == .trialExpired(licenseID: "lic-1"))
     }
 
     @Test("an online wrong_version verdict clears the lease so going offline cannot reuse it")

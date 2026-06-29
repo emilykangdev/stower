@@ -104,11 +104,13 @@ internal struct StowerLicenseGate: StowerLicenseGating {
         case .ok(let machineFile):
             return refreshedStatus(machineFile: machineFile, lease: lease, now: now)
         case .trialExpired(let id):
-            // Drop the cached file so its remaining machine-file TTL cannot re-grant
-            // access offline after the user has already seen the paywall — the offline
-            // fallback is TTL-only (I14) and would otherwise let an expired trial back
-            // in simply by disconnecting.
-            leaseStore.clear()
+            // Keep the cached lease: its licenseID feeds the paywall's Buy flow and the
+            // post-purchase Re-check, and `hasLease()` staying true keeps the Re-check
+            // copy correct ("Checking your license…", not "Starting your free trial…").
+            // The offline re-entry this used to guard against — an expired trial's
+            // machine-file TTL re-granting access offline — is now closed in the
+            // `.unreachable` branch, which routes a past signed trial expiry to the
+            // paywall (I14), so the lease no longer needs clearing here.
             return .trialExpired(licenseID: id)
         case .wrongVersion(let id):
             // Same reasoning as `.trialExpired`: the server has denied this build, so
@@ -129,9 +131,18 @@ internal struct StowerLicenseGate: StowerLicenseGating {
             // owns the real UX) both degrade to a transient retry in Plan B.
             return .couldNotReach
         case .unreachable:
-            // Offline fallback: the cached signed lease authorizes this build. The
-            // machine-file TTL is the offline boundary (I14); an online `expired`
-            // verdict clears the lease, so no stale expired file reaches here.
+            // Offline fallback: the cached signed lease authorizes this build UNLESS the
+            // trial has already ended. Because an online `.trialExpired` verdict no
+            // longer clears the lease, the offline expiry boundary (I14) is enforced
+            // HERE: the machine file's signed trial expiry is tamper-proof, so an expired
+            // trial routes to the paywall and cannot be re-granted access by simply going
+            // offline. A paid/perpetual license has a nil expiry and falls through.
+            if let trialExpiry = leaseStore.trialExpiry(
+                forMachineFile: lease.machineFile,
+                licenseID: lease.licenseID
+            ), trialExpiry <= now {
+                return .trialExpired(licenseID: lease.licenseID)
+            }
             return authorizes(machineFile: lease.machineFile, now: now)
                 ? .valid : .couldNotReach
         }
@@ -165,8 +176,9 @@ internal struct StowerLicenseGate: StowerLicenseGating {
     /// device (the device match stops a file copied from another Mac). Pure decode —
     /// touches no storage, so a candidate check-out can be validated BEFORE it
     /// overwrites a still-valid cached lease. The trial's own expiry is not checked
-    /// here; the mint path handles that explicitly, and an online `expired` verdict
-    /// clears the lease.
+    /// here; the callers that must enforce it do so explicitly — `mintFlow` and the
+    /// offline `.unreachable` branch both route a past signed trial expiry to the
+    /// paywall before trusting the file.
     private func authorizes(machineFile: String, now: Date) -> Bool {
         guard let authority = leaseStore.offlineAuthority(forMachineFile: machineFile, now: now),
             authority.allowsThisBuild,
