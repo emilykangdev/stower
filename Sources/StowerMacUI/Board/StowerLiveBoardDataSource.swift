@@ -61,7 +61,7 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
             }
             // Built once per load (not per row): calling `.live()` inside the row map
             // would be O(rows × contacts).
-            let contacts = makeContactsResolver()
+            let contacts = await resolveContacts()
             return StowerBoardModel(
                 neglected: neglected.map {
                     StowerMessagesMapping.mapRow($0, now: now, contacts: contacts)
@@ -73,6 +73,20 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
         } catch let error as StowerMessagesError {
             throw StowerMessagesMapping.mapError(error)
         }
+    }
+
+    /// Builds the Contacts resolver off the caller's QoS.
+    ///
+    /// `.live()` enumerates the whole address book synchronously, and the Contacts
+    /// framework services that on a background-QoS XPC. Calling it inline on a
+    /// user-initiated board-load task blocks a high-priority thread on low-priority
+    /// work — a priority inversion. Hopping to a `.utility` detached task lets the
+    /// caller suspend (not block), so no user-initiated thread waits on the
+    /// background reply.
+    private func resolveContacts() async -> StowerContactsResolver {
+        await Task.detached(priority: .utility) { [makeContactsResolver] in
+            makeContactsResolver()
+        }.value
     }
 
     /// Filters both lenses by the user's triage, retiring self-expired dismissals.
@@ -151,7 +165,7 @@ internal struct StowerLiveBoardDataSource: StowerBoardDataSource {
         }
         guard !mutedKeys.isEmpty else { return [] }
         // Built once (not per key): `.live()` enumerates the whole address book.
-        let contacts = makeContactsResolver()
+        let contacts = await resolveContacts()
         // `isActivelyDismissed` cross-references the raw `dismissed_message` set, per the
         // plan's settled Dismiss×mute design (the pill warns "still hidden by a dismissal"
         // before unmute). KNOWN benign limitation: if a strictly-newer message arrived but
