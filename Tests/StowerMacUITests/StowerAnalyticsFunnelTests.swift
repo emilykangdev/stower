@@ -124,6 +124,39 @@ import Testing
         )
     }
 
+    @Test("checkingMessages without a board reach does not record fda granted")
+    internal func fdaResolvedNotFiredOnPrematureCheckingMessages() async {
+        // Both runs: license valid (so each commits .checkingMessages before the
+        // load), but the board load fails with FDA missing — access was never
+        // actually granted. The second run is the awaiting-FDA recheck that
+        // reaches .checkingMessages with the latch set; granted:true must NOT be
+        // recorded because the board (proof of access) is never reached.
+        let provider = StowerFakeStartupProvider(
+            loadBehaviors: [
+                .failure(.fullDiskAccessMissing(path: "/var/db")),
+                .failure(.fullDiskAccessMissing(path: "/var/db"))
+            ]
+        )
+        let licenseGate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.status(.valid), .status(.valid)]
+        )
+        let spy = StowerInMemoryAnalyticsReporter()
+        let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
+        model.start()
+        await model.activeRun?.value
+        model.checkAgain()
+        await model.activeRun?.value
+
+        let resolvedCount = spy.recorded()
+            .filter { $0.signalName == "fda_permission_resolved" }
+            .count
+        #expect(
+            resolvedCount == 0,
+            "granted must not be recorded when access was never proven (board never reached)"
+        )
+    }
+
     // MARK: — License gate
 
     @Test("license_gate_reached fires when startup commits needsLicense")

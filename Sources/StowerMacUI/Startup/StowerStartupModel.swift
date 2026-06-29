@@ -262,6 +262,16 @@ internal final class StowerStartupModel {
     /// `boardReachedThisLaunch` flag so `board_reached` fires once per launch.
     /// Driven off `commit` (not adjacent-state matching or `onAppear`) per
     /// Eng F1/F2.
+    ///
+    /// `fda_permission_resolved(granted:true)` fires only at
+    /// `.connectedPreparingBoard` — NOT at `.checkingMessages`. The board is
+    /// entered optimistically: `.checkingMessages` commits before
+    /// `loadDebtBoard` runs, and that load can still throw
+    /// `fullDiskAccessMissing` and route to `.needsFullDiskAccessStillMissing`.
+    /// Resolving at `.checkingMessages` would record a false "granted" for every
+    /// user who returned from the FDA screen without granting. Reaching the board
+    /// is the only proof access actually works. FDA denial is measured as
+    /// `fda_permission_requested` without a subsequent `fda_permission_resolved`.
     private func emitFunnelEvent(for state: StowerStartupState) {
         switch state {
         case .modelUnavailable(let reason):
@@ -278,22 +288,20 @@ internal final class StowerStartupModel {
             reporter.report(.fdaPermissionRequested)
             wasAwaitingFDA = true
 
-        case .checkingMessages:
-            resolveFDAIfNeeded()
-
         case .connectedPreparingBoard:
             resolveFDAIfNeeded()
             emitBoardReachedIfNeeded()
 
-        case .checkingModel, .needsFullDiskAccessStillMissing, .failed:
+        case .checkingModel, .checkingMessages, .needsFullDiskAccessStillMissing, .failed:
             break
         }
     }
 
     /// Emits `fda_permission_resolved(granted:true)` when the FDA latch is set.
     ///
-    /// Fires once per run that entered a `needsFullDiskAccess` state; clears the
-    /// latch afterward so it cannot double-fire.
+    /// Fires once per run that entered a `needsFullDiskAccess` state, only after
+    /// the board is reached (access proven); clears the latch afterward so it
+    /// cannot double-fire.
     private func resolveFDAIfNeeded() {
         guard wasAwaitingFDA else { return }
         reporter.report(.fdaPermissionResolved(granted: true))

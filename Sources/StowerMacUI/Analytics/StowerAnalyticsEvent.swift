@@ -54,11 +54,16 @@ internal enum StowerAnalyticsEvent: Sendable {
     /// double-firing under Check Again).
     case fdaPermissionRequested
 
-    /// The user returned from the FDA screen with (or without) access.
+    /// The user returned from the FDA screen and access was confirmed.
     ///
-    /// Emitted via the `wasAwaitingFDA` latch when a run that was ever in an
-    /// FDA state commits `.checkingMessages` or `.connectedPreparingBoard`.
-    /// **Per-run** (latch resets after emission).
+    /// Emitted via the `wasAwaitingFDA` latch when a run that was ever in an FDA
+    /// state reaches `.connectedPreparingBoard` — the board load is what proves
+    /// access actually works (`.checkingMessages` commits optimistically and can
+    /// still fall back to `.needsFullDiskAccessStillMissing`). **Per-run** (latch
+    /// resets after emission). FDA *denial* is measured as
+    /// `fdaPermissionRequested` without a following `fdaPermissionResolved`, so
+    /// `granted` is always `true` in v1; the parameter is retained for forward
+    /// compatibility.
     ///
     /// - Parameter granted: Whether Full Disk Access was granted.
     case fdaPermissionResolved(granted: Bool)
