@@ -41,6 +41,7 @@ public struct StowerRootView: View {
     /// Set to `true` after ~60 seconds of foreground board time, once, if the
     /// card has never been shown. Cleared when the user makes a choice.
     @State private var showConsentCard = false
+    @State private var consentCardTask: Task<Void, Never>?
 
     /// The consent state accessor shared by the disclosure card and the settings toggle.
     ///
@@ -198,6 +199,10 @@ public struct StowerRootView: View {
                 trialBannerDismissed = badgeDismissal.isDismissed
                 scheduleConsentCardIfNeeded()
             }
+            // Leaving the board (or the app backgrounding) cancels the disclosure
+            // countdown so it only accrues foreground board time (JC7).
+            .onDisappear { consentCardTask?.cancel() }
+            .onReceive(Self.willResignActive) { _ in consentCardTask?.cancel() }
             // Returning to the app (e.g. back from the Lemon Squeezy checkout)
             // re-checks the license so a completed purchase reflects instantly: the
             // refreshed lease clears the trial badge, and an expired trial routes to
@@ -218,6 +223,8 @@ public struct StowerRootView: View {
                         showPurchaseThanks = true
                     }
                 }
+                // Re-arm the disclosure countdown for this foreground board session.
+                scheduleConsentCardIfNeeded()
             }
             .alert(Self.purchaseThanksTitle, isPresented: $showPurchaseThanks) {
                 Button("OK", role: .cancel) {}
@@ -232,13 +239,17 @@ public struct StowerRootView: View {
     /// Schedules the analytics consent card to appear after ~60 seconds of
     /// foreground board time, shown at most once ever (JC7).
     ///
+    /// The countdown is cancelled when the app backgrounds or the board screen
+    /// leaves the hierarchy, and rescheduled on return — so the card honors
+    /// *foreground board* time, never firing while backgrounded or off-board.
     /// The shown-flag is stored in `UserDefaults` by `StowerAnalyticsConsent` so
     /// the card never reappears after the user has made a choice.
     private func scheduleConsentCardIfNeeded() {
         guard !consent.hasShownDisclosure else { return }
-        Task { @MainActor in
+        consentCardTask?.cancel()
+        consentCardTask = Task { @MainActor in
             try? await Task.sleep(for: Self.consentCardDelay)
-            guard !consent.hasShownDisclosure else { return }
+            guard !Task.isCancelled, !consent.hasShownDisclosure else { return }
             withAnimation { showConsentCard = true }
         }
     }
@@ -266,6 +277,12 @@ public struct StowerRootView: View {
     /// re-check so a purchase completed in the browser reflects without a restart.
     private static let didBecomeActive = NotificationCenter.default.publisher(
         for: NSApplication.didBecomeActiveNotification
+    )
+
+    /// Fires when the app leaves the foreground; cancels the disclosure-card
+    /// countdown so it accrues only foreground board time (JC7).
+    private static let willResignActive = NotificationCenter.default.publisher(
+        for: NSApplication.willResignActiveNotification
     )
 
     /// The Stower major a purchase unlocks — a placeholder string until real

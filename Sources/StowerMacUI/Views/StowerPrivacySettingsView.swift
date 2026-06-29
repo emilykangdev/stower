@@ -34,6 +34,10 @@ internal struct StowerPrivacySettingsView: View {
                 }
                 .onChange(of: analyticsEnabled) { _, newValue in
                     StowerAnalytics.setEnabled(newValue)
+                    // An explicit Settings choice supersedes the first-run
+                    // disclosure card, so an opted-out user is never re-prompted
+                    // (and can't accidentally re-enable via the card). (JC7)
+                    StowerAnalyticsConsent().markDisclosureShown()
                 }
             } header: {
                 Text("Analytics")
