@@ -4,8 +4,9 @@ import Testing
 @testable import StowerMacUI
 
 /// The model-side licensing wiring: the gate runs only after availability
-/// (B-I11), the `.checkingLicense` reason is picked from `hasLease()` (B-I13), and
-/// each `StowerLicenseStatus` routes to the right state (B-I4/B-I7 + the rest).
+/// (B-I11), the license check commits a neutral `.checkingLicense` (B-I13), each
+/// `StowerLicenseStatus` routes to the right state (B-I4/B-I7 + the rest), and a
+/// foreground re-check refreshes an on-board license without a full restart.
 ///
 /// Split from `StowerStartupModelTests` to keep each suite within the type-body
 /// length budget. Same `StowerFakeStartupProvider` + `StowerFakeLicenseGate`
@@ -101,34 +102,82 @@ import Testing
         #expect(gate.statusCallCount == 0)
     }
 
-    @Test("B-I13: a warm lease commits .checkingLicense(.revalidating)")
-    internal func warmLeaseShowsRevalidating() async {
-        let recorder = StowerStateRecorder()
-        let gate = StowerFakeLicenseGate(hasLease: true, statuses: [.status(.valid)])
-        let model = makeModel(
-            provider: StowerFakeStartupProvider(),
-            licenseGate: gate,
-            onCommit: { recorder.append($0) }
-        )
-        model.start()
-        await model.activeRun?.value
-        #expect(recorder.states.contains(.checkingLicense(.revalidating)))
-        #expect(!recorder.states.contains(.checkingLicense(.startingTrial)))
+    @Test("B-I13: the license check commits a neutral .checkingLicense (warm and cold)")
+    internal func licenseCheckCommitsNeutralCheckingLicense() async {
+        // Trial-vs-paid is unknown until the server replies, so the spinner copy must
+        // not assume "free trial" — both a warm lease and a cleared one commit the
+        // same neutral .checkingLicense ("Loading Stower…").
+        for hasLease in [true, false] {
+            let recorder = StowerStateRecorder()
+            let gate = StowerFakeLicenseGate(hasLease: hasLease, statuses: [.status(.valid)])
+            let model = makeModel(
+                provider: StowerFakeStartupProvider(),
+                licenseGate: gate,
+                onCommit: { recorder.append($0) }
+            )
+            model.start()
+            await model.activeRun?.value
+            #expect(recorder.states.contains(.checkingLicense))
+        }
     }
 
-    @Test("B-I13: first run (no lease) commits .checkingLicense(.startingTrial)")
-    internal func firstRunShowsStartingTrial() async {
-        let recorder = StowerStateRecorder()
-        let gate = StowerFakeLicenseGate(hasLease: false, statuses: [.status(.valid)])
-        let model = makeModel(
-            provider: StowerFakeStartupProvider(),
-            licenseGate: gate,
-            onCommit: { recorder.append($0) }
+    @Test("foreground re-check: a still-valid license stays on the board (badge can refresh)")
+    internal func foregroundRecheckValidStaysOnBoard() async {
+        let gate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.status(.valid), .status(.valid)]
         )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
         model.start()
         await model.activeRun?.value
-        #expect(recorder.states.contains(.checkingLicense(.startingTrial)))
-        #expect(!recorder.states.contains(.checkingLicense(.revalidating)))
+        #expect(model.state == .connectedPreparingBoard)
+
+        await model.refreshLicenseIfOnBoard()
+        #expect(model.state == .connectedPreparingBoard)
+        #expect(gate.statusCallCount == 2)  // startup + the foreground re-check
+    }
+
+    @Test("foreground re-check: a now-expired trial routes to the paywall")
+    internal func foregroundRecheckExpiredRoutesToPaywall() async {
+        let gate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.status(.valid), .status(.trialExpired(licenseID: "lic-1"))]
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        model.start()
+        await model.activeRun?.value
+        #expect(model.state == .connectedPreparingBoard)
+
+        await model.refreshLicenseIfOnBoard()
+        #expect(model.state == .needsLicense(.trialExpired(licenseID: "lic-1")))
+    }
+
+    @Test("foreground re-check: a transient .couldNotReach does NOT paywall a valid board")
+    internal func foregroundRecheckTransientStaysOnBoard() async {
+        let gate = StowerFakeLicenseGate(
+            hasLease: true,
+            statuses: [.status(.valid), .status(.couldNotReach)]
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        model.start()
+        await model.activeRun?.value
+        #expect(model.state == .connectedPreparingBoard)
+
+        await model.refreshLicenseIfOnBoard()
+        #expect(model.state == .connectedPreparingBoard)
+    }
+
+    @Test("foreground re-check is a no-op when not on the board")
+    internal func foregroundRecheckNoOpOffBoard() async {
+        let gate = StowerFakeLicenseGate(
+            hasLease: false,
+            statuses: [.status(.trialExpired(licenseID: "lic-1"))]
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        // No start() → state is .checkingModel, not on the board.
+        await model.refreshLicenseIfOnBoard()
+        #expect(gate.statusCallCount == 0)
+        #expect(model.state == .checkingModel)
     }
 
     @Test("the model passes its clock's now into currentStatus")

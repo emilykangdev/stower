@@ -159,6 +159,16 @@ public struct StowerRootView: View {
                 trialBadge = model.trialBadge()
                 trialBannerDismissed = badgeDismissal.isDismissed
             }
+            // Returning to the app (e.g. back from the Lemon Squeezy checkout)
+            // re-checks the license so a completed purchase reflects instantly: the
+            // refreshed lease clears the trial badge, and an expired trial routes to
+            // the paywall — no full startup re-run, no "Loading Stower…" flash.
+            .onReceive(Self.didBecomeActive) { _ in
+                Task {
+                    await model.refreshLicenseIfOnBoard()
+                    trialBadge = model.trialBadge()
+                }
+            }
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
         }
@@ -182,6 +192,12 @@ public struct StowerRootView: View {
             onQuit: { NSApplication.shared.terminate(nil) }
         )
     }
+
+    /// Fires when the app returns to the foreground; drives the on-board license
+    /// re-check so a purchase completed in the browser reflects without a restart.
+    private static let didBecomeActive = NotificationCenter.default.publisher(
+        for: NSApplication.didBecomeActiveNotification
+    )
 
     private static let minWidth: CGFloat = 520
     private static let minHeight: CGFloat = 360
