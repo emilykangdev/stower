@@ -28,6 +28,14 @@ public struct StowerRootView: View {
     /// only; `trialBadge` — and therefore the gear-menu Buy — is unaffected.
     @State private var trialBannerDismissed = false
 
+    /// Drives the one-time purchase-confirmation alert.
+    @State private var showPurchaseThanks = false
+
+    /// Guards the confirmation alert to once per session, so re-activations after a
+    /// purchase don't re-show it (a fresh paid launch never triggers it — there is
+    /// no trial→paid transition).
+    @State private var purchaseThanksShown = false
+
     private let settings: StowerSystemSettingsOpener
 
     /// The dismissal seam for the trial badge.
@@ -159,6 +167,32 @@ public struct StowerRootView: View {
                 trialBadge = model.trialBadge()
                 trialBannerDismissed = badgeDismissal.isDismissed
             }
+            // Returning to the app (e.g. back from the Lemon Squeezy checkout)
+            // re-checks the license so a completed purchase reflects instantly: the
+            // refreshed lease clears the trial badge, and an expired trial routes to
+            // the paywall — no full startup re-run, no "Loading Stower…" flash.
+            .onReceive(Self.didBecomeActive) { _ in
+                Task {
+                    let wasTrial = trialBadge != nil
+                    await model.refreshLicenseIfOnBoard()
+                    trialBadge = model.trialBadge()
+                    // Trial badge cleared while still on the board ⇒ the re-check
+                    // picked up a completed purchase (paid licenses have no trial
+                    // expiry). Confirm it explicitly, exactly once per session.
+                    let purchaseDetected =
+                        wasTrial && trialBadge == nil && !purchaseThanksShown
+                        && model.state == .connectedPreparingBoard
+                    if purchaseDetected {
+                        purchaseThanksShown = true
+                        showPurchaseThanks = true
+                    }
+                }
+            }
+            .alert(Self.purchaseThanksTitle, isPresented: $showPurchaseThanks) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(Self.purchaseThanksMessage)
+            }
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
         }
@@ -182,6 +216,21 @@ public struct StowerRootView: View {
             onQuit: { NSApplication.shared.terminate(nil) }
         )
     }
+
+    /// Fires when the app returns to the foreground; drives the on-board license
+    /// re-check so a purchase completed in the browser reflects without a restart.
+    private static let didBecomeActive = NotificationCenter.default.publisher(
+        for: NSApplication.didBecomeActiveNotification
+    )
+
+    /// The Stower major a purchase unlocks — a placeholder string until real
+    /// version wiring lands (the Sparkle work after this merges); matches the
+    /// "Buy Stower v0" affordance the gear menu shows on an active trial.
+    private static let purchasedVersionLabel = "v0"
+    private static let purchaseThanksTitle = "Thank you for your purchase"
+    private static let purchaseThanksMessage =
+        "You've purchased the license for Stower \(purchasedVersionLabel). "
+        + "Please check your email for the receipt."
 
     private static let minWidth: CGFloat = 520
     private static let minHeight: CGFloat = 360

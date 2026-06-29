@@ -21,24 +21,28 @@ reports any that are unset (by name, never value).
 
 | Var | What it is | Read at |
 |-----|-----------|---------|
-| `SUPABASE_URL` | The Supabase project the function reads/writes state in (`device_trials`, `purchases`, `trial_extension_grants`) | `index.ts:89` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key for that project (full DB access; server-only secret) | `index.ts:89` |
-| `KEYGEN_ACCOUNT` | Keygen account (tenant) UUID — the license authority | `index.ts:288` |
-| `KEYGEN_TOKEN` | Keygen **admin** token; mints/validates/upgrades licenses, checks out signed machine files. Never ships in the app | `index.ts:289` |
-| `KEYGEN_V0_ENTITLEMENT` | The Keygen entitlement **resource id** (UUID) attached to a license on a v0 purchase. Missing → throws at boot (never ships a paid license with no major stamp) | `index.ts:292` |
-| `KEYGEN_TRIAL_POLICY` | The trial policy id new trial licenses are minted under (30-day, any-version unlock) | `index.ts:340` |
-| `KEYGEN_PAID_POLICY` | The paid policy id a license flips to on purchase (no expiry) | `index.ts:361` |
-| `LS_WEBHOOK_SECRET` | Lemon Squeezy webhook signing secret; verifies the `order_created` webhook is genuine | `index.ts:543` |
-| `LS_PAID_VARIANT_ID` | The Lemon Squeezy **variant** id that counts as "bought v0". Any other variant in a webhook is ignored | `index.ts:577` |
+| `SUPABASE_URL` | The Supabase project the function reads/writes state in (`device_trials`, `purchases`, `trial_extension_grants`) | `supabase()` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key for that project (full DB access; server-only secret) | `supabase()` |
+| `KEYGEN_ACCOUNT` | Keygen account (tenant) UUID — the license authority | `keygenAdmin()` |
+| `KEYGEN_TOKEN` | Keygen **admin** token; mints/validates/upgrades licenses, checks out signed machine files. Never ships in the app | `keygenAdmin()` |
+| `KEYGEN_V0_ENTITLEMENT` | The Keygen entitlement **resource id** (UUID) attached to a license on a v0 purchase. Missing → throws at boot (never ships a paid license with no major stamp) | `keygenAdmin()` |
+| `KEYGEN_TRIAL_POLICY` | The trial policy id new trial licenses are minted under (any-version unlock; length is `TRIAL_DURATION_SECONDS` below, default 30 days) | `keygenAdmin().createTrialLicense` |
+| `KEYGEN_PAID_POLICY` | The paid policy id a license flips to on purchase (no expiry) | `keygenAdmin().upgradeToPaid` |
+| `LS_WEBHOOK_SECRET` | Lemon Squeezy webhook signing secret; passed (injected) into `verifyLemonSqueezySignature` (`handlers.ts`) to verify the `order_created` webhook is genuine | `webhookDeps()` |
+| `LS_PAID_VARIANT_ID` | The Lemon Squeezy **variant** id that counts as "bought v0". Any other variant in a webhook is ignored | `webhookDeps()` |
 
 **Optional** — GitHub releases feed the once-per-major +7-day trial extension. If
 `GITHUB_REPO` is unset, the extension is simply skipped (no error).
+`TRIAL_DURATION_SECONDS` shortens the trial clock for staging smoke tests; unset →
+the 30-day default (it is **deliberately NOT in `REQUIRED_ENV`** so prod boots with
+it unset).
 
 | Var | What it is | Default if unset | Read at |
 |-----|-----------|------------------|---------|
-| `GITHUB_REPO` | `owner/name` of the repo whose releases define "current latest major" | unset → extension disabled | `index.ts:596` |
-| `GITHUB_API_BASE` | GitHub API base URL (override for testing/enterprise) | `https://api.github.com` | `index.ts:604` |
-| `GITHUB_TOKEN` | GitHub token to raise the releases-API rate limit | unset → unauthenticated requests | `index.ts:609` |
+| `TRIAL_DURATION_SECONDS` | Trial length in seconds (a DEBUG/staging lever — e.g. `60` to expire trials in a minute). Empty / non-numeric / `≤0` / overflowing the `Date` range also falls back to the default. A non-default value is echoed by `GET /health` (`trialDurationSeconds` + `warning`) so a prod leak is loud | unset → `2592000` (30 days) | `config.ts trialDurationMs`, called in `keygenAdmin().createTrialLicense` (mint) + `trialDurationHealthFields` in the `GET /health` handler |
+| `GITHUB_REPO` | `owner/name` of the repo whose releases define "current latest major" | unset → extension disabled | `githubAdapter()` |
+| `GITHUB_API_BASE` | GitHub API base URL (override for testing/enterprise) | `https://api.github.com` | `githubAdapter()` |
+| `GITHUB_TOKEN` | GitHub token to raise the releases-API rate limit | unset → unauthenticated requests | `githubAdapter()` |
 
 **Not env vars** (hardcoded, identical everywhere): `KEYGEN_BASE_URL`
 (`https://api.keygen.sh`) and the default GitHub base, both constants in `index.ts`.
@@ -58,7 +62,7 @@ licenses. Then only these values change:
 | `LS_WEBHOOK_SECRET` | The **test-mode** webhook's signing secret | The **live-mode** webhook's secret | LS test & live secrets are separate |
 | `SUPABASE_URL` | Test/staging project (or branch) URL | Prod project URL | differs |
 | `SUPABASE_SERVICE_ROLE_KEY` | That test project's key | Prod project's key | differs |
-| `KEYGEN_ACCOUNT` | Test Keygen account *(or same account, test policies)* | Prod account | differs — keep test licenses out of prod |
+| `KEYGEN_ACCOUNT` | Same — staging + production **share one Keygen account** (account-level keypair, commit `3d39142`); test/prod are isolated by distinct **Supabase** projects + policies, not by account | Same account | **same** — test trials accrue as harmless orphans under the trial policy (see `licensing-test-coverage.md`); differs only if prod moves to its own account |
 | `KEYGEN_TOKEN` | Admin token for the test account | Prod admin token | differs |
 | `KEYGEN_V0_ENTITLEMENT` | Entitlement id in the test setup | Prod entitlement id | differs (account-specific UUID) |
 | `KEYGEN_TRIAL_POLICY` | Test trial policy id | Prod trial policy id | differs |
@@ -66,6 +70,7 @@ licenses. Then only these values change:
 | `GITHUB_REPO` | Same — or **leave unset** in test to skip the +7d extension | `owner/name` of the real repo | usually same |
 | `GITHUB_API_BASE` | Same (usually unset) | unset (uses default) | same |
 | `GITHUB_TOKEN` | Same/optional | optional | same |
+| `TRIAL_DURATION_SECONDS` | `60` on **staging** to smoke-test expiry in a minute | **unset** → 30 days | differs — ⚠️ NEVER set it on the prod project (silent 60-second trials); `/health` echoes a non-default value so a leak is caught by one curl |
 
 Rule of thumb: **everything that points at money (Lemon Squeezy) or at license
 state (Supabase + Keygen) differs; the GitHub "latest version" signal is shared.**
@@ -83,11 +88,12 @@ every secret (the Keygen admin `KEYGEN_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`,
 `LS_WEBHOOK_SECRET` — all in §1 above) lives **only** in the Edge Function env and
 **never ships in the binary**. The app holds only public values.
 
-`StowerLicenseConfig` resolves in three layers: the compiled default
+`StowerLicenseConfig` resolves in two layers: the compiled default
 (`staging` in a `DEBUG` build, `production` otherwise) → a per-field
-`STOWER_*` `ProcessInfo` override when present. So a Debug build points at the test
-deployment automatically; a Release build uses `production`; and any build can be
-redirected via env vars without recompiling.
+`STOWER_*` `ProcessInfo` override applied **in DEBUG only**. So a Debug build points
+at the test deployment automatically and can be redirected with `STOWER_*` env vars;
+a **Release** build pins the compiled `production` config and **ignores** `STOWER_*`
+(`StowerLicenseConfig.effectiveConfig(allowOverrides:)` passes `false` in Release), so a launch-environment variable can't swap the pinned Keygen trust anchor or endpoints.
 
 | # | Value | `StowerLicenseConfig` field | What it is | Differs test↔prod? |
 |---|-------|-----------------------------|-----------|--------------------|

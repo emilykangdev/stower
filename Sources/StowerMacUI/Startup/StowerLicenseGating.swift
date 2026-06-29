@@ -44,16 +44,6 @@ internal enum StowerLicenseEntryContext: Sendable, Equatable {
     case couldNotReach
 }
 
-/// The sub-label reason for `StowerStartupState.checkingLicense` — first run vs.
-/// warm relaunch, so a paid relaunch never reads "Starting your free trial…".
-internal enum StowerCheckingLicenseReason: Sendable, Equatable {
-    /// No prior lease — minting a trial ("Starting your free trial…").
-    case startingTrial
-
-    /// A lease exists — revalidating ("Checking your license…").
-    case revalidating
-}
-
 /// The trial status badge data: the license id (for the checkout URL) and the
 /// trial end date decoded from the signed machine file's license resource.
 ///
@@ -83,7 +73,7 @@ internal struct StowerTrialBadge: Sendable, Equatable {
 /// `StowerLicenseGate`; tests pass `StowerFakeLicenseGate`.
 internal protocol StowerLicenseGating: Sendable {
     /// Whether a verified lease is already stored — a pure local Keychain read, no
-    /// network. Picks the `.checkingLicense` reason and gates the JC6 self-heal.
+    /// network.
     func hasLease() -> Bool
 
     /// Resolves the current license status: a reachable JC5-signed `/check-in` when

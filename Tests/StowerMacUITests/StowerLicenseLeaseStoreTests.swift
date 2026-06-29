@@ -306,3 +306,40 @@ import Testing
         #expect(store.load() == nil)
     }
 }
+
+// MARK: - trialExpiry(forMachineFile:) + plain-ISO parse — Task 8 (I-H12b,d)
+
+extension StowerLicenseLeaseStoreTests {
+    @Test("trialExpiry(forMachineFile:) is nil on a bad-signature machine file")
+    internal func trialExpiryForMachineFileNilOnBadSignature() throws {
+        let store = makeStore(InMemoryLeaseStorage())
+        let payloadBody = payloadWithLicenseID(
+            metaExpiry: futureExpiry,
+            licenseID: "lic-A",
+            licenseExpiry: "2026-07-28T00:00:00.000Z"
+        )
+        let payloadEnc = Data(payloadBody.utf8).base64EncodedString()
+        let signature = try signingKey.signature(for: Data(("machine/" + payloadEnc).utf8))
+        // The signature covers the real payload, but the file carries a mutated enc,
+        // so verifyMachineFile fails before any expiry is read.
+        let tampered = machineFile(enc: payloadEnc + "AA", sig: signature.base64EncodedString())
+        #expect(store.trialExpiry(forMachineFile: tampered, licenseID: "lic-A") == nil)
+    }
+
+    @Test("trialExpiry parses a plain ISO-8601 expiry (no fractional seconds)")
+    internal func trialExpiryParsesPlainISO() throws {
+        let plainExpiry = "2026-07-28T00:00:00Z"  // no fractional seconds
+        let store = makeStore(InMemoryLeaseStorage())
+        let file = try signedMachineFile(
+            payload: payloadWithLicenseID(
+                metaExpiry: futureExpiry,
+                licenseID: "lic-A",
+                licenseExpiry: plainExpiry
+            )
+        )
+        store.save(lease(machineFile: file))
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        #expect(store.trialExpiry(forLicenseID: "lic-A") == formatter.date(from: plainExpiry))
+    }
+}

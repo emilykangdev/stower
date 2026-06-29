@@ -128,8 +128,8 @@ export async function hmacSha256Hex(
 
 /**
  * Constant-time compare of two equal-length hex strings; false on a length
- * mismatch. The single source for this in the function — `index.ts` imports it for
- * the Lemon Squeezy signature check too, so there is one constant-time compare.
+ * mismatch. The single source for this in the function — `handlers.ts` imports it
+ * for the Lemon Squeezy signature check too, so there is one constant-time compare.
  */
 export function timingSafeEqualHex(a: string, b: string): boolean {
   if (a.length !== b.length) return false;

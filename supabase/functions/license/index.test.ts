@@ -24,8 +24,10 @@ import {
   STOWER_V0_ENTITLEMENT_CODE,
   type TrialRow,
   type TrialStore,
+  verifyLemonSqueezySignature,
   type WebhookDeps,
 } from "./handlers.ts";
+import { hmacSha256Hex } from "./requestSignature.ts";
 import type { StableRelease } from "./github.ts";
 
 function assertEquals(
@@ -657,6 +659,67 @@ Deno.test("a non order_created event is ignored", async () => {
     "good",
   );
   assertEquals(result.status, 200);
+});
+
+// ---------------------------------------------------------------------------
+// Webhook signature gate (I-H9 / T1) — the REAL extracted verifyLemonSqueezySignature.
+// The tests above fake the verifier (sig === "good"); these exercise the genuine
+// HMAC-SHA256 gate end-to-end through handleWebhook. Fresh fakes per Deno.test so
+// the tamper "no side effects" assertion can't see the accept leg's writes.
+// ---------------------------------------------------------------------------
+
+const LS_TEST_SECRET = "ls-test-webhook-secret";
+
+/** Webhook deps wired to the REAL signature verifier with an injected test secret. */
+function webhookDepsRealSig(
+  keygen: KeygenAdmin,
+  purchases: PurchaseStore,
+  secret: string,
+): WebhookDeps {
+  return {
+    purchases,
+    keygen,
+    verifySignature: (raw, sig) =>
+      verifyLemonSqueezySignature(raw, sig, secret),
+    paidVariantID: "paid-variant",
+    licenseIsMinted: () => Promise.resolve(true),
+  };
+}
+
+Deno.test("I-H9 a genuinely HMAC-signed order_created is accepted and drives the upgrade", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+  const body = orderBody();
+  const signature = await hmacSha256Hex(LS_TEST_SECRET, body);
+  const result = await handleWebhook(
+    webhookDepsRealSig(keygen, purchases, LS_TEST_SECRET),
+    body,
+    signature,
+  );
+  assertEquals(result.status, 200);
+  assertEquals(keygen.upgrades, ["lic-1"]);
+  assertEquals(keygen.attaches, ["lic-1"]);
+  assertEquals(purchases.records.length, 1);
+});
+
+Deno.test("I-H9 a tampered body fails the real HMAC gate (401, no side effects)", async () => {
+  const keygen = new FakeKeygen();
+  const purchases = new FakePurchases();
+  const body = orderBody();
+  // A genuine signature over `body`, but the request carries a mutated body — so
+  // the recomputed HMAC no longer matches.
+  const signature = await hmacSha256Hex(LS_TEST_SECRET, body);
+  const tamperedBody = body.replace("lic-1", "lic-evil");
+  assert(tamperedBody !== body, "the tamper must actually change the body");
+  const result = await handleWebhook(
+    webhookDepsRealSig(keygen, purchases, LS_TEST_SECRET),
+    tamperedBody,
+    signature,
+  );
+  assertEquals(result.status, 401);
+  assertEquals(keygen.upgrades.length, 0);
+  assertEquals(keygen.attaches.length, 0);
+  assertEquals(purchases.records.length, 0);
 });
 
 // ---------------------------------------------------------------------------

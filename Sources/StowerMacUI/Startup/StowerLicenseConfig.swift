@@ -8,9 +8,11 @@ import Foundation
 ///
 /// Resolution layers, in order: the compiled default (`staging` in a `DEBUG`
 /// build, `production` otherwise), then a per-field `STOWER_*` `ProcessInfo`
-/// override when present. A normally-launched Release app sets none of those env
-/// vars, so it uses the `production` defaults; a dev/test/CI run can point a build
-/// at any deployment via the env vars without recompiling.
+/// override applied **in DEBUG only**. A Release build pins the compiled
+/// `production` config and ignores `STOWER_*` (`effectiveConfig` passes
+/// `allowOverrides: false`), so a launch-environment variable cannot swap the
+/// pinned Keygen trust anchor; a DEBUG dev/test/CI run can point a build at any
+/// deployment via the env vars without recompiling.
 internal struct StowerLicenseConfig: Sendable, Equatable {
     /// The Supabase Edge Function base; `/mint-trial` and `/check-in` are appended.
     internal let functionBaseURL: String
@@ -35,7 +37,9 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     internal static let staging = StowerLicenseConfig(
         functionBaseURL: "https://qxsrnsxvsgofaeblbmmv.supabase.co/functions/v1/license",
         keygenPublicKeyHex: accountPublicKeyHex,
-        checkoutBaseURL: "https://stower.lemonsqueezy.com/checkout"
+        checkoutBaseURL:
+            "https://emilykangdev.lemonsqueezy.com/checkout/buy/"
+            + "4b930b6d-727b-4f93-9f9a-b4b8b738ab46"
     )
 
     /// The compiled default for this build configuration.

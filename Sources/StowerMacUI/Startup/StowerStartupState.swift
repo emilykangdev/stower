@@ -18,9 +18,11 @@ internal enum StowerStartupState: Sendable, Equatable {
     /// selects the entry-screen variant (trial-ended / upgrade / connect / retry).
     case needsLicense(StowerLicenseEntryContext)
 
-    /// Resolving the license — minting a trial or revalidating an existing lease.
-    /// The reason selects the spinner sub-label ("Starting…" vs. "Checking…").
-    case checkingLicense(StowerCheckingLicenseReason)
+    /// Resolving the license with the server (mint-on-first-run or revalidate an
+    /// existing lease). The spinner shows a neutral "Loading Stower…" because
+    /// trial-vs-paid is unknown until the server replies — a cleared lease can still
+    /// belong to a paid device.
+    case checkingLicense
 
     /// Model is available; attempting the board load behind the permission gate.
     case checkingMessages

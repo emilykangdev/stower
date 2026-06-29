@@ -110,6 +110,32 @@ internal final class StowerStartupModel {
         state = route(failure, wasAwaitingFDA: state.isAwaitingFullDiskAccess)
     }
 
+    /// Re-checks the license without disrupting the board — called when the app
+    /// returns to the foreground (e.g. back from the Lemon Squeezy checkout), so a
+    /// just-completed purchase reflects instantly: the `/check-in` refreshes the
+    /// cached lease (clearing the trial badge once the license is paid) with no full
+    /// startup re-run and no "Loading Stower…" flash.
+    ///
+    /// Acts only while on the board. A definitive `.trialExpired` / `.wrongVersion`
+    /// routes to the paywall; `.valid` and the transient states (`.couldNotReach` /
+    /// `.needsTrialOnline`) leave the board in place — a network blip must never
+    /// paywall a user who was already valid. The generation guard drops the result
+    /// if a fresh startup run (Check Again) began during the await.
+    internal func refreshLicenseIfOnBoard() async {
+        guard state == .connectedPreparingBoard else { return }
+        let runGeneration = generation
+        let status = await licenseGate.currentStatus(now: clock())
+        guard generation == runGeneration, state == .connectedPreparingBoard else { return }
+        switch status {
+        case .valid, .couldNotReach, .needsTrialOnline:
+            break
+        case .trialExpired(let id):
+            commit(.needsLicense(.trialExpired(licenseID: id)), generation: runGeneration)
+        case .wrongVersion(let id):
+            commit(.needsLicense(.upgradeRequired(licenseID: id)), generation: runGeneration)
+        }
+    }
+
     /// Cancels any in-flight run, bumps the generation, and starts a fresh run.
     private func beginRun() {
         inFlight?.cancel()
@@ -135,10 +161,9 @@ internal final class StowerStartupModel {
                 return
             }
             // The license check inserts after availability, before the board probe.
-            // A warm lease revalidates ("Checking…"); first run mints ("Starting…").
-            let reason: StowerCheckingLicenseReason =
-                licenseGate.hasLease() ? .revalidating : .startingTrial
-            commit(.checkingLicense(reason), generation: generation)
+            // The spinner stays neutral ("Loading Stower…") — trial-vs-paid is unknown
+            // until the server replies, and a cleared lease can still be paid.
+            commit(.checkingLicense, generation: generation)
             let status = await licenseGate.currentStatus(now: clock())
             guard generation == self.generation else { return }
             let target = try await route(

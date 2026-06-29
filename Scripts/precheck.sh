@@ -118,6 +118,16 @@ fi
 # the boundary must hold in the app entry too. Standing gate; do not weaken to go
 # green (AGENTS.md). Authored via /harden-guardrail.
 
+# ── Static source guards (6x family) ─────────────────────────────────────────
+# Each 6x check asserts a textual/structural fact about the source tree and fails
+# loudly (echo ERROR >&2; exit 1) — a gate-time alternative to a unit test for
+# "X is/isn't present, here." Add new ones as members, not a new mechanism.
+#   tool:     grep (grep -RInE) for line-local facts; awk for region/block-scoped
+#             facts ("only inside #if DEBUG", "only inside a Release config block").
+#   polarity: must-be-absent → a match fails; must-be-present → a no-match fails.
+#   deps:     none (no plutil/jq/python) — runs every commit.
+# See AGENTS.md "Static source guards" for the rule.
+
 # 6a — Engine-INTERNAL modules are NEVER imported by StowerMacUI (permanent ban,
 #      incl. the adapter). The app sees value types + two actors, never GRDB/FM/Photos.
 if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+(GRDB|FoundationModels|Photos|PhotoKit)([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null; then
@@ -178,5 +188,79 @@ fi
 #      "Logger" in a comment can't trip it; green today.
 if grep -RInE --include="*.swift" '(^|[^A-Za-z0-9_])(print|NSLog|os_log)[[:space:]]*\(|(^|[^A-Za-z0-9_])Logger[[:space:]]*\(' Sources/StowerMacUI 2>/dev/null; then
     echo "ERROR: no logging in Sources/StowerMacUI — the license key / activate-response PII must never reach logs (remove the print/Logger/os_log/NSLog call)" >&2
+    exit 1
+fi
+
+# 6h — The DEBUG launch-arg seam is NEVER compiled into a Release archive: the
+#      StowerLicenseDebugArguments type is DECLARED inside #if DEBUG, and
+#      StowerLicenseGate REFERENCES it only inside #if DEBUG. A Release reference to
+#      this #if DEBUG-only lease-wipe / fingerprint-pin lever would ship it to
+#      customers (I-H5). Region-aware: a line-oriented grep cannot express "outside a
+#      #if DEBUG region", so awk tracks #if DEBUG/#else/#endif nesting. The
+#      `swift build -c release` in CI is the authoritative gate (an out-of-#if-DEBUG
+#      reference is a hard compile error); this is the fast local canary.
+debug_region_violation() {
+    # $1 = file, $2 = ERE pattern. Exits non-zero (printing FILE:LINE) when a line
+    # matching $2 appears OUTSIDE every enclosing release-excluding #if DEBUG region.
+    # Pure-comment lines (// …) are ignored — a doc mention is not a compile reference.
+    awk -v pat="$2" '
+        /^[[:space:]]*#if[[:space:]]+DEBUG([[:space:]]|$)/ { depth++; dbg[depth]=1; act[depth]=1; excl++; next }
+        /^[[:space:]]*#if([[:space:]]|$)/                  { depth++; dbg[depth]=0; act[depth]=0; next }
+        /^[[:space:]]*#(else|elseif)([[:space:]]|$)/       { if (depth>0 && dbg[depth] && act[depth]) { excl--; act[depth]=0 } next }
+        /^[[:space:]]*#endif([[:space:]]|$)/               { if (depth>0) { if (dbg[depth] && act[depth]) excl--; depth-- } next }
+        /^[[:space:]]*\/\//                                { next }
+        ($0 ~ pat && excl==0)                              { print FILENAME ":" NR; bad=1 }
+        END { exit (bad ? 1 : 0) }
+    ' "$1"
+}
+if ! debug_region_violation \
+    Sources/StowerMacUI/Startup/StowerLicenseDebugArguments.swift \
+    'struct[[:space:]]+StowerLicenseDebugArguments' \
+    || ! debug_region_violation \
+    Sources/StowerMacUI/Startup/StowerLicenseGate.swift \
+    'StowerLicenseDebugArguments'; then
+    echo "ERROR: the StowerLicenseDebugArguments seam must be #if DEBUG-only — its type must be declared inside #if DEBUG and referenced (in StowerLicenseGate) only inside #if DEBUG, or a lease-wipe/fingerprint-pin lever ships to customers (I-H5)" >&2
+    exit 1
+fi
+
+# 6i — The /health non-default-trial-duration canary is actually WIRED, not just
+#      the helper unit-tested: index.ts's /health handler must call
+#      trialDurationHealthFields( so a TRIAL_DURATION_SECONDS leak onto prod is loud
+#      (I-H10). Must-be-PRESENT polarity: a no-match fails. Block-scoped to the
+#      `path.endsWith("/health")` branch (awk, not grep): a plain grep would pass if
+#      the call drifted into another handler while /health was left unwired, so awk
+#      tracks `{`/`}` depth from the /health `if` and asserts the call is INSIDE it.
+if ! awk '
+        /path\.endsWith\("\/health"\)/ && /{/ { inblock=1; depth=0 }
+        inblock {
+            depth += gsub(/{/, "{") - gsub(/}/, "}")
+            if ($0 ~ /trialDurationHealthFields\(/) found=1
+            if (depth<=0) inblock=0
+        }
+        END { exit (found ? 0 : 1) }
+    ' supabase/functions/license/index.ts 2>/dev/null; then
+    echo "ERROR: index.ts's GET /health handler must call trialDurationHealthFields( inside the path.endsWith(\"/health\") branch — the non-default trial-duration canary is unwired (I-H10)" >&2
+    exit 1
+fi
+
+# 6j — DEBUG is NEVER defined in a Release build configuration of StowerMac.xcodeproj:
+#      a DEBUG in the Xcode Release config would compile every #if DEBUG lever
+#      (lease-wipe, fingerprint pin) INTO the shipped archive — and neither the SPM
+#      `swift build -c release` (different build system) nor the 6h source guard would
+#      catch it (I-H11). Block-scoped: walk each XCBuildConfiguration, remember its
+#      SWIFT_ACTIVE_COMPILATION_CONDITIONS, fail if a `name = Release;` block carries
+#      DEBUG. Dependency-free awk (no plutil/jq/python). SWIFT_ACTIVE_COMPILATION_
+#      CONDITIONS can be a parenthesized multiline list, so the value's DEBUG may sit
+#      on a continuation line, not the assignment line — track the whole value region
+#      (from the setting until its terminating `;`) so a multiline DEBUG isn't missed.
+if ! awk '
+        /isa = XCBuildConfiguration;/         { hasDebug=0; inSwiftCond=0; next }
+        inSwiftCond                           { if ($0 ~ /DEBUG/) hasDebug=1; if ($0 ~ /;/) inSwiftCond=0; next }
+        /SWIFT_ACTIVE_COMPILATION_CONDITIONS/ { if ($0 ~ /DEBUG/) hasDebug=1; if ($0 !~ /;/) inSwiftCond=1; next }
+        /name = Release;/                     { if (hasDebug) { print "Release config defines DEBUG at line " NR; bad=1 } hasDebug=0; next }
+        /name = Debug;/                       { hasDebug=0; next }
+        END { exit (bad ? 1 : 0) }
+    ' StowerMac/StowerMac.xcodeproj/project.pbxproj; then
+    echo "ERROR: a Release build configuration of StowerMac.xcodeproj defines DEBUG — every #if DEBUG lever would ship in the archive; remove DEBUG from the Release config's SWIFT_ACTIVE_COMPILATION_CONDITIONS (I-H11)" >&2
     exit 1
 fi
