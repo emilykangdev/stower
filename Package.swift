@@ -24,6 +24,7 @@ let package = Package(
         // `Hub` download path stays mechanically shut (precheck greps `import Hub`).
         .package(url: "https://github.com/huggingface/swift-transformers", from: "0.1.17"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
+        .package(url: "https://github.com/TelemetryDeck/SwiftSDK", from: "2.0.0"),
         // TODO: swift-snapshot-testing removed from the v0 scaffold — its
         // SnapshotTesting module imports XCTest, which is unavailable under
         // Command Line Tools (`swift test` reports "no such module 'XCTest'").
@@ -66,7 +67,10 @@ let package = Package(
             // StowerMessagesComposition, StowerMessagesMapping) import
             // StowerMessages; every other file talks to the app-owned boundary alone.
             name: "StowerMacUI",
-            dependencies: ["StowerMessages"],
+            dependencies: [
+                "StowerMessages",
+                .product(name: "TelemetryDeck", package: "SwiftSDK"),
+            ],
             path: "Sources/StowerMacUI"
         ),
         .executableTarget(

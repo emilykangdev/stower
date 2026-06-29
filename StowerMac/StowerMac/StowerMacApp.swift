@@ -20,9 +20,20 @@ struct StowerMacApp: App {
     /// (I6). Both ⌘Z and the draining-bar Undo button call `undo()` on this instance.
     private let undoManager = UndoManager()
 
+    init() {
+        // Initialize anonymous analytics behind the privacy kill switch (JC6).
+        // When consent is off, initialize() is a no-op and no SDK init fires (A3).
+        StowerAnalytics.initialize()
+        // app_launched is gated by the facade; no-op if disabled.
+        StowerAnalytics.report(.appLaunched)
+    }
+
     var body: some Scene {
         WindowGroup {
             StowerRootContainer(flusher: appDelegate.flusher, undoManager: undoManager)
+        }
+        Settings {
+            StowerSettingsView()
         }
         .commands {
             // ⌘Z / ⌘⇧Z (A4/B1 spike — resolved WITHOUT an AppKit responder bridge in the
@@ -106,6 +117,10 @@ final class StowerAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {
+        // Emit session_ended synchronously before draining drafts. The SDK buffers
+        // this signal to disk and flushes on next launch (A2/Gotcha 7) — do NOT
+        // await here, and do NOT call requestImmediateSync(), which would delay quit.
+        StowerAnalytics.report(.sessionEnded)
         // Drain pending draft writes, then let the app quit. `.terminateLater` keeps
         // the app alive until `reply(toApplicationShouldTerminate:)`.
         Task { @MainActor in

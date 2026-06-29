@@ -36,6 +36,18 @@ public struct StowerRootView: View {
     /// no trial→paid transition).
     @State private var purchaseThanksShown = false
 
+    /// Whether the analytics disclosure card is currently showing.
+    ///
+    /// Set to `true` after ~60 seconds of foreground board time, once, if the
+    /// card has never been shown. Cleared when the user makes a choice.
+    @State private var showConsentCard = false
+
+    /// The consent state accessor shared by the disclosure card and the settings toggle.
+    ///
+    /// A single instance covers both surfaces so they never desync (the Keychain record
+    /// is the underlying source of truth — shared across all readers).
+    private let consent = StowerAnalyticsConsent()
+
     private let settings: StowerSystemSettingsOpener
 
     /// The dismissal seam for the trial badge.
@@ -72,6 +84,7 @@ public struct StowerRootView: View {
             undoManager: undoManager,
             dropper: composition.dropper,
             contacts: composition.contacts,
+            analyticsReporter: composition.analyticsReporter,
             licenseGate: StowerLicenseGate(),
             settings: StowerSystemSettingsOpener(),
             badgeDismissal: StowerUserDefaultsBadgeDismissal(),
@@ -99,12 +112,17 @@ public struct StowerRootView: View {
             isAccessibilityTrusted: { false }
         ),
         contacts: StowerContactsAccess = .denied,
+        analyticsReporter: any StowerAnalyticsReporting = StowerNoOpAnalyticsReporter(),
         licenseGate: any StowerLicenseGating,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
         badgeDismissal: any StowerTrialBadgeDismissing = StowerUserDefaultsBadgeDismissal(),
         flusher: StowerTerminationFlusher? = nil
     ) {
-        let startupModel = StowerStartupModel(provider: startup, licenseGate: licenseGate)
+        let startupModel = StowerStartupModel(
+            provider: startup,
+            licenseGate: licenseGate,
+            reporter: analyticsReporter
+        )
         _model = State(initialValue: startupModel)
         let boardModel = StowerBoardViewModel(
             dataSource: board,
@@ -115,6 +133,7 @@ public struct StowerRootView: View {
             dropper: dropper,
             contacts: contacts,
             settings: settings,
+            analyticsReporter: analyticsReporter,
             onFailure: { failure in startupModel.handleBoardFailure(failure) }
         )
         _boardModel = State(initialValue: boardModel)
@@ -153,19 +172,31 @@ public struct StowerRootView: View {
         case .needsFullDiskAccessStillMissing(let path):
             fdaView(path: path, stillMissing: true)
         case .connectedPreparingBoard:
-            StowerBoardView(
-                model: boardModel,
-                trial: trialBadge,
-                showsTrialBanner: !trialBannerDismissed,
-                onBuy: { openCheckout(licenseID: $0) },
-                onDismissTrial: {
-                    badgeDismissal.dismiss()
-                    trialBannerDismissed = true
+            ZStack(alignment: .bottom) {
+                StowerBoardView(
+                    model: boardModel,
+                    trial: trialBadge,
+                    showsTrialBanner: !trialBannerDismissed,
+                    onBuy: { openCheckout(licenseID: $0) },
+                    onDismissTrial: {
+                        badgeDismissal.dismiss()
+                        trialBannerDismissed = true
+                    }
+                )
+                if showConsentCard {
+                    StowerAnalyticsConsentCard { enabled in
+                        StowerAnalytics.setEnabled(enabled)
+                        consent.markDisclosureShown()
+                        showConsentCard = false
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-            )
+            }
+            .animation(.easeInOut(duration: Self.crossFade), value: showConsentCard)
             .onAppear {
                 trialBadge = model.trialBadge()
                 trialBannerDismissed = badgeDismissal.isDismissed
+                scheduleConsentCardIfNeeded()
             }
             // Returning to the app (e.g. back from the Lemon Squeezy checkout)
             // re-checks the license so a completed purchase reflects instantly: the
@@ -195,6 +226,20 @@ public struct StowerRootView: View {
             }
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
+        }
+    }
+
+    /// Schedules the analytics consent card to appear after ~60 seconds of
+    /// foreground board time, shown at most once ever (JC7).
+    ///
+    /// The shown-flag is stored in `UserDefaults` by `StowerAnalyticsConsent` so
+    /// the card never reappears after the user has made a choice.
+    private func scheduleConsentCardIfNeeded() {
+        guard !consent.hasShownDisclosure else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: Self.consentCardDelay)
+            guard !consent.hasShownDisclosure else { return }
+            withAnimation { showConsentCard = true }
         }
     }
 
@@ -231,6 +276,12 @@ public struct StowerRootView: View {
     private static let purchaseThanksMessage =
         "You've purchased the license for Stower \(purchasedVersionLabel). "
         + "Please check your email for the receipt."
+
+    /// The delay before showing the analytics consent card after the board appears.
+    ///
+    /// ~60 seconds of foreground board time (JC7 — after the user has seen value,
+    /// not at startup or at the FDA permission cliff).
+    private static let consentCardDelay: Duration = .seconds(60)
 
     private static let minWidth: CGFloat = 520
     private static let minHeight: CGFloat = 360

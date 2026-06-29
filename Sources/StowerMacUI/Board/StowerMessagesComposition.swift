@@ -29,6 +29,12 @@ internal struct StowerMessagesComposition {
     /// The precious interaction-event recorder, behind its app-owned boundary.
     internal let interactions: any StowerInteractionRecording
 
+    /// The analytics reporter for funnel + board-interaction events.
+    ///
+    /// Shared between `StowerStartupModel` (funnel) and `StowerBoardViewModel`
+    /// (board_item_clicked) so both flow through the same kill switch.
+    internal let analyticsReporter: any StowerAnalyticsReporting
+
     /// The "Reply in Messages" bridge.
     internal let dropper: StowerMessagesDropper
 
@@ -49,6 +55,11 @@ internal struct StowerMessagesComposition {
         let provider = StowerDebtBoardProvider(contactsResolver: StowerContactsResolver())
         startup = StowerMessagesStartupAdapter(engine: provider)
         contacts = StowerContactsAccess()
+        // Build one live reporter shared across the startup funnel and the board.
+        // The facade singleton (StowerAnalytics.shared) is the authoritative kill
+        // switch; this reporter checks consent on every call (defence-in-depth).
+        let consent = StowerAnalyticsConsent()
+        analyticsReporter = StowerTelemetryDeckReporter(consent: consent)
         guard let draftURL = StowerDraftStore.defaultURL else {
             throw StowerDraftStoreUnavailable.locationUnavailable
         }

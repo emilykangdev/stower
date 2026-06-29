@@ -264,3 +264,20 @@ if ! awk '
     echo "ERROR: a Release build configuration of StowerMac.xcodeproj defines DEBUG — every #if DEBUG lever would ship in the archive; remove DEBUG from the Release config's SWIFT_ACTIVE_COMPILATION_CONDITIONS (I-H11)" >&2
     exit 1
 fi
+
+# 6k — TelemetryDeck is imported by EXACTLY ONE file: StowerTelemetryDeckReporter.swift.
+#      Admits attributed imports (@preconcurrency, @testable) by anchoring the pattern
+#      to the import keyword with optional leading attribute lines. A second import
+#      anywhere defeats the kill-switch quarantine. Must-be-EXACTLY-ONE polarity.
+TD_ALLOWED="$(printf '%s\n' \
+    "Sources/StowerMacUI/Analytics/StowerTelemetryDeckReporter.swift" \
+    | LC_ALL=C sort)"
+TD_IMPORTERS="$(grep -RIlE --include="*.swift" \
+    '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*([[:space:]]|$))*import[[:space:]]+TelemetryDeck([[:space:]]|$)' \
+    Sources/ StowerMac/StowerMac/ 2>/dev/null | LC_ALL=C sort || true)"
+if [ "$TD_IMPORTERS" != "$TD_ALLOWED" ]; then
+    echo "ERROR: TelemetryDeck must be imported by exactly one file (StowerTelemetryDeckReporter.swift)." >&2
+    echo "       Allowed: $TD_ALLOWED" >&2
+    echo "       Found: ${TD_IMPORTERS:-<none>}" >&2
+    exit 1
+fi
