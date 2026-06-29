@@ -394,3 +394,30 @@ same shape — never let a view model import `StowerMessages`.
 > objects), not a contract. The contract is the app-owned protocol the view model
 > depends on. They are different jobs — a builder and an interface — not two layers
 > doing the same thing.
+
+---
+
+## 10. App scenes & lifecycle hooks (`StowerMacApp`)
+
+`StowerMacApp` declares **two scenes**:
+
+- `WindowGroup { StowerRootContainer(...) }` — the main window; `.commands` (the
+  ⌘Z / ⌘⇧Z undo bridge) stays on this scene.
+- `Settings { StowerSettingsView() }` — the standard macOS Preferences scene.
+  `StowerSettingsView` is a `TabView` whose only pane today is
+  `StowerPrivacySettingsView` (analytics consent toggle).
+
+**Launch/quit analytics hooks** (the only lifecycle calls the app makes into the
+analytics subsystem — see [Analytics.md](Analytics.md) for the full rationale):
+
+- `StowerMacApp.init` → `StowerAnalytics.initialize()` then
+  `StowerAnalytics.reportAppLaunched()`. When consent is off, `initialize()` is a
+  complete no-op (no SDK init) and `reportAppLaunched()` drops the event.
+- `StowerAppDelegate.applicationShouldTerminate` → `StowerAnalytics.reportSessionEnded()`
+  **synchronously**, BEFORE draining draft writes. The quit path never `await`s
+  analytics; the SDK buffers `session_ended` to disk and flushes on next launch.
+
+The analytics subsystem (`Sources/StowerMacUI/Analytics/`) is **app-internal**, not
+engine-backed — it sits above the §9 adapter wall and imports no engine module.
+The single third-party dependency, TelemetryDeck, is quarantined to one file
+(`StowerTelemetryDeckReporter`) by `Scripts/precheck.sh` step **6k**.
