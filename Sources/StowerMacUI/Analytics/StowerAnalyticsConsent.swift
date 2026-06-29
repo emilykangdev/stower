@@ -1,5 +1,46 @@
 import Foundation
 
+/// A process-wide, in-memory analytics opt-out latch.
+///
+/// The Keychain `enabled` field is the persistent cache, but multiple reporter
+/// instances (facade, board, startup) each re-read it per signal. If a user
+/// opts out and the Keychain write *fails*, those reporters would read the stale
+/// "on" value and keep emitting. This latch closes that gap: once
+/// `StowerAnalytics.setEnabled(false)` latches off, every reporter honors it
+/// immediately this session — independent of whether the Keychain write
+/// succeeded. Durable off across launches is backstopped by the license
+/// `diagnostics_opt_out` reconcile (JC8).
+///
+/// Thread-safe (lock-guarded) because reporters may emit off the main actor.
+/// Never re-enables itself; only an explicit user opt-in (`reset()`) clears it.
+internal enum StowerAnalyticsKillLatch {
+    private static let lock = NSLock()
+    /// Guarded by `lock` — `nonisolated(unsafe)` asserts that manual locking,
+    /// not the compiler, provides the concurrency safety.
+    nonisolated(unsafe) private static var optedOut = false
+
+    /// Whether analytics has been latched off in memory this session.
+    internal static var isLatchedOff: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return optedOut
+    }
+
+    /// Latches analytics off for the rest of this session.
+    internal static func latchOff() {
+        lock.lock()
+        defer { lock.unlock() }
+        optedOut = true
+    }
+
+    /// Clears the latch (explicit user opt-in, or test teardown).
+    internal static func reset() {
+        lock.lock()
+        defer { lock.unlock() }
+        optedOut = false
+    }
+}
+
 /// Manages the analytics consent state.
 ///
 /// Consent is **license-scoped** (JC8): the authoritative source of truth is
@@ -39,8 +80,13 @@ internal struct StowerAnalyticsConsent: Sendable {
     /// Reads the Keychain cache. Returns `true` (default-on) when no record
     /// exists yet (fresh install). This is the fast at-launch gate; the license
     /// record is authoritative and reconciled on each check-in.
+    ///
+    /// The in-memory `StowerAnalyticsKillLatch` wins over the cache: once the
+    /// user opts out this session, this returns `false` even if the Keychain
+    /// write failed (so every reporter stops immediately).
     internal var isEnabled: Bool {
-        readRecord()?.enabled ?? true
+        if StowerAnalyticsKillLatch.isLatchedOff { return false }
+        return readRecord()?.enabled ?? true
     }
 
     /// Disables analytics collection.

@@ -17,6 +17,13 @@ public final class StowerAnalytics {
     /// The singleton built by `initialize` and used by `report`.
     private static var shared: StowerAnalytics?
 
+    /// Whether the TelemetryDeck SDK has been initialized this session.
+    ///
+    /// Tracked so re-enabling from an off launch initializes the SDK exactly
+    /// once (the Swift SDK has no `stop()`, A4), avoiding a duplicate
+    /// `TelemetryDeck.initialize` (and its automatic `Session.started`, A3).
+    private static var didStartSDK = false
+
     private let reporter: any StowerAnalyticsReporting
     private let consent: StowerAnalyticsConsent
 
@@ -86,6 +93,7 @@ public final class StowerAnalytics {
         // TelemetryDeck double-hashes the userID (UUID → SHA-256 with the salt →
         // its own hash on the wire) so the raw UUID never leaves the device.
         makeClient(appID, stableSalt, identity.clientUser())
+        Self.didStartSDK = true
 
         let live = StowerAnalytics(
             reporter: StowerTelemetryDeckReporter(consent: consent),
@@ -134,11 +142,25 @@ public final class StowerAnalytics {
     internal static func setEnabled(_ enabled: Bool) {
         guard let current = shared else { return }
         current.consent.setEnabled(enabled)
-        if !enabled {
-            // Fail closed in memory: stop this session's facade emissions
-            // immediately, even if the Keychain cache write failed. Durable off
-            // is backstopped by the license record's `diagnostics_opt_out`,
-            // reconciled on the next check-in (JC8).
+        if enabled {
+            // Clear the in-memory kill latch, then bring up a live reporter. If
+            // the SDK never started this session (launched disabled), initialize
+            // it now — gated on the now-enabled consent. Otherwise just restore a
+            // live reporter (the SDK can't be re-initialized; A4).
+            StowerAnalyticsKillLatch.reset()
+            if Self.didStartSDK {
+                Self.shared = StowerAnalytics(
+                    reporter: StowerTelemetryDeckReporter(consent: current.consent),
+                    consent: current.consent
+                )
+            } else {
+                initialize(consent: current.consent, identity: StowerAnalyticsIdentity())
+            }
+        } else {
+            // Fail closed in memory across every reporter, even if the Keychain
+            // write failed. Durable off is backstopped by the license record's
+            // `diagnostics_opt_out`, reconciled on the next check-in (JC8).
+            StowerAnalyticsKillLatch.latchOff()
             Self.shared = StowerAnalytics(
                 reporter: StowerNoOpAnalyticsReporter(),
                 consent: current.consent

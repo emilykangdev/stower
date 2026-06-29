@@ -32,9 +32,6 @@ struct StowerMacApp: App {
         WindowGroup {
             StowerRootContainer(flusher: appDelegate.flusher, undoManager: undoManager)
         }
-        Settings {
-            StowerSettingsView()
-        }
         .commands {
             // ⌘Z / ⌘⇧Z (A4/B1 spike — resolved WITHOUT an AppKit responder bridge in the
             // board; the only AppKit here is forwarding the action the standard Edit-menu
@@ -50,6 +47,9 @@ struct StowerMacApp: App {
                 Button("Redo") { performRedo() }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
             }
+        }
+        Settings {
+            StowerSettingsView()
         }
     }
 

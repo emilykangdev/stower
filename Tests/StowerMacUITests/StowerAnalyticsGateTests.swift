@@ -69,4 +69,23 @@ import Testing
         reporter.report(.appLaunched)
         reporter.report(.sessionEnded)
     }
+
+    /// The in-memory kill latch overrides an enabled Keychain cache, so every
+    /// reporter (which gates on `consent.isEnabled`) stops immediately even if a
+    /// failed opt-out write left the cache reading "on" (F4/JC6).
+    @Test internal func killLatchOverridesEnabledCacheForAllReporters() {
+        StowerAnalyticsKillLatch.reset()
+        defer { StowerAnalyticsKillLatch.reset() }
+
+        let storage = StowerInMemoryLeaseStorage()
+        let consent = StowerAnalyticsConsent(storage: storage)
+        // Fresh storage = enabled cache (default-on).
+        #expect(consent.isEnabled == true)
+
+        StowerAnalyticsKillLatch.latchOff()
+        #expect(consent.isEnabled == false, "latch must win over an enabled cache")
+
+        StowerAnalyticsKillLatch.reset()
+        #expect(consent.isEnabled == true, "explicit opt-in clears the latch")
+    }
 }
