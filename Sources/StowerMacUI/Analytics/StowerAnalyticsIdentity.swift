@@ -9,10 +9,10 @@ import Foundation
 /// identifies the record within the service.
 internal enum StowerAnalyticsKeychainKeys {
     /// The Keychain service identifier for the analytics install record.
-    static let service = "com.stower.analytics.identity"
+    internal static let service = "com.stower.analytics.identity"
 
     /// The Keychain account key for the analytics install record.
-    static let account = "install-record"
+    internal static let account = "install-record"
 }
 
 /// A stable, anonymous, random install identity stored in the Keychain.

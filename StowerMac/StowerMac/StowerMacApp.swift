@@ -25,7 +25,7 @@ struct StowerMacApp: App {
         // When consent is off, initialize() is a no-op and no SDK init fires (A3).
         StowerAnalytics.initialize()
         // app_launched is gated by the facade; no-op if disabled.
-        StowerAnalytics.report(.appLaunched)
+        StowerAnalytics.reportAppLaunched()
     }
 
     var body: some Scene {
@@ -120,7 +120,7 @@ final class StowerAppDelegate: NSObject, NSApplicationDelegate {
         // Emit session_ended synchronously before draining drafts. The SDK buffers
         // this signal to disk and flushes on next launch (A2/Gotcha 7) — do NOT
         // await here, and do NOT call requestImmediateSync(), which would delay quit.
-        StowerAnalytics.report(.sessionEnded)
+        StowerAnalytics.reportSessionEnded()
         // Drain pending draft writes, then let the app quit. `.terminateLater` keeps
         // the app alive until `reply(toApplicationShouldTerminate:)`.
         Task { @MainActor in

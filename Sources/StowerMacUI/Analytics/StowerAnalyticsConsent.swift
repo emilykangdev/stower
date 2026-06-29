@@ -48,10 +48,16 @@ internal struct StowerAnalyticsConsent: Sendable {
     /// Writes the opt-out immediately to the Keychain (instant local effect).
     /// The caller is responsible for pushing `diagnostics_opt_out` to the
     /// license record (durable, license-scoped store, parallel workstream).
-    internal func setEnabled(_ enabled: Bool) {
+    ///
+    /// - Returns: `true` if the Keychain cache write succeeded. A `false` return
+    ///   means the local cache could not be updated; the caller's facade fails
+    ///   closed in memory for the session and the license record remains the
+    ///   durable authority (JC8).
+    @discardableResult
+    internal func setEnabled(_ enabled: Bool) -> Bool {
         var record = readRecord() ?? AnalyticsInstallRecord(id: UUID().uuidString, enabled: true)
         record.enabled = enabled
-        writeRecord(record)
+        return writeRecord(record)
     }
 
     /// Reconciles the Keychain cache against the authoritative license record.
@@ -94,8 +100,9 @@ internal struct StowerAnalyticsConsent: Sendable {
         return try? JSONDecoder().decode(AnalyticsInstallRecord.self, from: data)
     }
 
-    private func writeRecord(_ record: AnalyticsInstallRecord) {
-        guard let data = try? JSONEncoder().encode(record) else { return }
-        storage.write(data)
+    @discardableResult
+    private func writeRecord(_ record: AnalyticsInstallRecord) -> Bool {
+        guard let data = try? JSONEncoder().encode(record) else { return false }
+        return storage.write(data)
     }
 }
