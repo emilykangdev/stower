@@ -36,7 +36,7 @@ jobs:
     outputs:
       final_message: ${{ steps.run_codex.outputs.final-message }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # Check out the PR's merge commit so Codex sees the post-merge tree.
           ref: refs/pull/${{ github.event.pull_request.number }}/merge
