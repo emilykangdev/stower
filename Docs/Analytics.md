@@ -9,43 +9,54 @@ The whole subsystem lives in `Sources/StowerMacUI/Analytics/` and is **app-inter
 it sits above the engine-adapter wall (`MacAppContract.md` §9) and imports no engine
 module. The single third-party dependency, TelemetryDeck, is quarantined to one file.
 
+Analytics shares a consent/identity seam with the crash-reporting subsystem (see
+[CrashReporting.md](CrashReporting.md)). The shared types — `StowerDiagnosticsConsent`,
+`StowerDiagnosticsIdentity`, `DiagnosticsInstallRecord` — live in
+`Sources/StowerMacUI/Diagnostics/`, and the umbrella facade `StowerDiagnostics`
+(`Sources/StowerMacUI/Diagnostics/StowerDiagnostics.swift`) is the single launch
+entry point that starts both backends behind one consent gate.
+
 ## Identity (anonymous by construction)
 
-`StowerAnalyticsIdentity.clientUser()` returns a plain random per-install `UUID`,
-minted once and persisted in the Keychain (`StowerAnalyticsKeychainKeys.service =
+`StowerDiagnosticsIdentity.clientUser()` returns a plain random per-install `UUID`,
+minted once and persisted in the Keychain (`StowerDiagnosticsKeychainKeys.service =
 com.stower.analytics.identity`). It is **not** hardware-derived, **not** IDFV/IDFA,
 and has no cross-device or cross-app meaning. The UUID never travels the network:
 TelemetryDeck double-hashes it (a stable app salt + SHA-256, then its own on-wire
 hash) before any signal leaves the device. The salt (`StowerAnalytics.stableSalt`)
 exists only for hash stability — anonymity comes from the random UUID, not the salt —
 and must never change, or every existing user would look new. The UUID and the
-cached opt-out share one Keychain item (`AnalyticsInstallRecord`) so they can't desync.
+cached opt-out share one Keychain item (`DiagnosticsInstallRecord`) so they can't desync.
 
 ## Kill switch (never-start, not stop)
 
-The Swift TelemetryDeck SDK has no `stop()`, so the kill switch is **"never start
-when disabled."** `StowerAnalytics.initialize()` is a complete no-op when consent is
-off: it builds a `StowerNoOpAnalyticsReporter`, never calls the SDK init, and so never
+The Swift TelemetryDeck SDK has no `stop()`, so the analytics kill switch is **"never
+start when disabled."** `StowerDiagnostics.initialize()` (which delegates to
+`StowerAnalytics.startBackend`) is a complete no-op for analytics when consent is off:
+it builds a `StowerNoOpAnalyticsReporter`, never calls the SDK init, and so never
 emits TelemetryDeck's automatic `Session.started` signal. Two layers of defence:
 
 1. The facade gates `initialize` on consent.
 2. `StowerTelemetryDeckReporter.report` re-checks `consent.isEnabled` on every signal.
 
-When a user opts out mid-session, `StowerAnalytics.setEnabled(false)` trips the
-process-wide in-memory `StowerAnalyticsKillLatch` (`latchOff()`), so every reporter
-fails closed **immediately** this session even if the Keychain cache write failed.
-Re-enabling clears the latch; if the SDK never started this launch it is initialized
-then, otherwise a live reporter is restored (the SDK can't be re-initialized).
+When a user opts out mid-session, `StowerDiagnostics.setEnabled(false)` →
+`StowerAnalytics.setEnabled(false)` trips the process-wide in-memory
+`StowerDiagnosticsKillLatch` (`latchOff()`), so every reporter fails closed
+**immediately** this session even if the Keychain cache write failed.
+Re-enabling clears the latch; if the SDK never started this launch its backend is
+started then, otherwise a live reporter is restored (the SDK can't be re-initialized).
+(Sentry's kill switch differs — it has a real `SentrySDK.close()`; see
+[CrashReporting.md](CrashReporting.md).)
 
 ## Consent (default-on with disclosure, "off wins")
 
-Analytics is **default-on**. `StowerAnalyticsConsent.isEnabled` returns `true` when
+Analytics is **default-on**. `StowerDiagnosticsConsent.isEnabled` returns `true` when
 no record exists yet (fresh install). The user is shown the
 `StowerAnalyticsConsentCard` once, after ~60 seconds of *foreground board* time
 (`StowerRootView.consentCardDelay`, JC7) — after they've seen value, never at startup
 or at the FDA permission cliff. The countdown cancels on resign-active / board
 disappearance and re-arms on return; the shown-once flag lives in `UserDefaults`
-(`StowerAnalyticsConsent.shownDefaultsKey`). One-click off also lives in a Privacy
+(`StowerDiagnosticsConsent.shownDefaultsKey`). One-click off also lives in a Privacy
 pane (`StowerSettingsView` → `StowerPrivacySettingsView`) in the app's `Settings { }`
 scene.
 

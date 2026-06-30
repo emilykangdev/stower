@@ -407,17 +407,23 @@ same shape — never let a view model import `StowerMessages`.
   `StowerSettingsView` is a `TabView` whose only pane today is
   `StowerPrivacySettingsView` (analytics consent toggle).
 
-**Launch/quit analytics hooks** (the only lifecycle calls the app makes into the
-analytics subsystem — see [Analytics.md](Analytics.md) for the full rationale):
+**Launch/quit diagnostics hooks** (the only lifecycle calls the app makes into the
+diagnostics subsystem — see [Analytics.md](Analytics.md) and
+[CrashReporting.md](CrashReporting.md) for the full rationale):
 
-- `StowerMacApp.init` → `StowerAnalytics.initialize()` then
-  `StowerAnalytics.reportAppLaunched()`. When consent is off, `initialize()` is a
-  complete no-op (no SDK init) and `reportAppLaunched()` drops the event.
+- `StowerMacApp.init` → `StowerDiagnostics.initialize()` then
+  `StowerAnalytics.reportAppLaunched()`. `StowerDiagnostics.initialize()` is the
+  single launch entry point for both backends: when consent is on it starts Sentry
+  crash reporting FIRST (earliest crash coverage, JC3) then TelemetryDeck analytics.
+  When consent is off, `initialize()` is a complete no-op (no SDK init for either
+  backend) and `reportAppLaunched()` drops the event.
 - `StowerAppDelegate.applicationShouldTerminate` → `StowerAnalytics.reportSessionEnded()`
   **synchronously**, BEFORE draining draft writes. The quit path never `await`s
   analytics; the SDK buffers `session_ended` to disk and flushes on next launch.
 
-The analytics subsystem (`Sources/StowerMacUI/Analytics/`) is **app-internal**, not
-engine-backed — it sits above the §9 adapter wall and imports no engine module.
-The single third-party dependency, TelemetryDeck, is quarantined to one file
-(`StowerTelemetryDeckReporter`) by `Scripts/precheck.sh` step **6k**.
+The analytics subsystem (`Sources/StowerMacUI/Analytics/`) and crash-reporting
+subsystem (`Sources/StowerMacUI/CrashReporting/`) are **app-internal**, not
+engine-backed — they sit above the §9 adapter wall and import no engine module.
+TelemetryDeck is quarantined to one file (`StowerTelemetryDeckReporter`) by
+`Scripts/precheck.sh` step **6k**; Sentry is quarantined to the two
+`CrashReporting/` files plus their two test files by step **6l**.
