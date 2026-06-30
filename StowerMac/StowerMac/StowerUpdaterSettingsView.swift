@@ -6,7 +6,7 @@ import SwiftUI
 /// download-and-install toggle. When checks are off the lower toggle is visible
 /// but disabled, so users understand the relationship without a tooltip.
 /// A trust line at the bottom reinforces the EdDSA verification story.
-public struct StowerUpdaterSettingsView: View {
+struct StowerUpdaterSettingsView: View {
 
     private enum Layout {
         static let connectorWidth: CGFloat = 1
@@ -25,13 +25,13 @@ public struct StowerUpdaterSettingsView: View {
         static let disabledHint = "Enable automatic checks to allow automatic downloads."
     }
 
-    @ObservedObject public var controller: StowerUpdaterController
+    @ObservedObject var controller: StowerUpdaterController
 
-    public init(controller: StowerUpdaterController) {
+    init(controller: StowerUpdaterController) {
         self.controller = controller
     }
 
-    public var body: some View {
+    var body: some View {
         Form {
             Section {
                 checksToggle

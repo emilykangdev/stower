@@ -12,7 +12,7 @@ import SwiftUI
 /// is `MainActor` for this target and Sparkle's updater properties are
 /// documented as main-thread-only.
 @MainActor
-public final class StowerUpdaterController: NSObject, ObservableObject {
+final class StowerUpdaterController: NSObject, ObservableObject {
 
     private let controller: SPUStandardUpdaterController
 
@@ -20,7 +20,7 @@ public final class StowerUpdaterController: NSObject, ObservableObject {
     ///
     /// Toggling this off also makes the download-and-install preference
     /// inert — setting downloads while checks are off is a silent no-op.
-    @Published public var automaticallyChecksForUpdates: Bool {
+    @Published var automaticallyChecksForUpdates: Bool {
         didSet { controller.updater.automaticallyChecksForUpdates = automaticallyChecksForUpdates }
     }
 
@@ -29,11 +29,11 @@ public final class StowerUpdaterController: NSObject, ObservableObject {
     /// Meaningless (and disabled in the UI) when `automaticallyChecksForUpdates`
     /// is `false`. The user can still trigger a manual check via
     /// `checkForUpdates()` regardless of this setting.
-    @Published public var automaticallyDownloadsUpdates: Bool {
+    @Published var automaticallyDownloadsUpdates: Bool {
         didSet { controller.updater.automaticallyDownloadsUpdates = automaticallyDownloadsUpdates }
     }
 
-    override public init() {
+    override init() {
         controller = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: nil,
@@ -48,7 +48,7 @@ public final class StowerUpdaterController: NSObject, ObservableObject {
     ///
     /// Surfaces the standard Sparkle "Check for Updates…" panel. Safe to call
     /// even when automatic checks are disabled.
-    public func checkForUpdates() {
+    func checkForUpdates() {
         controller.updater.checkForUpdates()
     }
 }
