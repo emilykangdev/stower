@@ -14,8 +14,9 @@ import Sentry
 ///    `exception.value` wholesale. The scrubber replaces that field with a
 ///    content-free string built from `ex.type` and the signal/mach context —
 ///    a deterministic field-replace, NOT content-detection, so it cannot miss.
-/// 3. **Redact home-directory paths** in frame `fileName` and debug-meta
-///    `codeFile` fields: `/Users/<name>/` → `/Users/<redacted>/`.
+/// 3. **Redact home-directory paths** in frame `fileName`, frame `package`
+///    (binary image path), and debug-meta `codeFile` fields:
+///    `/Users/<name>/` → `/Users/<redacted>/`.
 /// 4. **Backstop-drop** the whole event if a hard-stop token survives in any
 ///    string field (chat.db path, Photos path, message/contact-looking text,
 ///    license-ID shape, device-fingerprint, email, phone). Dropping is safer
@@ -143,13 +144,18 @@ internal enum StowerSentryScrubber {
 
     // MARK: — Step 2 & 3: path redaction helpers
 
-    /// Redacts `/Users/<name>/` in every frame's `fileName` field.
+    /// Redacts `/Users/<name>/` in every frame's `fileName` and `package` fields.
+    ///
+    /// `fileName` carries the source path; `package` carries the binary image path
+    /// (the Sentry native crash converter fills `package` from the Mach-O binary
+    /// image name, which can be an absolute path containing the system username).
     private static func redactFramePaths(in event: Event) {
         guard let threads = event.threads else { return }
         for thread in threads {
             guard let stacktrace = thread.stacktrace else { continue }
             for frame in stacktrace.frames {
                 frame.fileName = frame.fileName.map { redactHomePath(in: $0) }
+                frame.package = frame.package.map { redactHomePath(in: $0) }
             }
         }
         // Also walk exception stacktraces.
@@ -158,6 +164,7 @@ internal enum StowerSentryScrubber {
             guard let stacktrace = ex.stacktrace else { continue }
             for frame in stacktrace.frames {
                 frame.fileName = frame.fileName.map { redactHomePath(in: $0) }
+                frame.package = frame.package.map { redactHomePath(in: $0) }
             }
         }
     }

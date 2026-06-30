@@ -171,6 +171,35 @@ import Testing
         )
     }
 
+    @Test internal func framePackage_homeDirectoryRedacted() {
+        // frame.package carries the binary image path (e.g. the .app bundle path),
+        // which can include the system username. It must be redacted like fileName.
+        let event = makeCrashEvent()
+        let thread = SentryThread(threadId: 1)
+        let frame = Frame()
+        frame.package =
+            "/Users/carol/build/Stower.app/Contents/MacOS/Stower"
+        let stacktrace = SentryStacktrace(frames: [frame], registers: [:])
+        thread.stacktrace = stacktrace
+        event.threads = [thread]
+
+        let scrubbed = StowerSentryScrubber.scrub(event)
+        guard let result = scrubbed else {
+            Issue.record("scrub returned nil for a clean crash event")
+            return
+        }
+
+        let resultFrame = result.threads?.first?.stacktrace?.frames.first
+        #expect(
+            resultFrame?.package?.contains("/Users/carol/") == false,
+            "username must be redacted from frame package"
+        )
+        #expect(
+            resultFrame?.package?.contains("/Users/<redacted>/") == true,
+            "frame package must use /Users/<redacted>/ placeholder"
+        )
+    }
+
     // MARK: — Clean crash event passes through (scrubbed, not dropped)
 
     @Test internal func cleanCrashEvent_passesThrough() {
