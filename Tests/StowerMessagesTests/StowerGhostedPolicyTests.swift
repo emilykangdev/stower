@@ -109,7 +109,8 @@ extension StowerGhostedPolicyTests {
                 expectsReply: expectsReply,
                 replyExpectationConfidence: confidence,
                 verdictSource: .languageModel
-            )
+            ),
+            lastMessageGUID: "guid-\(state.chatID)"
         )
     }
 

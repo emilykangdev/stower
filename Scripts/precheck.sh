@@ -78,6 +78,23 @@ else
     swift test ${SKIP_ARGS[@]+"${SKIP_ARGS[@]}"}
 fi
 
+# Step 4c — Deno unit tests for the licensing code (hermetic: fake fetch, no
+# network/disk/env). Two homes: the license Edge Function (mint/webhook
+# idempotency, signature, replay) in supabase/functions/license/index.test.ts, and
+# the Keygen bootstrap script (exact-attribute drift checks) in
+# Scripts/Keygen/bootstrap-keygen.test.ts. The real-CE integration tier
+# (Scripts/Keygen/integration) needs the Docker harness and runs only in CI.
+# FAILS if Deno is absent (not a skip): these guard the payment/license path, so
+# "Deno missing" must break the gate loudly, never silently drop coverage.
+if ! command -v deno >/dev/null 2>&1; then
+    echo "ERROR: deno not installed — the license Edge Function tests cannot run" >&2
+    echo "       and the payment/license invariants would ship unverified. Install:" >&2
+    echo "       https://docs.deno.com/runtime/getting_started/installation/ (or: brew install deno)" >&2
+    exit 1
+fi
+( cd supabase/functions/license && deno test )
+( cd Scripts/Keygen && deno test )
+
 # Step 5 — module boundary checks.
 # Match only real Swift import declarations (anchored to line start, optional
 # @testable), and only in *.swift files — so a README, comment, or string that
@@ -100,6 +117,16 @@ fi
 # sources) even though the format/lint steps above only target Sources/Tests —
 # the boundary must hold in the app entry too. Standing gate; do not weaken to go
 # green (AGENTS.md). Authored via /harden-guardrail.
+
+# ── Static source guards (6x family) ─────────────────────────────────────────
+# Each 6x check asserts a textual/structural fact about the source tree and fails
+# loudly (echo ERROR >&2; exit 1) — a gate-time alternative to a unit test for
+# "X is/isn't present, here." Add new ones as members, not a new mechanism.
+#   tool:     grep (grep -RInE) for line-local facts; awk for region/block-scoped
+#             facts ("only inside #if DEBUG", "only inside a Release config block").
+#   polarity: must-be-absent → a match fails; must-be-present → a no-match fails.
+#   deps:     none (no plutil/jq/python) — runs every commit.
+# See AGENTS.md "Static source guards" for the rule.
 
 # 6a — Engine-INTERNAL modules are NEVER imported by StowerMacUI (permanent ban,
 #      incl. the adapter). The app sees value types + two actors, never GRDB/FM/Photos.
@@ -143,8 +170,15 @@ fi
 
 # 6e — chat.db must not be a literal in production app/UI code: the FDA disclosure
 #      renders the path from the .fullDiskAccessMissing(path:) payload, never a constant.
-if grep -RInE --include="*.swift" 'chat\.db' StowerMac/StowerMac Sources/StowerMacUI 2>/dev/null; then
-    echo "ERROR: chat.db must not appear as a literal in app/UI code — render it from the FDA payload" >&2
+#      CrashReporting/ is excluded: the scrubber legitimately pattern-matches the
+#      token as a hard-stop fragment to detect accidental crash-payload leaks.
+if grep -RInE --include="*.swift" 'chat\.db' StowerMac/StowerMac 2>/dev/null; then
+    echo "ERROR: chat.db must not appear as a literal in StowerMacApp code — render it from the FDA payload" >&2
+    exit 1
+fi
+if grep -RInE --include="*.swift" 'chat\.db' Sources/StowerMacUI \
+    --exclude-dir=CrashReporting 2>/dev/null; then
+    echo "ERROR: chat.db must not appear as a literal in UI code — render it from the FDA payload" >&2
     exit 1
 fi
 
@@ -164,5 +198,177 @@ fi
 if grep -iE 'sparkle' Package.swift Package.resolved 2>/dev/null; then
     echo "ERROR: Sparkle must not appear in the root SPM graph (Package.swift / Package.resolved)." >&2
     echo "       Sparkle is an Xcode-project-only dependency — never add it to Package.swift." >&2
+    exit 1
+fi
+
+# 6g — No logging in StowerMacUI. The license key and the activate response (which
+#      carries customer PII) flow through this module; a stray print/Logger/os_log/
+#      NSLog would leak them. Locks the key-never-logged invariant (authored via
+#      /harden-guardrail). Anchored to real call sites so words like "footprint" or
+#      "Logger" in a comment can't trip it; green today.
+if grep -RInE --include="*.swift" '(^|[^A-Za-z0-9_])(print|NSLog|os_log)[[:space:]]*\(|(^|[^A-Za-z0-9_])Logger[[:space:]]*\(' Sources/StowerMacUI 2>/dev/null; then
+    echo "ERROR: no logging in Sources/StowerMacUI — the license key / activate-response PII must never reach logs (remove the print/Logger/os_log/NSLog call)" >&2
+    exit 1
+fi
+
+# 6h — The DEBUG launch-arg seam is NEVER compiled into a Release archive: the
+#      StowerLicenseDebugArguments type is DECLARED inside #if DEBUG, and
+#      StowerLicenseGate REFERENCES it only inside #if DEBUG. A Release reference to
+#      this #if DEBUG-only lease-wipe / fingerprint-pin lever would ship it to
+#      customers (I-H5). Region-aware: a line-oriented grep cannot express "outside a
+#      #if DEBUG region", so awk tracks #if DEBUG/#else/#endif nesting. The
+#      `swift build -c release` in CI is the authoritative gate (an out-of-#if-DEBUG
+#      reference is a hard compile error); this is the fast local canary.
+debug_region_violation() {
+    # $1 = file, $2 = ERE pattern. Exits non-zero (printing FILE:LINE) when a line
+    # matching $2 appears OUTSIDE every enclosing release-excluding #if DEBUG region.
+    # Pure-comment lines (// …) are ignored — a doc mention is not a compile reference.
+    awk -v pat="$2" '
+        /^[[:space:]]*#if[[:space:]]+DEBUG([[:space:]]|$)/ { depth++; dbg[depth]=1; act[depth]=1; excl++; next }
+        /^[[:space:]]*#if([[:space:]]|$)/                  { depth++; dbg[depth]=0; act[depth]=0; next }
+        /^[[:space:]]*#(else|elseif)([[:space:]]|$)/       { if (depth>0 && dbg[depth] && act[depth]) { excl--; act[depth]=0 } next }
+        /^[[:space:]]*#endif([[:space:]]|$)/               { if (depth>0) { if (dbg[depth] && act[depth]) excl--; depth-- } next }
+        /^[[:space:]]*\/\//                                { next }
+        ($0 ~ pat && excl==0)                              { print FILENAME ":" NR; bad=1 }
+        END { exit (bad ? 1 : 0) }
+    ' "$1"
+}
+if ! debug_region_violation \
+    Sources/StowerMacUI/Startup/StowerLicenseDebugArguments.swift \
+    'struct[[:space:]]+StowerLicenseDebugArguments' \
+    || ! debug_region_violation \
+    Sources/StowerMacUI/Startup/StowerLicenseGate.swift \
+    'StowerLicenseDebugArguments'; then
+    echo "ERROR: the StowerLicenseDebugArguments seam must be #if DEBUG-only — its type must be declared inside #if DEBUG and referenced (in StowerLicenseGate) only inside #if DEBUG, or a lease-wipe/fingerprint-pin lever ships to customers (I-H5)" >&2
+    exit 1
+fi
+
+# 6i — The /health non-default-trial-duration canary is actually WIRED, not just
+#      the helper unit-tested: index.ts's /health handler must call
+#      trialDurationHealthFields( so a TRIAL_DURATION_SECONDS leak onto prod is loud
+#      (I-H10). Must-be-PRESENT polarity: a no-match fails. Block-scoped to the
+#      `path.endsWith("/health")` branch (awk, not grep): a plain grep would pass if
+#      the call drifted into another handler while /health was left unwired, so awk
+#      tracks `{`/`}` depth from the /health `if` and asserts the call is INSIDE it.
+if ! awk '
+        /path\.endsWith\("\/health"\)/ && /{/ { inblock=1; depth=0 }
+        inblock {
+            depth += gsub(/{/, "{") - gsub(/}/, "}")
+            if ($0 ~ /trialDurationHealthFields\(/) found=1
+            if (depth<=0) inblock=0
+        }
+        END { exit (found ? 0 : 1) }
+    ' supabase/functions/license/index.ts 2>/dev/null; then
+    echo "ERROR: index.ts's GET /health handler must call trialDurationHealthFields( inside the path.endsWith(\"/health\") branch — the non-default trial-duration canary is unwired (I-H10)" >&2
+    exit 1
+fi
+
+# 6j — DEBUG is NEVER defined in a Release build configuration of StowerMac.xcodeproj:
+#      a DEBUG in the Xcode Release config would compile every #if DEBUG lever
+#      (lease-wipe, fingerprint pin) INTO the shipped archive — and neither the SPM
+#      `swift build -c release` (different build system) nor the 6h source guard would
+#      catch it (I-H11). Block-scoped: walk each XCBuildConfiguration, remember its
+#      SWIFT_ACTIVE_COMPILATION_CONDITIONS, fail if a `name = Release;` block carries
+#      DEBUG. Dependency-free awk (no plutil/jq/python). SWIFT_ACTIVE_COMPILATION_
+#      CONDITIONS can be a parenthesized multiline list, so the value's DEBUG may sit
+#      on a continuation line, not the assignment line — track the whole value region
+#      (from the setting until its terminating `;`) so a multiline DEBUG isn't missed.
+if ! awk '
+        /isa = XCBuildConfiguration;/         { hasDebug=0; inSwiftCond=0; next }
+        inSwiftCond                           { if ($0 ~ /DEBUG/) hasDebug=1; if ($0 ~ /;/) inSwiftCond=0; next }
+        /SWIFT_ACTIVE_COMPILATION_CONDITIONS/ { if ($0 ~ /DEBUG/) hasDebug=1; if ($0 !~ /;/) inSwiftCond=1; next }
+        /name = Release;/                     { if (hasDebug) { print "Release config defines DEBUG at line " NR; bad=1 } hasDebug=0; next }
+        /name = Debug;/                       { hasDebug=0; next }
+        END { exit (bad ? 1 : 0) }
+    ' StowerMac/StowerMac.xcodeproj/project.pbxproj; then
+    echo "ERROR: a Release build configuration of StowerMac.xcodeproj defines DEBUG — every #if DEBUG lever would ship in the archive; remove DEBUG from the Release config's SWIFT_ACTIVE_COMPILATION_CONDITIONS (I-H11)" >&2
+    exit 1
+fi
+
+# 6k — TelemetryDeck is imported by EXACTLY ONE file: StowerTelemetryDeckReporter.swift.
+#      Admits attributed imports with or without argument lists
+#      (@preconcurrency, @testable, @attr(args)) by extending the attribute
+#      sub-pattern to allow an optional parenthesised arg list. A second import
+#      anywhere defeats the kill-switch quarantine. Must-be-EXACTLY-ONE polarity.
+TD_ALLOWED="$(printf '%s\n' \
+    "Sources/StowerMacUI/Analytics/StowerTelemetryDeckReporter.swift" \
+    | LC_ALL=C sort)"
+TD_IMPORTERS="$(grep -RIlE --include="*.swift" \
+    '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?([[:space:]]|$))*import[[:space:]]+([a-z]+[[:space:]]+)?TelemetryDeck([[:space:].]|$)' \
+    Sources/ StowerMac/StowerMac/ 2>/dev/null | LC_ALL=C sort || true)"
+if [ "$TD_IMPORTERS" != "$TD_ALLOWED" ]; then
+    echo "ERROR: TelemetryDeck must be imported by exactly one file (StowerTelemetryDeckReporter.swift)." >&2
+    echo "       Allowed: $TD_ALLOWED" >&2
+    echo "       Found: ${TD_IMPORTERS:-<none>}" >&2
+    exit 1
+fi
+
+# 6l — Sentry is imported by EXACTLY FOUR files: the two CrashReporting
+#      production sources and their two direct test files. Admits attributed
+#      imports with or without argument lists (@preconcurrency, @testable,
+#      @attr(args)) — same pattern as 6k. A fifth Sentry import anywhere spreads
+#      the vendor past the quarantine and defeats the kill-switch isolation.
+#      Must-be-EXACTLY-FOUR polarity (sorted-set allowlist, same shape as 6b).
+SENTRY_ALLOWED="$(printf '%s\n' \
+    "Sources/StowerMacUI/CrashReporting/StowerCrashReporting.swift" \
+    "Sources/StowerMacUI/CrashReporting/StowerSentryScrubber.swift" \
+    "Tests/StowerMacUITests/StowerCrashReportingTests.swift" \
+    "Tests/StowerMacUITests/StowerSentryScrubberTests.swift" \
+    | LC_ALL=C sort)"
+SENTRY_IMPORTERS="$(grep -RIlE --include="*.swift" \
+    '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?([[:space:]]|$))*import[[:space:]]+([a-z]+[[:space:]]+)?Sentry([[:space:].]|$)' \
+    Sources/ StowerMac/StowerMac/ Tests/ 2>/dev/null | LC_ALL=C sort || true)"
+if [ "$SENTRY_IMPORTERS" != "$SENTRY_ALLOWED" ]; then
+    echo "ERROR: Sentry must be imported by exactly the two CrashReporting files + their two test files." >&2
+    echo "       Allowed:" >&2
+    echo "$SENTRY_ALLOWED" | sed 's/^/       /' >&2
+    echo "       Found: ${SENTRY_IMPORTERS:-<none>}" >&2
+    exit 1
+fi
+
+# 6m — options.debug must ONLY appear inside a #if DEBUG region in
+#      StowerCrashReporting.swift. An unguarded options.debug in a Release archive
+#      ships debug logging. Reuses the debug_region_violation awk helper from 6h.
+if ! debug_region_violation \
+    Sources/StowerMacUI/CrashReporting/StowerCrashReporting.swift \
+    'options[[:space:]]*\.[[:space:]]*debug'; then
+    echo "ERROR: options.debug must only appear inside a #if DEBUG region in" >&2
+    echo "       StowerCrashReporting.swift — a Release-reachable assignment ships debug logging (6m)" >&2
+    exit 1
+fi
+
+# 6n — No string interpolation (\() inside crash-reason trap messages or
+#      queue/thread labels in first-party source. The KSCrash notable-address
+#      converter promotes trap message content INTO exception.value (A5, spike).
+#      First-party code must never inject user data into these strings; the
+#      scrubber covers dependency-originated content. Pattern: \( inside a
+#      fatalError/preconditionFailure/assertionFailure/precondition/assert message
+#      argument, or inside a DispatchQueue(label:)/Thread.name assignment, in
+#      Sources/ only. Grep family — line-local fact.
+if grep -RInE --include="*.swift" \
+    '(fatalError|preconditionFailure|assertionFailure|precondition|assert)[[:space:]]*\([^)]*\\\(' \
+    Sources/ 2>/dev/null; then
+    echo "ERROR: no string interpolation (\() in fatalError/preconditionFailure/" >&2
+    echo "       assertionFailure/precondition/assert messages in Sources/ — user" >&2
+    echo "       data interpolated here can leak into exception.value (A5). Use" >&2
+    echo "       a static string; the scrubber covers introspected content (6n)." >&2
+    exit 1
+fi
+if grep -RInE --include="*.swift" \
+    'DispatchQueue[[:space:]]*\([[:space:]]*label:[[:space:]]*"[^"]*\\\(' \
+    Sources/ 2>/dev/null; then
+    echo "ERROR: no string interpolation (\() in DispatchQueue(label:) strings in" >&2
+    echo "       Sources/ — user data in queue labels can reach crash-reason strings (6n)." >&2
+    exit 1
+fi
+# Thread.name interpolation (the comment above claims this coverage). Scoped to
+# `Thread.name` / `Thread.current.name` so it can't false-positive on an unrelated
+# `.name` property; thread names surface in crash reports, so user data in them
+# would reach crash-reason strings (6n).
+if grep -RInE --include="*.swift" \
+    'Thread[[:space:]]*\.[[:space:]]*(current[[:space:]]*\.[[:space:]]*)?name[[:space:]]*=[[:space:]]*"[^"]*\\\(' \
+    Sources/ 2>/dev/null; then
+    echo "ERROR: no string interpolation (\() in Thread.name assignments in" >&2
+    echo "       Sources/ — user data in thread names can reach crash-reason strings (6n)." >&2
     exit 1
 fi

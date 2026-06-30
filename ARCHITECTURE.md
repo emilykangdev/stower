@@ -105,7 +105,13 @@ stateDiagram-v2
     [*] --> checkingModel : .task → start()
 
     checkingModel --> modelUnavailable : availability unavailable
-    checkingModel --> checkingMessages : available
+    checkingModel --> needsLicense : available, no stored license
+    checkingModel --> checkingMessages : available + license stored
+
+    needsLicense --> checkingLicense : Activate (submit key)
+    checkingLicense --> checkingMessages : activate succeeds
+    checkingLicense --> needsLicense : invalid / couldNotReach
+
     checkingMessages --> connectedPreparingBoard : loadDebtBoard succeeds
     checkingMessages --> needsFullDiskAccess : FDA missing (first time)
     checkingMessages --> needsFullDiskAccessStillMissing : FDA missing after Check Again
@@ -130,6 +136,14 @@ stateDiagram-v2
       .handleBoardFailure → back into onboarding above.
     end note
 ```
+
+The **license gate** sits between model-availability and the board load: once the
+model is available, `runStartup` does a pure-local `licenseGate.hasStoredLicense()`
+read (no network, no spinner). A stored license routes straight to
+`checkingMessages`; otherwise the entry screen (`needsLicense`) is shown, and only a
+user-submitted Activate runs `checkingLicense` (the `licenseGate.activate(key:)`
+round-trip — the as-built gate is `StowerLemonSqueezyLicenseGate`), which on success
+joins the same `continueAfterLicense` tail. The launch path never calls `/activate`.
 
 Every transition runs under a **generation token**: `beginRun()` bumps a counter,
 and `commit` writes `state` only if the completing run is still the current

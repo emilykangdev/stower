@@ -30,7 +30,13 @@ extension StowerDebtBoardProvider {
             guard let verdict, isTrustedVerdict(verdict) else {
                 continue  // a miss / non-trusted / invalid verdict is unjudged → excluded
             }
-            result.append(StowerJudgedConversation(state: record.state, verdict: verdict))
+            result.append(
+                StowerJudgedConversation(
+                    state: record.state,
+                    verdict: verdict,
+                    lastMessageGUID: record.lastMessageGUID
+                )
+            )
         }
         return result
     }

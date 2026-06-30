@@ -49,6 +49,30 @@ Apply the following constraints to every change you make.
 - Do not bypass `git commit` hooks with `--no-verify`.
 - Do not modify `Package.resolved` directly. Run `swift package update`.
 
+## Static source guards (`precheck.sh` `6x` family)
+
+Some invariants are enforced by asserting a textual/structural fact about the
+source tree at gate time — *"X is/isn't present, here"* — rather than by a unit
+test. They live as numbered `# 6x — WHAT, WHY` blocks in `Scripts/precheck.sh`,
+each a single check that does `echo "ERROR: <what + how to fix>" >&2; exit 1` on
+violation, anchored to real call sites (so a stray word in a comment can't trip
+it).
+
+Add a new one as the **next member of this family — never a parallel mechanism.**
+Pick the tool by the assertion's shape:
+
+- **grep** (`grep -RInE`) when the fact is **line-local** — a token's
+  presence/absence anywhere in the paths.
+- **awk** when the fact depends on **region or block structure** — "only inside a
+  `#if DEBUG` region," "only inside a named pbxproj `XCBuildConfiguration` block."
+  grep is line-oriented and cannot track which region a line is in.
+
+**Polarity** is just which outcome trips `exit 1`: must-be-**absent** → a *match*
+fails (the default); must-be-**present** → a *no-match* fails
+(`grep -q … || { echo "ERROR: …" >&2; exit 1; }`).
+
+No external deps (no plutil/jq/python) — these run on every commit.
+
 ## Out of scope for v1
 
 - Do not write any reply-**sending** code: no AppleScript `send`, no IMCore, no

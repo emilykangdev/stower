@@ -6,6 +6,95 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-30: **Sentry crash reporting — crash-only, consent-gated, EU-region, PII-scrubbed (`Sources/StowerMacUI/CrashReporting/`, `Diagnostics/`).**
+  New umbrella `StowerDiagnostics` facade (`public enum`) unifies crash + analytics behind one consent gate. `StowerCrashReporting` (the only `SentrySDK.start` site): all non-crash integrations disabled, EU DSN placeholder (OPS-GATED), `stop()` for mid-session opt-out. `StowerSentryScrubber`: drops non-crash events, rebuilds `exception.value` from content-free structured fields (A5), redacts `/Users/<name>/` in `frame.fileName`/`frame.package`/`debugMeta.codeFile`, backstop-drops hard-stop tokens. `StowerAnalyticsConsent` → **`StowerDiagnosticsConsent`** (keychain service strings unchanged). Precheck guards 6l (Sentry import allowlist 4 files), 6m (`options.debug` `#if DEBUG` only), 6n (no `\(` in assertion messages). 22 new Swift tests. Codex loop: 5 iterations, 4 P1/P2 fixed, 2 accepted (placeholder DSN OPS-GATED; re-enable-no-restart design constraint). **OPS-GATED before crash reports reach Sentry:** real EU DSN, dSYM upload, auth token, DPA, free-tier.
+- 2026-06-29: **Anonymous funnel analytics — TelemetryDeck-backed, default-on with one-click off (`Sources/StowerMacUI/Analytics/`).**
+  New app-side subsystem under `StowerMacUI`: `StowerAnalytics` (the `@MainActor` facade — public
+  `initialize()` / `reportAppLaunched()` / `reportSessionEnded()`; internal `report` / `setEnabled` /
+  `reconcileLicenseConsent`), `StowerAnalyticsConsent` (+ the in-memory `StowerAnalyticsKillLatch`),
+  `StowerAnalyticsIdentity` (+ `StowerAnalyticsKeychainKeys` and the shared `AnalyticsInstallRecord`),
+  `StowerAnalyticsEvent` (typed PII-safe taxonomy), `StowerAnalyticsReporting` (+ `StowerNoOpAnalyticsReporter`
+  / `StowerInMemoryAnalyticsReporter`), `StowerTelemetryDeckReporter` (the ONLY TelemetryDeck importer —
+  enforced by precheck **6k**), and `StowerAnalyticsBucket`. **Identity** = a random per-install Keychain
+  `UUID` (anonymous, not hardware/IDFV/IDFA), double-hashed by TelemetryDeck (salt + SHA-256) before it
+  leaves the device. **Kill switch** = never `initialize()` when consent is off (the Swift SDK has no
+  `stop()`); `setEnabled(false)` also trips `StowerAnalyticsKillLatch` so every reporter fails closed in
+  memory even if the Keychain write failed. **Default-on with disclosure**: the `StowerAnalyticsConsentCard`
+  appears once after ~60s of foreground board time (JC7), and a Privacy pane (`StowerSettingsView` →
+  `StowerPrivacySettingsView`) in a new `Settings { }` scene gives one-click off. Consent is license-scoped
+  ("off wins", reconciled against `diagnostics_opt_out` on check-in, JC8). `StowerMacApp` calls
+  `StowerAnalytics.initialize()` + `reportAppLaunched()` in `init`, and `reportSessionEnded()` in
+  `applicationShouldTerminate` (synchronous, no `await`). `StowerStartupModel.commit` emits the startup
+  funnel (`hardware_checked`, `license_gate_reached`, `fda_permission_requested`, `fda_permission_resolved`
+  at `.connectedPreparingBoard` only, `board_reached`); board view models emit `board_item_clicked` /
+  `feature_used`. Rationale captured in `Docs/Analytics.md`; `Docs/MacAppContract.md` updated for the new
+  Settings scene + launch/quit analytics hooks.
+- 2026-06-25: **Supabase licensing backend — the Edge Function is now the licensing brain (mint + check-in + webhook).**
+  Decision (Emily, firm, 2-way door): the licensing brain is the existing `supabase/functions/license/`
+  Edge Function, **not** a new Railway service (Railway plan superseded). Extended the function in place:
+  `/mint-trial` now activates the Keygen machine + checks out a 7-day signed machine file and returns
+  `{minted, licenseKey, licenseID, machineID, machineFile}` (wire field renamed `key`→`licenseKey`);
+  NEW `POST /check-in` (reachable-launch gate authority — per-license JC5 signature, once-per-major +7d
+  extension via record-before-patch to a frozen target (I11, idempotent under crash/retry), validate +
+  machine repair, entitlement OR in code (I4), fresh signed-file checkout (I13), never returns the key);
+  NEW `GET /health`; `/ls-webhook` now attaches `STOWER_V0` + records `purchased_major`/`entitlement_code`.
+  New modules: `github.ts` (current-latest-stable-major for the +7d decision; 5-min cache; null-on-failure),
+  `requestSignature.ts` (JC5 verifier via Web Crypto, 120s window, committed parity vector in `fixtures/`).
+  Migration `20260625_license_checkin.sql` (additive: `device_trials` columns + `trial_extension_grants`
+  + `purchases` columns). JC7 for v0: the required entitlement is the flat `STOWER_V0` constant (no major
+  derivation yet; per-major `STOWER_V${major}` from `purchased_major` returns at v1); JC9 keeps the
+  `STOWER_V0` *code* a per-runtime constant (only the `KEYGEN_V0_ENTITLEMENT` UUID is env). **A2 resolved
+  (one-way door):** Keygen's `include=` entitlements + license expiry live INSIDE the Ed25519-signed `enc`
+  payload — the CI integration test now decodes `enc` and asserts it. Deleted the dead, unwired
+  `StowerKeygenClient.swift` (+ its test) — that surface is server-side now. Contract → v1.13, `Docs/Lifecycle.md`
+  reversed (brain = Edge Function), both diagrams updated. 55 Deno tests green; `swift build` green.
+  **Still open:** mint rate-limiting (risk #8), explicit outbound-fetch timeouts (item B), `pg_cron` orphan
+  sweep (item C), and the ops cutover (point the LS webhook at `…/ls-webhook`, set Plan B's base URL).
+- 2026-06-18: **License core — fingerprint, lease store, Keygen + mint clients, Supabase function (Bucket A, board-independent).**
+  Ships the trial-and-upgrade machinery as four injected, unit-tested seams plus a Deno Edge Function —
+  nothing wired into the app yet (the gate that composes them is Plan B). `StowerDeviceFingerprint`
+  (`IOPlatformUUID` via IOKit → SHA-256 hex; Keychain-UUID fallback; `nonisolated`, injected readers).
+  `StowerLicenseLeaseStore` (Keychain generic-password seam `StowerLeaseStorage`/`StowerKeychainItem`,
+  `kSecAttrAccessibleAfterFirstUnlock`, no iCloud) verifies a machine-file's Ed25519 signature over
+  `"machine/"+enc` against an embedded public key on every load — a tampered cache loads as `nil` (I7).
+  `StowerKeygenClient` (raw `URLSession` JSON:API to `api.keygen.sh`: activate / check-out(ttl) /
+  validate-key; `Authorization: License <key>`; transport throw surfaced, 5xx → `.server`).
+  `StowerTrialMintClient` (POST fingerprint → `mint-trial` → `.minted`/`.retryShortly`/`.unreachable`,
+  never `{null,null}`). `supabase/`: `device_trials` + `purchases` migrations and a `license` function
+  (`handlers.ts` pure logic + `index.ts` wiring) — `mint-trial` is row-idempotent with crash recovery
+  (I3) and `ls-webhook` verifies the LS HMAC (I9), validates variant, `PUT /policy` trial→paid, records
+  only on success, replay/forged-id safe (I8/I15). Hardened through a Codex ship loop: per-claim
+  token on `device_trials` (a stalled winner can't overwrite a reclaimed row), `created_at`-guarded
+  reclaim, orphan-storm guard (a post-create DB failure keeps the claim), paid upgrade also clears the
+  trial expiry (perpetual), DB-lookup errors 500 (never a silent ack), RLS on both tables, and
+  `config.toml verify_jwt=false` so the webhook + anonymous mint reach the function. 22 Swift tests +
+  20 Deno tests; `Scripts/precheck.sh` green (212 tests). **O2 resolved:** trial = 30d (function),
+  machine-file checkout TTL = 7d
+  (`StowerKeygenClient.machineFileTTL`, the single offline-validity boundary — the gate must read the
+  file's own expiry, not add a second window). **Still open (tracked, out of this slice):** B1 — the
+  `mint-trial` endpoint is unauthenticated; needs an abuse control (Supabase rate-limit / proof-of-work
+  / App Attest) before public launch. Embedded Keygen Ed25519 public key is an all-zero placeholder
+  until Plan B wires the real account key.
+- 2026-06-18: **Lemon Squeezy license-entry gate (activate-once, store, no recurring validate).**
+  Stower is now paid from first launch. After the model-availability check and before the FDA gate,
+  `StowerStartupModel` checks a new `StowerLicenseGating` seam: a stored license (`hasStoredLicense`,
+  pure local `UserDefaults` read) proceeds with zero network; otherwise `.needsLicense(nil)` shows the
+  new `StowerLicenseEntryView` (focused monospaced field, inline error, help row), and `submitLicense`
+  runs `runActivation` under the existing generation token + shared do/catch — `.checkingLicense`
+  spinner, `activate` (pure), then a generation-guarded `persistLicense` so a superseded activation
+  never writes. The only network egress is `StowerLemonSqueezyClient` POSTing once to
+  `/v1/licenses/activate` (percent-encoded form body; decodes `{activated, instance.id,
+  meta.store_id, meta.product_id}` and requires the store/product IDs to match Stower's — a key for
+  any other Lemon Squeezy product is `.invalid`; never decodes `customer_email`/`customer_name`;
+  transport-throw/5xx/undecodable → `.couldNotReach`; 15s timeout). `{key, instance_id}` is
+  stored plaintext in `StowerLicenseStore`; no `clear()`/`/validate` in v1 (next ticket). New states
+  `.checkingLicense` / `.needsLicense(StowerLicenseGateError?)`; `StowerCheckingView` switch is now
+  exhaustive (no `default:`). `StowerTrustBlock` copy owns the one call honestly. `precheck.sh` step
+  6g bans logging in `StowerMacUI` (key/PII). `Scripts/precheck.sh` green. Open / config Emily must set before selling:
+  `StowerLemonSqueezyLicenseGate.expectedStoreID`/`expectedProductID` are PLACEHOLDER `0`s (the
+  product check fails closed — no key activates until set to the real dashboard IDs); the
+  support/product URLs in `StowerLicenseEntryView` are placeholders; O2 `instance_name` is a fixed
+  "Stower" label; O1 paid-vs-trial kept as paid.
 - 2026-06-18: **StowerMac v1 debt-board surface (board slice).** Built the reply-debt board on the
   merged engine + onboarding slice. New app-owned `Board/` group in `StowerMacUI`: view-models
   (`StowerBoardRow`/`StowerThreadLine` — `Identifiable` by `chatID`/GUID, no confidence exposed),

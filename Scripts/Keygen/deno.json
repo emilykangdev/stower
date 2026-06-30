@@ -1,0 +1,9 @@
+{
+  "tasks": {
+    "test": "deno test",
+    "test:integration": "deno test --config=deno.integration.json --env-file=.runtime.env --allow-env --allow-net=localhost integration/"
+  },
+  "test": {
+    "exclude": ["integration/"]
+  }
+}

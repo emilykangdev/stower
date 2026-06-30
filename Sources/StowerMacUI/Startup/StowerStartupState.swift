@@ -14,6 +14,16 @@ internal enum StowerStartupState: Sendable, Equatable {
     /// The model can't serve verdicts; the reason selects the screen variant.
     case modelUnavailable(StowerStartupModelUnavailableReason)
 
+    /// The model is available but the license check did not pass; the context
+    /// selects the entry-screen variant (trial-ended / upgrade / connect / retry).
+    case needsLicense(StowerLicenseEntryContext)
+
+    /// Resolving the license with the server (mint-on-first-run or revalidate an
+    /// existing lease). The spinner shows a neutral "Loading Stower…" because
+    /// trial-vs-paid is unknown until the server replies — a cleared lease can still
+    /// belong to a paid device.
+    case checkingLicense
+
     /// Model is available; attempting the board load behind the permission gate.
     case checkingMessages
 
@@ -37,8 +47,8 @@ internal enum StowerStartupState: Sendable, Equatable {
         switch self {
         case .needsFullDiskAccess, .needsFullDiskAccessStillMissing:
             return true
-        case .checkingModel, .modelUnavailable, .checkingMessages, .connectedPreparingBoard,
-            .failed:
+        case .checkingModel, .modelUnavailable, .needsLicense, .checkingLicense, .checkingMessages,
+            .connectedPreparingBoard, .failed:
             return false
         }
     }

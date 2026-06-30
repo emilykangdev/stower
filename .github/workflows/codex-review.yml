@@ -1,0 +1,109 @@
+name: Codex Review
+
+# Portable, repo-agnostic advisory PR review by OpenAI Codex.
+#
+# DROP-IN: copy this file + .github/codex-review-prompt.md into any repo, then
+# `gh secret set OPENAI_API_KEY`. This workflow is identical in every repo — the
+# ONLY thing you customize per repo is the rubric in
+# .github/codex-review-prompt.md (plain text, no YAML). The workflow prepends the
+# PR's diff commands and feeds your rubric to Codex.
+#
+# It is ADVISORY: it posts a PR comment and NEVER blocks merge. Pair it with
+# whatever deterministic gate the repo already has (for Stower: precheck.sh in
+# ci.yml). The value over CodeRabbit / the free Codex connector is that it
+# reviews against YOUR rubric, not generic best-practice.
+#
+# Tiering: triggers on opened/reopened only, NOT every push (`synchronize`). A PR
+# happens once; a push many times per branch. Add `synchronize` to `types:` for
+# a fresh review on every push (one Codex run per push).
+#
+# Security: uses `pull_request` (NOT `pull_request_target`), so OPENAI_API_KEY is
+# never exposed to fork PRs. The two-job split hardens it further — the job that
+# runs Codex over PR code is `contents: read` only with no write power; a
+# separate job receives just the review string and posts it, never touching PR
+# code. A prompt-injection in a diff cannot make the review job comment or leak
+# the key.
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  codex:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      final_message: ${{ steps.run_codex.outputs.final-message }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Check out the PR's merge commit so Codex sees the post-merge tree.
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+
+      - name: Pre-fetch base and head refs
+        run: |
+          git fetch --no-tags origin \
+            ${{ github.event.pull_request.base.ref }} \
+            +refs/pull/${{ github.event.pull_request.number }}/head
+
+      - name: Build prompt (fixed preamble + this repo's rubric)
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          RUBRIC=".github/codex-review-prompt.md"
+          # Fail loudly if the rubric is missing — never review with no rules and
+          # report green. A repo with this workflow MUST ship the rubric file.
+          if [ ! -f "$RUBRIC" ]; then
+            echo "ERROR: $RUBRIC not found. This repo has the Codex review" >&2
+            echo "       workflow but no rubric file. Add .github/codex-review-prompt.md." >&2
+            exit 1
+          fi
+          {
+            echo "You are performing an ADVISORY code review of PR #${PR_NUMBER} for ${REPO}."
+            echo
+            echo "Review ONLY the changes introduced by this PR:"
+            echo "  git log --oneline ${BASE_SHA}...${HEAD_SHA}"
+            echo "  git diff ${BASE_SHA}...${HEAD_SHA}"
+            echo
+            echo "--- REPO REVIEW RUBRIC (.github/codex-review-prompt.md) ---"
+            cat "$RUBRIC"
+          } > "$RUNNER_TEMP/codex-prompt.md"
+
+      - name: Run Codex
+        id: run_codex
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          # Read-only: the review only reads the diff + rubric, never writes the
+          # tree, so the network-disabled read-only sandbox is sufficient and safest.
+          sandbox: read-only
+          safety-strategy: drop-sudo
+          prompt-file: ${{ runner.temp }}/codex-prompt.md
+
+  post_feedback:
+    runs-on: ubuntu-latest
+    needs: codex
+    # Only post when Codex actually produced a review.
+    if: needs.codex.outputs.final_message != ''
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Post Codex review as a PR comment
+        uses: actions/github-script@v7
+        env:
+          CODEX_FINAL_MESSAGE: ${{ needs.codex.outputs.final_message }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const body = `🔎 **Codex review** (advisory — does not block merge)\n\n`
+              + process.env.CODEX_FINAL_MESSAGE;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body,
+            });

@@ -37,6 +37,12 @@ public struct StowerDebtItem: Sendable, Equatable {
     /// The on-device model's soft `0...1` confidence in this row's verdict.
     public let replyExpectationConfidence: Double
 
+    /// The GUID of this row's last act — the message a dismiss anchors to.
+    ///
+    /// Carried so the app can dismiss the exact message and self-expire it against a
+    /// newer one.
+    public let lastMessageGUID: String
+
     /// Creates a debt-board row.
     public init(
         chatID: String,
@@ -47,7 +53,8 @@ public struct StowerDebtItem: Sendable, Equatable {
         lastMessageText: String?,
         lastMessageTimestamp: Date,
         deepLink: URL?,
-        replyExpectationConfidence: Double
+        replyExpectationConfidence: Double,
+        lastMessageGUID: String
     ) {
         self.chatID = chatID
         self.chatTitle = chatTitle
@@ -58,13 +65,18 @@ public struct StowerDebtItem: Sendable, Equatable {
         self.lastMessageTimestamp = lastMessageTimestamp
         self.deepLink = deepLink
         self.replyExpectationConfidence = replyExpectationConfidence
+        self.lastMessageGUID = lastMessageGUID
     }
 }
 
 extension StowerDebtItem {
     /// Builds a board row from a judged conversation, carrying only the model's
     /// confidence — every served row is already a trusted verdict.
-    internal init(state: StowerConversationState, replyExpectationConfidence: Double) {
+    internal init(
+        state: StowerConversationState,
+        replyExpectationConfidence: Double,
+        lastMessageGUID: String
+    ) {
         self.init(
             chatID: state.chatID,
             chatTitle: state.chatTitle,
@@ -74,7 +86,8 @@ extension StowerDebtItem {
             lastMessageText: state.lastMessageText,
             lastMessageTimestamp: state.lastMessageTimestamp,
             deepLink: state.deepLink,
-            replyExpectationConfidence: replyExpectationConfidence
+            replyExpectationConfidence: replyExpectationConfidence,
+            lastMessageGUID: lastMessageGUID
         )
     }
 }

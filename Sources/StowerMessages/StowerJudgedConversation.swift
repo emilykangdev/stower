@@ -11,4 +11,10 @@ internal struct StowerJudgedConversation: Sendable, Equatable {
 
     /// The reply-expectation verdict for the conversation's last act.
     internal let verdict: StowerReplyExpectation
+
+    /// The GUID of the conversation's last act, forwarded for dismiss.
+    ///
+    /// Carried so the board row can identify the dismissed message; it rides here
+    /// because `StowerConversationState` deliberately omits the GUID.
+    internal let lastMessageGUID: String
 }
