@@ -266,14 +266,15 @@ if ! awk '
 fi
 
 # 6k — TelemetryDeck is imported by EXACTLY ONE file: StowerTelemetryDeckReporter.swift.
-#      Admits attributed imports (@preconcurrency, @testable) by anchoring the pattern
-#      to the import keyword with optional leading attribute lines. A second import
+#      Admits attributed imports with or without argument lists
+#      (@preconcurrency, @testable, @attr(args)) by extending the attribute
+#      sub-pattern to allow an optional parenthesised arg list. A second import
 #      anywhere defeats the kill-switch quarantine. Must-be-EXACTLY-ONE polarity.
 TD_ALLOWED="$(printf '%s\n' \
     "Sources/StowerMacUI/Analytics/StowerTelemetryDeckReporter.swift" \
     | LC_ALL=C sort)"
 TD_IMPORTERS="$(grep -RIlE --include="*.swift" \
-    '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*([[:space:]]|$))*import[[:space:]]+([a-z]+[[:space:]]+)?TelemetryDeck([[:space:].]|$)' \
+    '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?([[:space:]]|$))*import[[:space:]]+([a-z]+[[:space:]]+)?TelemetryDeck([[:space:].]|$)' \
     Sources/ StowerMac/StowerMac/ 2>/dev/null | LC_ALL=C sort || true)"
 if [ "$TD_IMPORTERS" != "$TD_ALLOWED" ]; then
     echo "ERROR: TelemetryDeck must be imported by exactly one file (StowerTelemetryDeckReporter.swift)." >&2
