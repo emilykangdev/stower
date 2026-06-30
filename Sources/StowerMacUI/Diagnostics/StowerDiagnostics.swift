@@ -94,6 +94,12 @@ public enum StowerDiagnostics {
     /// "never started for an opted-out user at launch" (JC3); mid-session close
     /// is defence-in-depth so crashes after the toggle are not collected.
     ///
+    /// **Re-enable note:** re-enabling (`enabled=true`) restores the analytics kill
+    /// latch so future TelemetryDeck signals fire, but does NOT restart the Sentry
+    /// crash handler mid-session — `SentrySDK.start` is a one-shot per process and
+    /// re-calling after `close()` is unsupported. Crash coverage resumes on the next
+    /// app launch (where `initialize()` starts Sentry when consent is on).
+    ///
     /// The caller (Settings toggle / disclosure card) is responsible for pushing
     /// the change to the license record (`diagnostics_opt_out`) via the licensing
     /// workstream.
@@ -107,12 +113,31 @@ public enum StowerDiagnostics {
     /// Reconciles the local Keychain cache against the license record's opt-out
     /// flag on each license check-in.
     ///
-    /// "Off wins" — this never auto-re-enables. Delegates to
-    /// `StowerAnalytics.reconcileLicenseConsent(licenseOptOut:)`.
+    /// "Off wins" — this never auto-re-enables. When `licenseOptOut` is `true`,
+    /// delegates to `StowerAnalytics.reconcileLicenseConsent(licenseOptOut:)` AND
+    /// calls `StowerCrashReporting.stop()` so the Sentry crash handler is also
+    /// closed immediately (same best-effort mid-session halt as `setEnabled(false)`).
     ///
     /// - Parameter licenseOptOut: `true` when the license record carries
     ///   `diagnostics_opt_out = true`.
     public static func reconcileLicenseConsent(licenseOptOut: Bool) {
+        reconcileLicenseConsent(
+            licenseOptOut: licenseOptOut,
+            stopCrashReporting: { StowerCrashReporting.stop() }
+        )
+    }
+
+    /// Injectable form of `reconcileLicenseConsent(licenseOptOut:)` for tests.
+    ///
+    /// Tests inject a spy for `stopCrashReporting` to assert it is called on
+    /// opt-out without touching the real Sentry SDK.
+    internal static func reconcileLicenseConsent(
+        licenseOptOut: Bool,
+        stopCrashReporting: () -> Void
+    ) {
         StowerAnalytics.reconcileLicenseConsent(licenseOptOut: licenseOptOut)
+        if licenseOptOut {
+            stopCrashReporting()
+        }
     }
 }

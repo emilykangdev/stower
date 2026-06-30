@@ -87,4 +87,48 @@ import Testing
         // "Off wins" — license opt-out must propagate to isEnabled.
         #expect(StowerDiagnostics.isEnabled() == false)
     }
+
+    @Test internal func reconcileLicenseOptOut_stopsCrashReporting() async {
+        // Verifies that reconcileLicenseConsent(licenseOptOut: true) invokes the
+        // crash-reporting stop closure (the Sentry mid-session close path).
+        StowerAnalytics.resetForTesting()
+        defer { StowerAnalytics.resetForTesting() }
+
+        let storage = StowerInMemoryLeaseStorage()
+        StowerDiagnostics.initialize(
+            consent: StowerDiagnosticsConsent(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage),
+            makeAnalyticsClient: { _, _, _ in }
+        )
+
+        var stopCalled = false
+        StowerDiagnostics.reconcileLicenseConsent(
+            licenseOptOut: true,
+            stopCrashReporting: { stopCalled = true }
+        )
+
+        #expect(stopCalled == true, "crash reporting stop must be called on license opt-out")
+    }
+
+    @Test internal func reconcileLicenseOptIn_doesNotStopCrashReporting() async {
+        // Verifies that reconcileLicenseConsent(licenseOptOut: false) does NOT
+        // invoke the crash-reporting stop closure (opt-in / no change path).
+        StowerAnalytics.resetForTesting()
+        defer { StowerAnalytics.resetForTesting() }
+
+        let storage = StowerInMemoryLeaseStorage()
+        StowerDiagnostics.initialize(
+            consent: StowerDiagnosticsConsent(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage),
+            makeAnalyticsClient: { _, _, _ in }
+        )
+
+        var stopCalled = false
+        StowerDiagnostics.reconcileLicenseConsent(
+            licenseOptOut: false,
+            stopCrashReporting: { stopCalled = true }
+        )
+
+        #expect(stopCalled == false, "stop must not be called when licenseOptOut is false")
+    }
 }
