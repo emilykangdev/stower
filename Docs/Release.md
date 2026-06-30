@@ -107,8 +107,14 @@ is set in both Debug and Release configs in `project.pbxproj`. No action needed.
 GitHub repository → Settings → Environments → New environment → name: release
   → Add required reviewers (yourself for solo)
   → Add secrets: all five secrets from P1–P3 above
-  → Restrict to: tags matching messages-v*
+  → Deployment branches and tags: Selected branches and tags
+      Add rule: tags matching messages-v*
+      Add rule: branch main  ← required so workflow_dispatch dry-runs can access secrets
 ```
+
+The `workflow_dispatch` dry-run trigger runs from a branch, not a tag. If the Environment
+only allows tags, `workflow_dispatch` cannot access secrets and the dry-run silently skips
+signing/notarization steps. Allow `main` (or the default branch) in addition to tags.
 
 All secrets live in the `release` environment, not repository-level secrets.
 Every Action in `release.yml` is SHA-pinned (not a moving `@vN` tag) to prevent
