@@ -12,6 +12,7 @@ import SwiftUI
 @main
 struct StowerMacApp: App {
     @NSApplicationDelegateAdaptor(StowerAppDelegate.self) private var appDelegate
+    @StateObject private var updaterController = StowerUpdaterController()
 
     /// The app-owned `UndoManager` (A4): ONE stable instance the board's dismiss/undo
     /// registrations drive, so the undo stack survives a board reload (unlike
@@ -62,6 +63,17 @@ struct StowerMacApp: App {
         }
         Settings {
             StowerSettingsView()
+        }
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updaterController.checkForUpdates()
+                }
+            }
+        }
+
+        Settings {
+            StowerUpdaterSettingsView(controller: updaterController)
         }
     }
 

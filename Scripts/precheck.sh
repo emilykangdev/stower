@@ -182,9 +182,22 @@ if grep -RInE --include="*.swift" 'chat\.db' Sources/StowerMacUI \
     exit 1
 fi
 
-# 6f — The Xcode app entry imports ONLY SwiftUI + StowerMacUI — never the engine/db.
+# 6f — The Xcode app entry imports ONLY SwiftUI + StowerMacUI + Sparkle — never the engine/db.
+#      Sparkle is a first-party app-target dependency (Xcode project only, not Package.swift);
+#      it is intentionally permitted here and in the Sparkle guard below.
 if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+(GRDB|FoundationModels|Photos|PhotoKit|StowerMessages|StowerCore)([[:space:]]|$)' StowerMac/StowerMac 2>/dev/null; then
-    echo "ERROR: the StowerMac app entry must import only SwiftUI + StowerMacUI, never the engine/db" >&2
+    echo "ERROR: the StowerMac app entry must import only SwiftUI + StowerMacUI + Sparkle, never the engine/db" >&2
+    exit 1
+fi
+
+# 6g — Sparkle must NOT appear in the ROOT SPM graph (Package.swift or the root
+#      Package.resolved). It lives in the Xcode project only (StowerMac.xcodeproj).
+#      The Xcode project's own Package.resolved at
+#      StowerMac/StowerMac.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+#      legitimately contains Sparkle; this guard targets only the root files.
+if grep -iE 'sparkle' Package.swift Package.resolved 2>/dev/null; then
+    echo "ERROR: Sparkle must not appear in the root SPM graph (Package.swift / Package.resolved)." >&2
+    echo "       Sparkle is an Xcode-project-only dependency — never add it to Package.swift." >&2
     exit 1
 fi
 
