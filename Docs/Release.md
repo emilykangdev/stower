@@ -43,7 +43,8 @@ generate_keys -x /dev/stdout
 # Restore drill (run at least once before the first release):
 #   1. Delete the Keychain item "Stower" in Keychain Access.
 #   2. Restore from your offline backup with: generate_keys --import <backup-file>
-#   3. Confirm `sign_update --account Stower <any-file>` produces a non-empty signature.
+#   3. Confirm `sign_update --ed-key-file <backup-file> <any-file>` produces a non-empty signature.
+#      (The CI workflow passes the key via --ed-key-file from the SPARKLE_EDDSA_PRIVATE_KEY secret.)
 ```
 
 The public key `8Nq8KadFjHjsmYuH6XPxC/QXW8kUhAkICj3Gfsw97ZM=` is already set in

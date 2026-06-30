@@ -56,7 +56,7 @@ jobs:
             APPCAST="$(git show "origin/$PAGES_BRANCH:messages/appcast.xml" 2>/dev/null || true)"
             if [ -n "$APPCAST" ]; then
               PREV_BUILD="$(echo "$APPCAST" \
-                | grep -Eo 'sparkle:version="[0-9]+"' \
+                | grep -Eo '<sparkle:version>[0-9]+</sparkle:version>' \
                 | grep -Eo '[0-9]+' \
                 | sort -n \
                 | tail -1 \
@@ -196,7 +196,7 @@ jobs:
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
           KEY_FILE="$RUNNER_TEMP/notary_key.p8"
-          echo "$NOTARY_API_KEY_P8" > "$KEY_FILE"
+          echo "$NOTARY_API_KEY_P8" | base64 --decode > "$KEY_FILE"
           SUBMISSION_OUTPUT="$(xcrun notarytool submit "$ZIP_PATH" \
             --key "$KEY_FILE" \
             --key-id "$NOTARY_KEY_ID" \
@@ -222,7 +222,7 @@ jobs:
           NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
         run: |
           KEY_FILE="$RUNNER_TEMP/notary_key_log.p8"
-          echo "$NOTARY_API_KEY_P8" > "$KEY_FILE"
+          echo "$NOTARY_API_KEY_P8" | base64 --decode > "$KEY_FILE"
           xcrun notarytool log "${{ steps.notarize.outputs.submission_id }}" \
             --key "$KEY_FILE" \
             --key-id "$NOTARY_KEY_ID" \
@@ -300,7 +300,10 @@ jobs:
             exit 1
           fi
 
-          ED_SIGNATURE="$(echo "$SPARKLE_EDDSA_PRIVATE_KEY" | "$SIGN_UPDATE" "$ZIP_PATH" --account Stower)"
+          KEY_FILE_EDDSA="$RUNNER_TEMP/sparkle_eddsa_key.txt"
+          printf '%s' "$SPARKLE_EDDSA_PRIVATE_KEY" > "$KEY_FILE_EDDSA"
+          ED_SIGNATURE="$("$SIGN_UPDATE" --ed-key-file "$KEY_FILE_EDDSA" "$ZIP_PATH" | tr -d '[:space:]')"
+          rm "$KEY_FILE_EDDSA"
           if [ -z "$ED_SIGNATURE" ]; then
             echo "ERROR: sign_update produced an empty EdDSA signature." >&2
             exit 1
