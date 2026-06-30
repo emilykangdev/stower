@@ -53,12 +53,24 @@ jobs:
       # during a release tag run. CODE_SIGNING_ALLOWED=NO avoids needing any
       # Developer ID cert in CI. -skipPackagePluginValidation suppresses plugin
       # sandbox warnings that are irrelevant in a build-only context.
+      # Cache the SwiftPM dependencies xcodebuild clones for StowerMac.xcodeproj
+      # (Sparkle + its transitive deps), keyed by the Xcode project's Package.resolved.
+      # -clonedSourcePackagesDirPath below pins the clone location to this cached dir,
+      # so an unchanged resolution skips the network re-resolve on every CI run.
+      - name: Cache StowerMac SwiftPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/stowermac-spm
+          key: stowermac-spm-${{ runner.os }}-${{ hashFiles('StowerMac/StowerMac.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            stowermac-spm-${{ runner.os }}-
       - name: Build StowerMac app target (no signing)
         run: |
           xcodebuild build \
             -project StowerMac/StowerMac.xcodeproj \
             -scheme StowerMac \
             -configuration Debug \
+            -clonedSourcePackagesDirPath "${{ runner.temp }}/stowermac-spm" \
             CODE_SIGNING_ALLOWED=NO \
             -skipPackagePluginValidation
       # Release-config build: proves the `#if DEBUG` seams compile OUT of a Release
