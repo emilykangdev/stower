@@ -38,3 +38,20 @@ jobs:
         env:
           STOWER_SKIP_FM_INTEGRATION: "1"
         run: ./Scripts/precheck.sh
+      # Build the StowerMac Xcode app target (no signing) so that Xcode-project-
+      # only code — StowerUpdaterController.swift, StowerUpdaterSettingsView.swift,
+      # Sparkle SPM linkage, and StowerMacApp.swift wiring — is compiled on every
+      # push/PR. precheck.sh runs `swift build` over the SPM graph (Sources/,
+      # Tests/) but never touches StowerMac/StowerMac.xcodeproj; without this step
+      # a broken Sparkle API call would only surface at `xcodebuild archive` time
+      # during a release tag run. CODE_SIGNING_ALLOWED=NO avoids needing any
+      # Developer ID cert in CI. -skipPackagePluginValidation suppresses plugin
+      # sandbox warnings that are irrelevant in a build-only context.
+      - name: Build StowerMac app target (no signing)
+        run: |
+          xcodebuild build \
+            -project StowerMac/StowerMac.xcodeproj \
+            -scheme StowerMac \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            -skipPackagePluginValidation
