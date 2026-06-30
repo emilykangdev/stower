@@ -21,10 +21,13 @@ struct StowerMacApp: App {
     private let undoManager = UndoManager()
 
     init() {
-        // Initialize anonymous analytics behind the privacy kill switch (JC6).
-        // When consent is off, initialize() is a no-op and no SDK init fires (A3).
-        StowerAnalytics.initialize()
-        // app_launched is gated by the facade; no-op if disabled.
+        // Initialize all diagnostics backends (crash reporting + analytics)
+        // behind the shared consent gate. Sentry crash handler starts first
+        // (earliest crash coverage, JC3); TelemetryDeck follows. When consent is
+        // off, initialize() is a complete no-op — no SDK init, no crash handler,
+        // no automatic Session.started (A3/JC3).
+        StowerDiagnostics.initialize()
+        // app_launched is gated by the analytics facade; no-op if disabled.
         StowerAnalytics.reportAppLaunched()
     }
 

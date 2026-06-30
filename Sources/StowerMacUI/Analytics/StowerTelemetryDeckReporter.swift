@@ -8,9 +8,9 @@ import TelemetryDeck
 /// and holds the consent reference; this reporter gates every individual signal
 /// for defence-in-depth.
 internal struct StowerTelemetryDeckReporter: StowerAnalyticsReporting {
-    private let consent: StowerAnalyticsConsent
+    private let consent: StowerDiagnosticsConsent
 
-    internal init(consent: StowerAnalyticsConsent) {
+    internal init(consent: StowerDiagnosticsConsent) {
         self.consent = consent
     }
 

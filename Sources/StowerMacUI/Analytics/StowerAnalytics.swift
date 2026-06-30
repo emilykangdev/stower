@@ -1,20 +1,17 @@
 import Foundation
 
-/// The analytics facade: one call site for init, one for every event.
+/// The analytics backend: event reporting via TelemetryDeck.
 ///
-/// Owns the kill switch (JC6): when consent is off, `initialize` is never
-/// called (suppressing the automatic `TelemetryDeck.Session.started` signal,
-/// A3) and no signal is forwarded.
-///
-/// The `makeClient` closure is injectable so tests can verify the kill switch
-/// without importing TelemetryDeck: a disabled consent must result in zero
-/// calls to `makeClient` AND zero calls to `report`.
+/// The orchestration layer (consent gate, SDK init ordering) now lives in
+/// `StowerDiagnostics` (JC1). `StowerAnalytics` owns only the TelemetryDeck
+/// backend: the SDK init helper and the event reporter. The consent/identity
+/// types live in `Sources/StowerMacUI/Diagnostics/`.
 ///
 /// All methods are safe to call from any context (the reporter is `Sendable`).
 /// Synchronous throughout — no `await` needed or allowed (Eng F4/F5).
 @MainActor
 public final class StowerAnalytics {
-    /// The singleton built by `initialize` and used by `report`.
+    /// The singleton built by `startBackend` and used by `report`.
     private static var shared: StowerAnalytics?
 
     /// Whether the TelemetryDeck SDK has been initialized this session.
@@ -25,7 +22,7 @@ public final class StowerAnalytics {
     private static var didStartSDK = false
 
     private let reporter: any StowerAnalyticsReporting
-    private let consent: StowerAnalyticsConsent
+    private let consent: StowerDiagnosticsConsent
 
     /// The stable TelemetryDeck app identifier (write-only, public/committable).
     ///
@@ -39,45 +36,37 @@ public final class StowerAnalytics {
     /// user look like a new user to TelemetryDeck.
     private static let stableSalt = "stower-v0-analytics-salt-2026"
 
-    private init(reporter: any StowerAnalyticsReporting, consent: StowerAnalyticsConsent) {
+    private init(reporter: any StowerAnalyticsReporting, consent: StowerDiagnosticsConsent) {
         self.reporter = reporter
         self.consent = consent
     }
 
-    // MARK: — SDK init (main-actor entry point)
+    // MARK: — Backend init (called only from StowerDiagnostics facade)
 
-    /// Initializes anonymous analytics behind the privacy kill switch (JC6).
+    /// Starts the TelemetryDeck backend when consent is enabled (JC3).
     ///
-    /// The production entry point for the app target (`StowerMacApp`). When
-    /// consent is off this is a complete no-op — no SDK init, no automatic
-    /// `TelemetryDeck.Session.started` (A3/JC6). The injectable form used by
-    /// tests is `internal`; this public wrapper supplies the real Keychain-backed
-    /// consent and identity so the app never names those internal types.
-    @MainActor
-    public static func initialize() {
-        initialize(consent: StowerAnalyticsConsent(), identity: StowerAnalyticsIdentity())
-    }
-
-    /// Initializes the analytics system.
+    /// Called exclusively by `StowerDiagnostics.initialize()` — not by the app
+    /// target directly. The `makeClient` closure is injectable so tests can
+    /// verify the kill switch without importing TelemetryDeck.
     ///
     /// When consent is disabled this is a complete no-op: `makeClient` is never
     /// called, suppressing the automatic `TelemetryDeck.Session.started` signal
-    /// that `initialize` auto-emits (A3/JC6). There is no Swift `stop()` (A4),
-    /// so the gate is "never start when disabled."
+    /// (A3/JC6). There is no Swift `stop()` (A4), so the gate is "never start
+    /// when disabled."
     ///
     /// - Parameters:
-    ///   - consent: The consent accessor (the real Keychain-backed instance in
-    ///     production; inject a fake for tests).
+    ///   - consent: The consent accessor (real Keychain-backed in production;
+    ///     inject a fake for tests).
     ///   - identity: The install-identity accessor (real Keychain in production;
     ///     inject a fake for tests).
     ///   - makeClient: Injectable SDK-init closure. Receives `(appID, salt,
     ///     userID)`. The default calls `StowerTelemetryDeckReporter.initializeSDK`
-    ///     and `setDefaultUser` so this file never needs to import TelemetryDeck
-    ///     (precheck 6k). Tests inject a spy closure; never calls TelemetryDeck.
+    ///     and `setDefaultUser` so this file never imports TelemetryDeck
+    ///     (precheck 6k). Tests inject a spy closure.
     @MainActor
-    internal static func initialize(
-        consent: StowerAnalyticsConsent,
-        identity: StowerAnalyticsIdentity,
+    internal static func startBackend(
+        consent: StowerDiagnosticsConsent,
+        identity: StowerDiagnosticsIdentity,
         makeClient: (String, String, String) -> Void = { appID, salt, userID in
             StowerTelemetryDeckReporter.initializeSDK(appID: appID, salt: salt)
             StowerTelemetryDeckReporter.setDefaultUser(userID)
@@ -85,7 +74,10 @@ public final class StowerAnalytics {
     ) {
         guard consent.isEnabled else {
             // Kill switch: build a no-op reporter; never call makeClient.
-            let noOp = StowerAnalytics(reporter: StowerNoOpAnalyticsReporter(), consent: consent)
+            let noOp = StowerAnalytics(
+                reporter: StowerNoOpAnalyticsReporter(),
+                consent: consent
+            )
             Self.shared = noOp
             return
         }
@@ -115,7 +107,7 @@ public final class StowerAnalytics {
 
     /// Emits one analytics event through the configured reporter.
     ///
-    /// A no-op when `initialize` has not yet been called or analytics is off.
+    /// A no-op when `startBackend` has not yet been called or analytics is off.
     internal static func report(_ event: StowerAnalyticsEvent) {
         shared?.reporter.report(event)
     }
@@ -142,27 +134,32 @@ public final class StowerAnalytics {
     /// Resets all static state so each test starts from a clean slate.
     ///
     /// Clears `shared`, `didStartSDK`, and the kill latch. Call at the start of
-    /// every test that calls `initialize(consent:identity:makeClient:)` to prevent
+    /// every test that calls `startBackend(consent:identity:makeClient:)` to prevent
     /// static state from one test leaking into the next (A4: no SDK restart).
     /// Not for production use.
     @MainActor
     internal static func resetForTesting() {
         shared = nil
         didStartSDK = false
-        StowerAnalyticsKillLatch.reset()
+        StowerDiagnosticsKillLatch.reset()
     }
 
-    // MARK: — Consent management
+    // MARK: — Consent passthrough (delegated to StowerDiagnostics in production)
 
-    /// Whether analytics collection is currently enabled.
+    /// Whether diagnostics collection is currently enabled.
+    ///
+    /// Reads from the live `shared` reporter's consent; returns `false` when
+    /// the backend has not been started. Used by `StowerPrivacySettingsView`
+    /// to initialize its toggle state.
     internal static func isEnabled() -> Bool {
         shared?.consent.isEnabled ?? false
     }
 
-    /// Enables or disables analytics and updates the local Keychain cache.
+    /// Enables or disables the analytics backend and updates the local Keychain cache.
     ///
-    /// The caller (the Settings toggle) is responsible for pushing the change
-    /// to the license record (`diagnostics_opt_out`) via the licensing workstream.
+    /// In production this is called via `StowerDiagnostics.setEnabled(_:)` which
+    /// handles both backends. The caller (Settings toggle / disclosure card) is
+    /// responsible for pushing the change to the license record.
     internal static func setEnabled(_ enabled: Bool) {
         guard let current = shared else { return }
         current.consent.setEnabled(enabled)
@@ -171,20 +168,20 @@ public final class StowerAnalytics {
             // the SDK never started this session (launched disabled), initialize
             // it now — gated on the now-enabled consent. Otherwise just restore a
             // live reporter (the SDK can't be re-initialized; A4).
-            StowerAnalyticsKillLatch.reset()
+            StowerDiagnosticsKillLatch.reset()
             if Self.didStartSDK {
                 Self.shared = StowerAnalytics(
                     reporter: StowerTelemetryDeckReporter(consent: current.consent),
                     consent: current.consent
                 )
             } else {
-                initialize(consent: current.consent, identity: StowerAnalyticsIdentity())
+                startBackend(consent: current.consent, identity: StowerDiagnosticsIdentity())
             }
         } else {
             // Fail closed in memory across every reporter, even if the Keychain
             // write failed. Durable off is backstopped by the license record's
             // `diagnostics_opt_out`, reconciled on the next check-in (JC8).
-            StowerAnalyticsKillLatch.latchOff()
+            StowerDiagnosticsKillLatch.latchOff()
             Self.shared = StowerAnalytics(
                 reporter: StowerNoOpAnalyticsReporter(),
                 consent: current.consent
@@ -195,12 +192,8 @@ public final class StowerAnalytics {
     /// Reconciles the local Keychain cache against the license record's opt-out
     /// flag on each license check-in.
     ///
-    /// "Off wins" — this never auto-re-enables. Call this after a successful
-    /// license check-in when `diagnostics_opt_out` is returned.
-    ///
-    /// When `licenseOptOut` is `true`, also fails closed in memory: latches off
-    /// `StowerAnalyticsKillLatch` and swaps `shared` to a no-op reporter, so
-    /// every in-session reporter stops immediately even if the Keychain write fails.
+    /// "Off wins" — this never auto-re-enables. Called via
+    /// `StowerDiagnostics.reconcileLicenseConsent(licenseOptOut:)` in production.
     ///
     /// - Parameter licenseOptOut: `true` when the license record carries
     ///   `diagnostics_opt_out = true`.
@@ -208,7 +201,7 @@ public final class StowerAnalytics {
         guard let current = shared else { return }
         current.consent.reconcile(licenseOptOut: licenseOptOut)
         if licenseOptOut {
-            StowerAnalyticsKillLatch.latchOff()
+            StowerDiagnosticsKillLatch.latchOff()
             Self.shared = StowerAnalytics(
                 reporter: StowerNoOpAnalyticsReporter(),
                 consent: current.consent

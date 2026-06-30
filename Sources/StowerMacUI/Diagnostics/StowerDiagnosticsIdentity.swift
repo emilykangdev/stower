@@ -1,17 +1,21 @@
 import Foundation
 
-/// Keychain coordinates for the analytics install record.
+/// Keychain coordinates for the diagnostics install record.
 ///
 /// A case-less namespace because the keys have no single natural home type:
-/// both `StowerAnalyticsIdentity` and `StowerAnalyticsConsent` read/write the
-/// same one-item entry. `service` is distinct from the license-lease service
+/// both `StowerDiagnosticsIdentity` and `StowerDiagnosticsConsent` read/write
+/// the same one-item entry. `service` is distinct from the license-lease service
 /// (`com.stower.license.lease`) so the two records never collide; `account`
 /// identifies the record within the service.
-internal enum StowerAnalyticsKeychainKeys {
-    /// The Keychain service identifier for the analytics install record.
+///
+/// The service/account strings are **unchanged** from the original analytics
+/// types (`com.stower.analytics.identity` / `install-record`) — the Swift types
+/// rename but the persisted key does not (plan §Surface, JC1).
+internal enum StowerDiagnosticsKeychainKeys {
+    /// The Keychain service identifier for the diagnostics install record.
     internal static let service = "com.stower.analytics.identity"
 
-    /// The Keychain account key for the analytics install record.
+    /// The Keychain account key for the diagnostics install record.
     internal static let account = "install-record"
 }
 
@@ -26,7 +30,7 @@ internal enum StowerAnalyticsKeychainKeys {
 /// `UUID()`, app-scoped, with no cross-device or cross-app meaning (JC4).
 /// Anonymity is the double-hash (salt + SHA-256) TelemetryDeck applies before
 /// the value ever leaves the device; the UUID itself never travels the network.
-internal struct StowerAnalyticsIdentity: Sendable {
+internal struct StowerDiagnosticsIdentity: Sendable {
     private let storage: any StowerLeaseStorage
 
     /// Creates the identity accessor.
@@ -35,8 +39,8 @@ internal struct StowerAnalyticsIdentity: Sendable {
     ///   item; inject an in-memory fake for tests so they never touch the Keychain.
     internal init(
         storage: any StowerLeaseStorage = StowerKeychainItem(
-            service: StowerAnalyticsKeychainKeys.service,
-            account: StowerAnalyticsKeychainKeys.account
+            service: StowerDiagnosticsKeychainKeys.service,
+            account: StowerDiagnosticsKeychainKeys.account
         )
     ) {
         self.storage = storage
@@ -53,17 +57,17 @@ internal struct StowerAnalyticsIdentity: Sendable {
         }
         // Fresh install or missing record — mint a new UUID and store it.
         let fresh = UUID().uuidString
-        let record = AnalyticsInstallRecord(id: fresh, enabled: true)
+        let record = DiagnosticsInstallRecord(id: fresh, enabled: true)
         if let data = try? JSONEncoder().encode(record) {
             storage.write(data)
         }
         return fresh
     }
 
-    private func storedRecord() -> AnalyticsInstallRecord? {
+    private func storedRecord() -> DiagnosticsInstallRecord? {
         guard let data = storage.readData() else { return nil }
         guard
-            let record = try? JSONDecoder().decode(AnalyticsInstallRecord.self, from: data),
+            let record = try? JSONDecoder().decode(DiagnosticsInstallRecord.self, from: data),
             UUID(uuidString: record.id) != nil
         else { return nil }
         return record
@@ -72,12 +76,12 @@ internal struct StowerAnalyticsIdentity: Sendable {
 
 // MARK: — Shared install record
 
-/// The analytics install record persisted in the Keychain.
+/// The diagnostics install record persisted in the Keychain.
 ///
-/// Both `StowerAnalyticsIdentity` and `StowerAnalyticsConsent` read/write the
-/// same one-item Keychain entry so the UUID and the cached opt-out are never
-/// stored in separate items that could desync.
-internal struct AnalyticsInstallRecord: Codable, Sendable {
+/// Both `StowerDiagnosticsIdentity` and `StowerDiagnosticsConsent` read/write
+/// the same one-item Keychain entry so the UUID and the cached opt-out are
+/// never stored in separate items that could desync.
+internal struct DiagnosticsInstallRecord: Codable, Sendable {
     /// The random per-install UUID (not hardware/IDFV/IDFA).
     internal var id: String
 

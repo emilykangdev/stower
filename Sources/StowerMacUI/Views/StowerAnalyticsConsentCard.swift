@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The first-run analytics disclosure card, shown once after ~60 seconds of
+/// The first-run diagnostics disclosure card, shown once after ~60 seconds of
 /// foreground board time (JC7 — after value, never at startup or the FDA cliff).
 ///
 /// Presents the honest, equal-weight consent choice: On · Off. No
@@ -9,11 +9,14 @@ import SwiftUI
 /// means collection is already running by the time the card appears).
 ///
 /// Copy is authored in the plan (§What / In-app copy) and reproduced verbatim:
-/// headline, body, and button labels all sourced from the plan text.
+/// headline, body (analytics clause + crash clause), and button labels all
+/// sourced from the plan text. The two anonymity guarantees — anonymous-by-design
+/// for usage stats, best-effort-scrubbed for crash reports — are disclosed
+/// together in one honest card (plan §What / §Copy).
 internal struct StowerAnalyticsConsentCard: View {
     /// Called when the user taps a button: `true` to stay on, `false` to opt out.
     ///
-    /// The caller writes the choice to `StowerAnalytics.setEnabled`.
+    /// The caller writes the choice to `StowerDiagnostics.setEnabled`.
     internal var onChoice: (Bool) -> Void
 
     internal var body: some View {
@@ -28,6 +31,15 @@ internal struct StowerAnalyticsConsentCard: View {
                     + "search text, or file paths — that stays on your Mac. The code is open; "
                     + "you can verify exactly what leaves your machine. "
                     + "Change this anytime in Settings → Privacy."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Text(
+                "If Stower crashes, it also sends a crash report so we can fix it. "
+                    + "Crash reports are scrubbed of personal data before they leave your Mac "
+                    + "— never your messages, photos, contacts, search text, or file paths."
             )
             .font(.callout)
             .foregroundStyle(.secondary)

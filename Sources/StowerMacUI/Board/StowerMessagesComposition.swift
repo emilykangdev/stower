@@ -58,7 +58,7 @@ internal struct StowerMessagesComposition {
         // Build one live reporter shared across the startup funnel and the board.
         // The facade singleton (StowerAnalytics.shared) is the authoritative kill
         // switch; this reporter checks consent on every call (defence-in-depth).
-        let consent = StowerAnalyticsConsent()
+        let consent = StowerDiagnosticsConsent()
         analyticsReporter = StowerTelemetryDeckReporter(consent: consent)
         guard let draftURL = StowerDraftStore.defaultURL else {
             throw StowerDraftStoreUnavailable.locationUnavailable

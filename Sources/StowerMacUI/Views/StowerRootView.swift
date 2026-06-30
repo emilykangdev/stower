@@ -47,7 +47,7 @@ public struct StowerRootView: View {
     ///
     /// A single instance covers both surfaces so they never desync (the Keychain record
     /// is the underlying source of truth — shared across all readers).
-    private let consent = StowerAnalyticsConsent()
+    private let consent = StowerDiagnosticsConsent()
 
     private let settings: StowerSystemSettingsOpener
 
@@ -186,7 +186,7 @@ public struct StowerRootView: View {
                 )
                 if showConsentCard {
                     StowerAnalyticsConsentCard { enabled in
-                        StowerAnalytics.setEnabled(enabled)
+                        StowerDiagnostics.setEnabled(enabled)
                         consent.markDisclosureShown()
                         showConsentCard = false
                     }
@@ -242,7 +242,7 @@ public struct StowerRootView: View {
     /// The countdown is cancelled when the app backgrounds or the board screen
     /// leaves the hierarchy, and rescheduled on return — so the card honors
     /// *foreground board* time, never firing while backgrounded or off-board.
-    /// The shown-flag is stored in `UserDefaults` by `StowerAnalyticsConsent` so
+    /// The shown-flag is stored in `UserDefaults` by `StowerDiagnosticsConsent` so
     /// the card never reappears after the user has made a choice.
     private func scheduleConsentCardIfNeeded() {
         guard !consent.hasShownDisclosure else { return }

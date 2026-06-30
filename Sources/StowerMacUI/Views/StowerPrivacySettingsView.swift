@@ -1,17 +1,17 @@
 import SwiftUI
 
-/// Settings → Privacy: the primary trust surface for analytics consent.
+/// Settings → Privacy: the primary trust surface for diagnostics consent.
 ///
-/// Shows the analytics toggle (default on) with honest collected/never-collected
+/// Shows the diagnostics toggle (default on) with honest collected/never-collected
 /// copy and a link to the public privacy policy. Equal-weight affordances — no
 /// `.borderedProminent` style bias toward either choice (JC2 dark-pattern check).
 ///
-/// The toggle writes through to `StowerAnalytics.setEnabled` and the
+/// The toggle writes through to `StowerDiagnostics.setEnabled` and the
 /// license-record push is the responsibility of the licensing workstream
 /// (the `diagnostics_opt_out` field, JC8). Off is one click; no confirmation
 /// modal.
 internal struct StowerPrivacySettingsView: View {
-    @State private var analyticsEnabled: Bool = StowerAnalytics.isEnabled()
+    @State private var analyticsEnabled: Bool = StowerDiagnostics.isEnabled()
 
     private static let privacyPolicyURL = URL(string: "https://stower.app/privacy")
 
@@ -33,14 +33,23 @@ internal struct StowerPrivacySettingsView: View {
                     }
                 }
                 .onChange(of: analyticsEnabled) { _, newValue in
-                    StowerAnalytics.setEnabled(newValue)
+                    StowerDiagnostics.setEnabled(newValue)
                     // An explicit Settings choice supersedes the first-run
                     // disclosure card, so an opted-out user is never re-prompted
                     // (and can't accidentally re-enable via the card). (JC7)
-                    StowerAnalyticsConsent().markDisclosureShown()
+                    StowerDiagnosticsConsent().markDisclosureShown()
                 }
             } header: {
-                Text("Analytics")
+                Text("Analytics & Crash Reporting")
+            }
+
+            Section {
+                Text(
+                    "Usage stats are anonymous by design. Crash reports are personal-data-scrubbed"
+                        + " before sending."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
 
             Section {

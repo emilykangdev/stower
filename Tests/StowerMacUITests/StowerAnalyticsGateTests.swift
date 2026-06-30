@@ -13,15 +13,15 @@ import Testing
 
         let storage = StowerInMemoryLeaseStorage()
         // Pre-write a record with enabled=false.
-        let consent = StowerAnalyticsConsent(storage: storage)
+        let consent = StowerDiagnosticsConsent(storage: storage)
         consent.setEnabled(false)
 
         var makeClientCalled = false
 
         // Initialize with disabled consent — makeClient must NOT be called.
-        StowerAnalytics.initialize(
-            consent: StowerAnalyticsConsent(storage: storage),
-            identity: StowerAnalyticsIdentity(storage: storage),
+        StowerAnalytics.startBackend(
+            consent: StowerDiagnosticsConsent(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage),
             makeClient: { _, _, _ in makeClientCalled = true }
         )
 
@@ -43,9 +43,9 @@ import Testing
         // Fresh storage = default-on.
         var makeClientCalled = false
 
-        StowerAnalytics.initialize(
-            consent: StowerAnalyticsConsent(storage: storage),
-            identity: StowerAnalyticsIdentity(storage: storage),
+        StowerAnalytics.startBackend(
+            consent: StowerDiagnosticsConsent(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage),
             makeClient: { _, _, _ in makeClientCalled = true }
         )
 
@@ -80,14 +80,14 @@ import Testing
         defer { StowerAnalytics.resetForTesting() }
 
         let storage = StowerInMemoryLeaseStorage()
-        let consent = StowerAnalyticsConsent(storage: storage)
+        let consent = StowerDiagnosticsConsent(storage: storage)
         // Fresh storage = enabled cache (default-on).
         #expect(consent.isEnabled == true)
 
-        StowerAnalyticsKillLatch.latchOff()
+        StowerDiagnosticsKillLatch.latchOff()
         #expect(consent.isEnabled == false, "latch must win over an enabled cache")
 
-        StowerAnalyticsKillLatch.reset()
+        StowerDiagnosticsKillLatch.reset()
         #expect(consent.isEnabled == true, "explicit opt-in clears the latch")
     }
 }
