@@ -302,10 +302,14 @@ jobs:
 
           KEY_FILE_EDDSA="$RUNNER_TEMP/sparkle_eddsa_key.txt"
           printf '%s' "$SPARKLE_EDDSA_PRIVATE_KEY" > "$KEY_FILE_EDDSA"
-          ED_SIGNATURE="$("$SIGN_UPDATE" --ed-key-file "$KEY_FILE_EDDSA" "$ZIP_PATH" | tr -d '[:space:]')"
+          SIGN_OUTPUT="$("$SIGN_UPDATE" --ed-key-file "$KEY_FILE_EDDSA" "$ZIP_PATH")"
           rm "$KEY_FILE_EDDSA"
+          # sign_update 2.x outputs: sparkle:edSignature="<base64>" length="<N>"
+          # Extract just the base64 value for embedding in the XML attribute.
+          ED_SIGNATURE="$(echo "$SIGN_OUTPUT" | grep -Eo 'sparkle:edSignature="[^"]*"' | head -1 | sed 's/sparkle:edSignature="//;s/"$//')"
           if [ -z "$ED_SIGNATURE" ]; then
-            echo "ERROR: sign_update produced an empty EdDSA signature." >&2
+            echo "ERROR: sign_update produced no recognisable edSignature." >&2
+            echo "sign_update raw output: $SIGN_OUTPUT" >&2
             exit 1
           fi
 
