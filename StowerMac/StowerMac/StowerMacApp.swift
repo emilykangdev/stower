@@ -50,6 +50,15 @@ struct StowerMacApp: App {
                 Button("Redo") { performRedo() }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
             }
+            #if DEBUG
+            // DEBUG-only: force a crash to verify the Sentry capture → next-launch
+            // upload → EU dashboard pipeline. Never compiled into a release build.
+            CommandMenu("Debug") {
+                Button("Force Crash (Sentry test)") {
+                    StowerDiagnostics.debugForceCrash()
+                }
+            }
+            #endif
         }
         Settings {
             StowerSettingsView()

@@ -140,4 +140,20 @@ public enum StowerDiagnostics {
             stopCrashReporting()
         }
     }
+
+    #if DEBUG
+        /// Triggers an immediate trap so the end-to-end crash-reporting pipeline can
+        /// be verified by hand.
+        ///
+        /// DEBUG-only — never compiled into a release build. Sentry's signal/Mach
+        /// handler (installed by `initialize()` when consent is on) catches the trap,
+        /// writes the report to disk in the dying process, and uploads it on the NEXT
+        /// launch (A2) — so relaunch Stower after using this, then check the Sentry EU
+        /// dashboard. Requires consent ON at launch (default-on); with consent off no
+        /// handler is installed and nothing is captured. The reason is a static string
+        /// (no user data — 6n) and the scrubber rebuilds `exception.value` content-free.
+        public static func debugForceCrash() {
+            fatalError("Stower DEBUG forced crash — Sentry pipeline test")
+        }
+    #endif
 }

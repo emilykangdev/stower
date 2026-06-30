@@ -32,7 +32,7 @@ internal enum StowerCrashReporting {
     /// public and committable — worst case is event-spam, mitigated by Sentry
     /// rate-limits/rotation. The `sentry-cli` auth token is NOT here (ops-gated).
     private static let euDSN =
-        "https://sentry_dsn_placeholder@o0.ingest.de.sentry.io/0"
+        "https://42c8efabfcd25c018c585fdb72f5e249@o4511650874916864.ingest.de.sentry.io/4511650889007184"
 
     // MARK: — Start / stop
 
