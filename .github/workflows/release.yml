@@ -334,49 +334,56 @@ jobs:
           mkdir -p "$(dirname "$APPCAST_PATH")" "$NOTES_DIR"
 
           if [ ! -f "$APPCAST_PATH" ]; then
-            cat > "$APPCAST_PATH" <<'APPCAST_HEADER'
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
-  <channel>
-    <title>Stower Updates</title>
-    <link>https://updates.stower.app/messages/appcast.xml</link>
-    <description>Stower for Messages update feed</description>
-    <language>en</language>
-  </channel>
-</rss>
-APPCAST_HEADER
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="utf-8"?>' \
+              '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">' \
+              '  <channel>' \
+              '    <title>Stower Updates</title>' \
+              '    <link>https://updates.stower.app/messages/appcast.xml</link>' \
+              '    <description>Stower for Messages update feed</description>' \
+              '    <language>en</language>' \
+              '  </channel>' \
+              '</rss>' > "$APPCAST_PATH"
           fi
 
-          NEW_ITEM="    <item>
-      <title>Stower ${VERSION}</title>
-      <pubDate>${PUB_DATE}</pubDate>
-      <sparkle:releaseNotesLink>${NOTES_URL}</sparkle:releaseNotesLink>
-      <sparkle:version>${BUILD}</sparkle:version>
-      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
-      <sparkle:phasedRolloutInterval>${ROLLOUT_INTERVAL}</sparkle:phasedRolloutInterval>
-      <enclosure
-        url=\"${ASSET_URL}\"
-        length=\"${FILE_SIZE}\"
-        type=\"application/octet-stream\"
-        sparkle:edSignature=\"${ED_SIGNATURE}\"
-      />
-    </item>"
-
-          python3 - <<PYEOF
-import sys
-appcast_path = "$APPCAST_PATH"
-new_item = """$NEW_ITEM"""
-with open(appcast_path, 'r') as f:
-    content = f.read()
-insert_before = '</channel>'
-if insert_before not in content:
-    print("ERROR: malformed appcast — </channel> not found", file=sys.stderr)
-    sys.exit(1)
-updated = content.replace(insert_before, new_item + '\n  ' + insert_before)
-with open(appcast_path, 'w') as f:
-    f.write(updated)
-print("Appcast amended successfully.")
-PYEOF
+          AMEND_SCRIPT="$RUNNER_TEMP/amend_appcast.py"
+          printf '%s\n' \
+            'import sys, os' \
+            'p = os.environ["APPCAST_PATH"]' \
+            'v = os.environ["VERSION"]' \
+            'b = os.environ["BUILD"]' \
+            'd = os.environ["PUB_DATE"]' \
+            'n = os.environ["NOTES_URL"]' \
+            'a = os.environ["ASSET_URL"]' \
+            'z = os.environ["FILE_SIZE"]' \
+            'e = os.environ["ED_SIGNATURE"]' \
+            'r = os.environ["ROLLOUT_INTERVAL"]' \
+            'item = (' \
+            '"    <item>\n"' \
+            '"      <title>Stower " + v + "</title>\n"' \
+            '"      <pubDate>" + d + "</pubDate>\n"' \
+            '"      <sparkle:releaseNotesLink>" + n + "</sparkle:releaseNotesLink>\n"' \
+            '"      <sparkle:version>" + b + "</sparkle:version>\n"' \
+            '"      <sparkle:shortVersionString>" + v + "</sparkle:shortVersionString>\n"' \
+            '"      <sparkle:phasedRolloutInterval>" + r + "</sparkle:phasedRolloutInterval>\n"' \
+            '"      <enclosure\n"' \
+            '"        url=\"" + a + "\"\n"' \
+            '"        length=\"" + z + "\"\n"' \
+            '"        type=\"application/octet-stream\"\n"' \
+            '"        sparkle:edSignature=\"" + e + "\"\n"' \
+            '"      />\n"' \
+            '"    </item>"' \
+            ')' \
+            'with open(p) as f: content = f.read()' \
+            'tag = "</channel>"' \
+            'if tag not in content: print("ERROR: </channel> not found",file=sys.stderr); sys.exit(1)' \
+            'updated = content.replace(tag, item + "\n  " + tag)' \
+            'with open(p, "w") as f: f.write(updated)' \
+            'print("Appcast amended.")' > "$AMEND_SCRIPT"
+          APPCAST_PATH="$APPCAST_PATH" VERSION="$VERSION" BUILD="$BUILD" \
+            PUB_DATE="$PUB_DATE" NOTES_URL="$NOTES_URL" ASSET_URL="$ASSET_URL" \
+            FILE_SIZE="$FILE_SIZE" ED_SIGNATURE="$ED_SIGNATURE" ROLLOUT_INTERVAL="$ROLLOUT_INTERVAL" \
+            python3 "$AMEND_SCRIPT"
 
           NEW_ITEM_COUNT="$(grep -c '<item>' "$APPCAST_PATH" || echo "0")"
           if [ "$NEW_ITEM_COUNT" -lt "$PREV_ITEM_COUNT" ]; then
@@ -386,16 +393,17 @@ PYEOF
           echo "Appcast item count: $NEW_ITEM_COUNT (previous: $PREV_ITEM_COUNT)"
 
           NOTES_HTML="$NOTES_DIR/${VERSION}.html"
-          cat > "$NOTES_HTML" <<HTML
-<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><title>Stower ${VERSION}</title></head>
-<body>
-<h2>Stower ${VERSION}</h2>
-<p>See the <a href="https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}">GitHub Release</a> for details.</p>
-</body>
-</html>
-HTML
+          REPO="${{ github.repository }}"
+          TAG="${{ github.ref_name }}"
+          printf '%s\n' \
+            '<!DOCTYPE html>' \
+            '<html lang="en">' \
+            "<head><meta charset=\"utf-8\"><title>Stower ${VERSION}</title></head>" \
+            '<body>' \
+            "<h2>Stower ${VERSION}</h2>" \
+            "<p>See the <a href=\"https://github.com/${REPO}/releases/tag/${TAG}\">GitHub Release</a> for details.</p>" \
+            '</body>' \
+            '</html>' > "$NOTES_HTML"
 
           cd "$RUNNER_TEMP/pages"
           git add messages/appcast.xml "messages/notes/${VERSION}.html"
