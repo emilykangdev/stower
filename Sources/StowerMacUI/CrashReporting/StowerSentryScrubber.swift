@@ -4,10 +4,12 @@ import Sentry
 /// Last-guardrail `beforeSend` scrubber for crash events.
 ///
 /// Four jobs, applied in order:
-/// 1. **Drop non-crash events** — the crash integration allowlist
-///    (`removeAllIntegrations` + `enableCrashHandler`) prevents non-crash
-///    integrations from installing; this is the defence-in-depth backstop for
-///    anything that slips through or a future SDK default adds.
+/// 1. **Drop non-crash events** — `StowerCrashReporting` disables every
+///    non-crash integration via individual `enable*=false` flags plus
+///    `enableSwizzling=false` and `enableCrashHandler=true` (the xcframework
+///    public API exposes no `options.integrations` allowlist — see A1). This
+///    `beforeSend` drop is the defence-in-depth backstop for anything that
+///    slips through that deny-list or a future SDK default adds.
 /// 2. **Rebuild `exceptions[].value`** (THE load-bearing step — spike A5,
 ///    verified 2026-06-29): KSCrash memory introspection promotes notable-address
 ///    strings (including message/contact text in C/CFString buffers) INTO
