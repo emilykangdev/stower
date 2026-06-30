@@ -66,18 +66,22 @@ Required GitHub secrets:
 - `DEVELOPER_ID_CERT_P12` — base64-encoded .p12 file
 - `DEVELOPER_ID_CERT_PASSWORD` — .p12 export password
 
-### P3 — App Store Connect API key for notarytool
+### P3 — Apple ID app-specific password for notarytool
+
+`notarytool` authenticates against the notary service with an Apple ID + an
+app-specific password (not an App Store Connect API key — chosen to avoid the
+App Store Connect API access-request gate and keep the credential trivially
+revocable). No `.p8`, no Key ID, no Issuer ID.
 
 ```bash
-# App Store Connect → Users and Access → Integrations → App Store Connect API
-# Create a key with Developer role. Download the .p8 file (one-time download).
-base64 -i AuthKey_<KeyID>.p8 | pbcopy
+# appleid.apple.com → Sign-In and Security → App-Specific Passwords → generate.
+# Team ID is the Developer ID team (2446N3925D); Apple ID is the developer account email.
 ```
 
 Required GitHub secrets:
-- `NOTARY_API_KEY_P8` — base64-encoded .p8 file
-- `NOTARY_KEY_ID` — the Key ID (10-character string)
-- `NOTARY_ISSUER_ID` — the Issuer ID (UUID from App Store Connect)
+- `NOTARY_APPLE_ID` — the Apple Developer account email
+- `NOTARY_APP_PASSWORD` — the app-specific password (plain string, NOT base64)
+- `NOTARY_TEAM_ID` — the Developer ID team ID (`2446N3925D`)
 
 ### P4 — DNS and GitHub Pages for appcast hosting
 
