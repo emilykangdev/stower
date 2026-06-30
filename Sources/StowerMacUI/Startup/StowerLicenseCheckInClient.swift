@@ -25,8 +25,8 @@ internal enum StowerCheckInResult: Sendable, Equatable {
     /// `409 fingerprint_mismatch` — the device changed (PAR-36 owns the real UX).
     case fingerprintMismatch
 
-    /// `503` / transport throw / undecodable — the server could not be reached;
-    /// carries the coarse PII-safe cause.
+    /// Transport throw / any non-success HTTP status / undecodable body — the
+    /// server could not produce a verdict; carries the coarse PII-safe cause.
     case unreachable(StowerLicenseUnreachableReason)
 }
 

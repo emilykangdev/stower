@@ -211,4 +211,83 @@ import Testing
         #expect(await gate.currentStatus(now: now) == .valid)
         #expect(unreachableSignals(reporter).isEmpty)
     }
+
+    @Test("check-in ok with an unauthorized file reports machineFileUnauthorized for .checkIn")
+    internal func checkInUnauthorizedReportsMachineFileUnauthorized() async throws {
+        let store = makeStore()
+        store.save(
+            lease(
+                key: "KEY",
+                id: "lic-1",
+                file: try machineFile(expiry: futureExpiry, codes: ["STOWER_TRIAL"])
+            )
+        )
+        // The server replies ok but with a file lacking STOWER_TRIAL/STOWER_V0; the
+        // fresh checkout fails to authorize this build before it can become .valid.
+        let badFile = try machineFile(expiry: futureExpiry, codes: ["STOWER_LEGACY"])
+        let reporter = StowerInMemoryAnalyticsReporter()
+        let client = SpyCheckInClient(checkIn: [.ok(machineFile: badFile)])
+        let gate = makeGate(client: client, store: store, reporter: reporter)
+
+        #expect(await gate.currentStatus(now: now) == .couldNotReach)
+        #expect(
+            unreachableSignals(reporter)
+                == [.init(reason: .machineFileUnauthorized, endpoint: .checkIn)]
+        )
+    }
+
+    @Test("mint with an unauthorized file reports machineFileUnauthorized for .mintTrial")
+    internal func mintUnauthorizedReportsMachineFileUnauthorized() async throws {
+        let badFile = try machineFile(expiry: futureExpiry, codes: ["STOWER_LEGACY"])
+        let reporter = StowerInMemoryAnalyticsReporter()
+        let client = SpyCheckInClient(
+            mint: [.minted(licenseKey: "K", licenseID: "lic-1", machineFile: badFile)]
+        )
+        let gate = makeGate(client: client, store: makeStore(), reporter: reporter)
+
+        #expect(await gate.currentStatus(now: now) == .couldNotReach)
+        #expect(
+            unreachableSignals(reporter)
+                == [.init(reason: .machineFileUnauthorized, endpoint: .mintTrial)]
+        )
+    }
+
+    @Test("check-in ok but a failed lease write reports localStoreFailure for .checkIn")
+    internal func checkInSaveFailureReportsLocalStoreFailure() async throws {
+        let file = try machineFile(expiry: futureExpiry, codes: ["STOWER_TRIAL"])
+        let seeded = try JSONEncoder().encode(lease(key: "KEY", id: "lic-1", file: file))
+        let store = StowerLicenseLeaseStore(
+            storage: FailingWriteLeaseStorage(seeded: seeded),
+            publicKeyHex: publicKeyHex
+        )
+        let reporter = StowerInMemoryAnalyticsReporter()
+        let client = SpyCheckInClient(checkIn: [.ok(machineFile: file)])
+        let gate = makeGate(client: client, store: store, reporter: reporter)
+
+        #expect(await gate.currentStatus(now: now) == .couldNotReach)
+        #expect(
+            unreachableSignals(reporter)
+                == [.init(reason: .localStoreFailure, endpoint: .checkIn)]
+        )
+    }
+
+    @Test("mint ok but a failed lease write reports localStoreFailure for .mintTrial")
+    internal func mintSaveFailureReportsLocalStoreFailure() async throws {
+        let file = try machineFile(expiry: futureExpiry, codes: ["STOWER_TRIAL"])
+        let store = StowerLicenseLeaseStore(
+            storage: FailingWriteLeaseStorage(),
+            publicKeyHex: publicKeyHex
+        )
+        let reporter = StowerInMemoryAnalyticsReporter()
+        let client = SpyCheckInClient(
+            mint: [.minted(licenseKey: "K", licenseID: "lic-1", machineFile: file)]
+        )
+        let gate = makeGate(client: client, store: store, reporter: reporter)
+
+        #expect(await gate.currentStatus(now: now) == .couldNotReach)
+        #expect(
+            unreachableSignals(reporter)
+                == [.init(reason: .localStoreFailure, endpoint: .mintTrial)]
+        )
+    }
 }

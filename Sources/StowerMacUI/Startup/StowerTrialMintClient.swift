@@ -14,8 +14,8 @@ internal enum StowerTrialMint: Sendable, Equatable {
     /// crashed claim is still inside the reclaim window) — retry shortly.
     case retryShortly
 
-    /// Transport throw / 5xx / undecodable body — the server could not be reached
-    /// for a verdict; carries the coarse PII-safe cause.
+    /// Transport throw / any non-success HTTP status / undecodable body — the
+    /// server could not produce a verdict; carries the coarse PII-safe cause.
     case unreachable(StowerLicenseUnreachableReason)
 }
 
