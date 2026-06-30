@@ -44,28 +44,34 @@ import Testing
         #expect(await client.mint(fingerprint: "fp") == .retryShortly)
     }
 
-    @Test("a transport throw is unreachable")
+    @Test("a transport throw is unreachable with the .transport reason")
     internal func unreachableOnThrow() async {
         let client = StowerTrialMintClient(
             functionBaseURL: baseURL,
             transport: { _ in throw URLError(.notConnectedToInternet) }
         )
-        #expect(await client.mint(fingerprint: "fp") == .unreachable)
+        #expect(await client.mint(fingerprint: "fp") == .unreachable(.transport))
     }
 
-    @Test("a 200 missing the machineFile is unreachable, never a half-minted license")
+    @Test("a non-200, non-503 status is unreachable carrying the HTTP status code")
+    internal func unreachableOnHTTPStatus() async throws {
+        let client = try client(status: 500, json: #"{"error":"boom"}"#)
+        #expect(await client.mint(fingerprint: "fp") == .unreachable(.httpStatus(500)))
+    }
+
+    @Test("a 200 missing the machineFile is unreachable (.decodeFailure), never half-minted")
     internal func unreachableOnPartialBody() async throws {
         let client = try client(status: 200, json: #"{"licenseKey":"KEY-1","licenseID":"lic-1"}"#)
-        #expect(await client.mint(fingerprint: "fp") == .unreachable)
+        #expect(await client.mint(fingerprint: "fp") == .unreachable(.decodeFailure))
     }
 
-    @Test("a 200 with empty fields is unreachable")
+    @Test("a 200 with empty fields is unreachable (.decodeFailure)")
     internal func unreachableOnEmptyFields() async throws {
         let client = try client(
             status: 200,
             json: #"{"licenseKey":"","licenseID":"","machineFile":""}"#
         )
-        #expect(await client.mint(fingerprint: "fp") == .unreachable)
+        #expect(await client.mint(fingerprint: "fp") == .unreachable(.decodeFailure))
     }
 
     @Test("the request posts only the fingerprint to the mint-trial route")

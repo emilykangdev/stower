@@ -40,7 +40,7 @@ internal final class SpyCheckInClient: StowerLicenseCheckInProviding, @unchecked
     internal func mint(fingerprint: String) async -> StowerTrialMint {
         lock.withLock {
             recordedMintFingerprints.append(fingerprint)
-            guard !mintResults.isEmpty else { return .unreachable }
+            guard !mintResults.isEmpty else { return .unreachable(.transport) }
             let index = min(mintIndex, mintResults.count - 1)
             mintIndex += 1
             return mintResults[index]
@@ -56,7 +56,7 @@ internal final class SpyCheckInClient: StowerLicenseCheckInProviding, @unchecked
             recordedCheckInCalls.append(
                 CheckInCall(licenseID: licenseID, fingerprint: fingerprint, licenseKey: licenseKey)
             )
-            guard !checkInResults.isEmpty else { return .unreachable }
+            guard !checkInResults.isEmpty else { return .unreachable(.transport) }
             let index = min(checkInIndex, checkInResults.count - 1)
             checkInIndex += 1
             return checkInResults[index]

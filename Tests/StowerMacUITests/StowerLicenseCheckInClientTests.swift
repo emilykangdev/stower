@@ -36,10 +36,10 @@ import Testing
         #expect(await checkIn(client) == .ok(machineFile: "MF"))
     }
 
-    @Test("200 ok missing the machineFile is .unreachable, never a false valid")
+    @Test("200 ok missing the machineFile is .unreachable(.decodeFailure), never a false valid")
     internal func okMissingFileIsUnreachable() async throws {
         let client = try client(status: 200, json: #"{"status":"ok"}"#)
-        #expect(await checkIn(client) == .unreachable)
+        #expect(await checkIn(client) == .unreachable(.decodeFailure))
     }
 
     @Test("200 expired maps to .trialExpired carrying the licenseID")
@@ -69,10 +69,10 @@ import Testing
         #expect(await checkIn(client) == .unknownLicense)
     }
 
-    @Test("a bare route/deploy 404 is .unreachable, never destroys the lease")
+    @Test("a bare route/deploy 404 is .unreachable(.httpStatus(404)), never destroys the lease")
     internal func bareRoute404IsUnreachable() async throws {
         let client = try client(status: 404, json: #"{"message":"Not Found"}"#)
-        #expect(await checkIn(client) == .unreachable)
+        #expect(await checkIn(client) == .unreachable(.httpStatus(404)))
     }
 
     @Test("409 maps to .fingerprintMismatch")
@@ -81,19 +81,19 @@ import Testing
         #expect(await checkIn(client) == .fingerprintMismatch)
     }
 
-    @Test("503 maps to .unreachable")
+    @Test("503 maps to .unreachable(.httpStatus(503))")
     internal func mapsRetryShortly() async throws {
         let client = try client(status: 503, json: #"{"status":"retry_shortly"}"#)
-        #expect(await checkIn(client) == .unreachable)
+        #expect(await checkIn(client) == .unreachable(.httpStatus(503)))
     }
 
-    @Test("a transport throw is .unreachable")
+    @Test("a transport throw is .unreachable(.transport)")
     internal func throwIsUnreachable() async {
         let client = StowerLicenseCheckInClient(
             functionBaseURL: baseURL,
             transport: { _ in throw URLError(.notConnectedToInternet) }
         )
-        #expect(await checkIn(client) == .unreachable)
+        #expect(await checkIn(client) == .unreachable(.transport))
     }
 
     @Test("the check-in POST carries JC5 headers and signs the exact body it sends")
