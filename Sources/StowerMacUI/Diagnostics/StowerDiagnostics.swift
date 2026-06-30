@@ -89,17 +89,19 @@ public enum StowerDiagnostics {
 
     /// Enables or disables all diagnostics backends and updates the Keychain cache.
     ///
-    /// Writes through to `StowerAnalytics.setEnabled(_:)` which owns the kill
-    /// latch. The crash backend is a no-op backend — Sentry cannot be stopped
-    /// mid-session once started (no `SentrySDK.close()` in the kill-switch path;
-    /// the guarantee is "never started for an opted-out user", JC3). Effective
-    /// next launch for crash; effective immediately for analytics events.
+    /// When disabling, calls `StowerCrashReporting.stop()` (which closes the
+    /// Sentry SDK) for a best-effort immediate halt. The primary guarantee remains
+    /// "never started for an opted-out user at launch" (JC3); mid-session close
+    /// is defence-in-depth so crashes after the toggle are not collected.
     ///
     /// The caller (Settings toggle / disclosure card) is responsible for pushing
     /// the change to the license record (`diagnostics_opt_out`) via the licensing
     /// workstream.
     public static func setEnabled(_ enabled: Bool) {
         StowerAnalytics.setEnabled(enabled)
+        if !enabled {
+            StowerCrashReporting.stop()
+        }
     }
 
     /// Reconciles the local Keychain cache against the license record's opt-out

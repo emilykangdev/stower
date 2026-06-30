@@ -15,9 +15,9 @@ import Sentry
 /// (A5, spike-verified 2026-06-29).
 ///
 /// `start(consent:)` is a no-op when consent is disabled — the crash handler
-/// is never installed for an opted-out user (JC3). Do not rely on
-/// `SentrySDK.close()` for the kill switch; don't-install is the testable
-/// guarantee.
+/// is never installed for an opted-out user (JC3). `stop()` calls
+/// `SentrySDK.close()` for mid-session opt-out, giving best-effort immediate
+/// halt in addition to the "never started" guarantee.
 ///
 /// No `setUser` call — v1 attaches no identity to crash reports (brief
 /// Decision 4). No `SentrySDK.capture*` call — v1 is crash-handler-only
@@ -34,7 +34,7 @@ internal enum StowerCrashReporting {
     private static let euDSN =
         "https://sentry_dsn_placeholder@o0.ingest.de.sentry.io/0"
 
-    // MARK: — Start
+    // MARK: — Start / stop
 
     /// Starts the Sentry crash handler when consent is enabled.
     ///
@@ -98,5 +98,19 @@ internal enum StowerCrashReporting {
             #endif
             // No setUser — v1 attaches no identity to crash reports (brief Decision 4).
         }
+    }
+
+    /// Stops the Sentry crash handler when the user opts out mid-session.
+    ///
+    /// Calls `SentrySDK.close()` to uninstall all integrations immediately.
+    /// The "never started for an opted-out launch" guarantee (JC3) remains the
+    /// primary gate; this provides best-effort immediate halt for mid-session
+    /// opt-out (so crashes after the toggle are not collected).
+    ///
+    /// A no-op if the SDK was never started (e.g. the user was already opted out
+    /// at launch — `SentrySDK.isEnabled` is `false` in that case).
+    internal static func stop() {
+        guard SentrySDK.isEnabled else { return }
+        SentrySDK.close()
     }
 }
