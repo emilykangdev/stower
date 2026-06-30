@@ -1,0 +1,391 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "messages-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Marketing version (e.g. 0.1.0) — dry-run only, no publish"
+        required: true
+        default: "0.0.0-dry"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-26
+    environment: release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90
+        with:
+          xcode-version: latest-stable
+
+      - name: Parse version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            RAW="${{ github.ref_name }}"
+            VERSION="${RAW#messages-v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Derive build number
+        id: build
+        env:
+          PAGES_BRANCH: gh-pages
+        run: |
+          PREV_BUILD=0
+          if git fetch origin "$PAGES_BRANCH" 2>/dev/null; then
+            APPCAST="$(git show "origin/$PAGES_BRANCH:messages/appcast.xml" 2>/dev/null || true)"
+            if [ -n "$APPCAST" ]; then
+              PREV_BUILD="$(echo "$APPCAST" \
+                | grep -Eo 'sparkle:version="[0-9]+"' \
+                | grep -Eo '[0-9]+' \
+                | sort -n \
+                | tail -1 \
+                || echo "0")"
+              PREV_BUILD="${PREV_BUILD:-0}"
+              PREV_ITEM_COUNT="$(echo "$APPCAST" | grep -c '<item>' || echo "0")"
+            fi
+          fi
+          BUILD="$((PREV_BUILD + 1))"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "prev_build=$PREV_BUILD" >> "$GITHUB_OUTPUT"
+          echo "prev_item_count=${PREV_ITEM_COUNT:-0}" >> "$GITHUB_OUTPUT"
+          echo "Build number: $BUILD (previous: $PREV_BUILD)"
+
+      - name: Import Developer ID certificate to temp keychain
+        env:
+          P12_BASE64: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/release-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/cert.p12" \
+            -k "$KEYCHAIN_PATH" \
+            -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security list-keychains -d user -s "$KEYCHAIN_PATH" "$(security list-keychains -d user | tr -d '"')"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          rm "$RUNNER_TEMP/cert.p12"
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
+
+      - name: Archive
+        run: |
+          ARCHIVE_PATH="$RUNNER_TEMP/StowerMac.xcarchive"
+          xcodebuild archive \
+            -project StowerMac/StowerMac.xcodeproj \
+            -scheme StowerMac \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -archivePath "$ARCHIVE_PATH" \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.build.outputs.build }}" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application"
+          echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
+
+      - name: Export archive
+        run: |
+          EXPORT_DIR="$RUNNER_TEMP/export"
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_DIR" \
+            -exportOptionsPlist Scripts/release/ExportOptions.plist
+          echo "EXPORT_DIR=$EXPORT_DIR" >> "$GITHUB_ENV"
+
+      - name: Discover exported app name
+        run: |
+          FULL_PRODUCT_NAME="$(xcodebuild \
+            -project StowerMac/StowerMac.xcodeproj \
+            -scheme StowerMac \
+            -configuration Release \
+            -showBuildSettings 2>/dev/null \
+            | awk '/[[:space:]]FULL_PRODUCT_NAME = /{print $3}')"
+          APP_PATH="$EXPORT_DIR/$FULL_PRODUCT_NAME"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "ERROR: expected app at $APP_PATH — FULL_PRODUCT_NAME=$FULL_PRODUCT_NAME" >&2
+            ls "$EXPORT_DIR" >&2
+            exit 1
+          fi
+          echo "APP_PATH=$APP_PATH" >> "$GITHUB_ENV"
+          echo "FULL_PRODUCT_NAME=$FULL_PRODUCT_NAME" >> "$GITHUB_ENV"
+          echo "App path: $APP_PATH"
+
+      - name: Pre-notarize gate — hardened runtime + Developer ID identity
+        run: |
+          CS_INFO="$(codesign -dvvv "$APP_PATH" 2>&1)"
+          echo "$CS_INFO"
+          EXPECTED_RUNTIME="runtime"
+          EXPECTED_IDENTITY="Developer ID Application"
+          if ! echo "$CS_INFO" | grep -q "$EXPECTED_RUNTIME"; then
+            echo "ERROR: hardened runtime flag not found in codesign output." >&2
+            echo "Expected to find: $EXPECTED_RUNTIME" >&2
+            exit 1
+          fi
+          if ! echo "$CS_INFO" | grep -q "$EXPECTED_IDENTITY"; then
+            echo "ERROR: Developer ID Application identity not found in codesign output." >&2
+            echo "Expected to find: $EXPECTED_IDENTITY" >&2
+            exit 1
+          fi
+          echo "Runtime and identity gate: PASSED"
+
+      - name: Pre-notarize gate — Sparkle.framework signature (no --deep)
+        run: |
+          SPARKLE_FW="$APP_PATH/Contents/Frameworks/Sparkle.framework"
+          if [ ! -d "$SPARKLE_FW" ]; then
+            echo "ERROR: Sparkle.framework not found at $SPARKLE_FW" >&2
+            exit 1
+          fi
+          codesign --verify --strict "$SPARKLE_FW"
+          echo "Sparkle.framework signature gate: PASSED"
+
+      - name: Pre-notarize gate — SUFeedURL in built Info.plist
+        run: |
+          BUILT_PLIST="$APP_PATH/Contents/Info.plist"
+          EXPECTED_URL="https://updates.stower.app/messages/appcast.xml"
+          ACTUAL_URL="$(/usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$BUILT_PLIST" 2>/dev/null || true)"
+          if [ "$ACTUAL_URL" != "$EXPECTED_URL" ]; then
+            echo "ERROR: SUFeedURL mismatch in built Info.plist." >&2
+            echo "  Expected: $EXPECTED_URL" >&2
+            echo "  Actual:   ${ACTUAL_URL:-<absent>}" >&2
+            exit 1
+          fi
+          if /usr/libexec/PlistBuddy -c "Print :SUEnableAutomaticChecks" "$BUILT_PLIST" 2>/dev/null; then
+            echo "ERROR: SUEnableAutomaticChecks must NOT be set in Info.plist (consent-first UX)." >&2
+            exit 1
+          fi
+          echo "Info.plist gates: PASSED (SUFeedURL correct, SUEnableAutomaticChecks absent)"
+
+      - name: Zip (pre-notarize, before staple)
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ZIP_NAME="StowerMac-${VERSION}.zip"
+          ZIP_PATH="$RUNNER_TEMP/$ZIP_NAME"
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+          echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+
+      - name: Notarize
+        id: notarize
+        env:
+          NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          KEY_FILE="$RUNNER_TEMP/notary_key.p8"
+          echo "$NOTARY_API_KEY_P8" > "$KEY_FILE"
+          SUBMISSION_OUTPUT="$(xcrun notarytool submit "$ZIP_PATH" \
+            --key "$KEY_FILE" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --wait \
+            --output-format json)"
+          rm "$KEY_FILE"
+          echo "$SUBMISSION_OUTPUT"
+          SUBMISSION_ID="$(echo "$SUBMISSION_OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || true)"
+          echo "submission_id=$SUBMISSION_ID" >> "$GITHUB_OUTPUT"
+          STATUS="$(echo "$SUBMISSION_OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || true)"
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "ERROR: Notarization status is '$STATUS', expected 'Accepted'." >&2
+            exit 1
+          fi
+          echo "Notarization: ACCEPTED (id=$SUBMISSION_ID)"
+
+      - name: Dump notarytool log on failure
+        if: failure() && steps.notarize.outputs.submission_id != ''
+        env:
+          NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          KEY_FILE="$RUNNER_TEMP/notary_key_log.p8"
+          echo "$NOTARY_API_KEY_P8" > "$KEY_FILE"
+          xcrun notarytool log "${{ steps.notarize.outputs.submission_id }}" \
+            --key "$KEY_FILE" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" || true
+          rm "$KEY_FILE"
+
+      - name: Staple
+        run: |
+          xcrun stapler staple "$APP_PATH"
+          echo "Staple: DONE"
+
+      - name: Re-zip stapled app (single artifact)
+        run: |
+          ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
+          echo "Stapled zip: $ZIP_PATH"
+
+      - name: Post-notarize gate — Gatekeeper + stapler validate
+        run: |
+          spctl -a -vvv "$APP_PATH" 2>&1
+          if ! spctl -a -vvv "$APP_PATH" 2>&1 | grep -q "accepted"; then
+            echo "ERROR: spctl -a -vvv did not produce 'accepted'." >&2
+            exit 1
+          fi
+          xcrun stapler validate "$APP_PATH"
+          echo "Post-notarize gates: PASSED"
+
+      - name: Delete temp keychain
+        if: always()
+        run: |
+          if [ -n "${KEYCHAIN_PATH:-}" ] && security list-keychains | grep -q "$KEYCHAIN_PATH"; then
+            security delete-keychain "$KEYCHAIN_PATH"
+            echo "Temp keychain deleted."
+          fi
+
+      - name: Stop here for dry-run (workflow_dispatch)
+        if: github.ref_type != 'tag'
+        run: |
+          echo "Dry-run complete: stapled artifact at $ZIP_PATH"
+          echo "No GitHub Release or appcast changes made."
+          exit 0
+
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        run: |
+          NOTES_FILE="$RUNNER_TEMP/release_notes.md"
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "## Stower ${VERSION}" > "$NOTES_FILE"
+          echo "" >> "$NOTES_FILE"
+          echo "See [release notes](https://updates.stower.app/messages/notes/${VERSION}.html) for details." >> "$NOTES_FILE"
+          gh release create "${{ github.ref_name }}" \
+            "$ZIP_PATH" \
+            --title "Stower $VERSION" \
+            --notes-file "$NOTES_FILE"
+          ASSET_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$ZIP_NAME"
+          echo "ASSET_URL=$ASSET_URL" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Sign update and amend appcast
+        if: github.ref_type == 'tag'
+        env:
+          SPARKLE_EDDSA_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
+          PAGES_BRANCH: gh-pages
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD="${{ steps.build.outputs.build }}"
+          PREV_ITEM_COUNT="${{ steps.build.outputs.prev_item_count }}"
+
+          brew install --cask sparkle 2>/dev/null || true
+          SIGN_UPDATE="$(find /Applications -name 'sign_update' -type f 2>/dev/null | head -1 || \
+            find /usr/local -name 'sign_update' -type f 2>/dev/null | head -1 || \
+            which sign_update 2>/dev/null || echo "")"
+          if [ -z "$SIGN_UPDATE" ]; then
+            echo "ERROR: sign_update not found — install Sparkle release tools." >&2
+            exit 1
+          fi
+
+          ED_SIGNATURE="$(echo "$SPARKLE_EDDSA_PRIVATE_KEY" | "$SIGN_UPDATE" "$ZIP_PATH" --account Stower)"
+          if [ -z "$ED_SIGNATURE" ]; then
+            echo "ERROR: sign_update produced an empty EdDSA signature." >&2
+            exit 1
+          fi
+
+          FILE_SIZE="$(stat -f '%z' "$ZIP_PATH")"
+          ROLLOUT_INTERVAL="86400"
+          NOTES_URL="https://updates.stower.app/messages/notes/${VERSION}.html"
+          PUB_DATE="$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin "$PAGES_BRANCH"
+          git worktree add "$RUNNER_TEMP/pages" "origin/$PAGES_BRANCH"
+
+          APPCAST_PATH="$RUNNER_TEMP/pages/messages/appcast.xml"
+          NOTES_DIR="$RUNNER_TEMP/pages/messages/notes"
+          mkdir -p "$(dirname "$APPCAST_PATH")" "$NOTES_DIR"
+
+          if [ ! -f "$APPCAST_PATH" ]; then
+            cat > "$APPCAST_PATH" <<'APPCAST_HEADER'
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Stower Updates</title>
+    <link>https://updates.stower.app/messages/appcast.xml</link>
+    <description>Stower for Messages update feed</description>
+    <language>en</language>
+  </channel>
+</rss>
+APPCAST_HEADER
+          fi
+
+          NEW_ITEM="    <item>
+      <title>Stower ${VERSION}</title>
+      <pubDate>${PUB_DATE}</pubDate>
+      <sparkle:releaseNotesLink>${NOTES_URL}</sparkle:releaseNotesLink>
+      <sparkle:version>${BUILD}</sparkle:version>
+      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+      <sparkle:phasedRolloutInterval>${ROLLOUT_INTERVAL}</sparkle:phasedRolloutInterval>
+      <enclosure
+        url=\"${ASSET_URL}\"
+        length=\"${FILE_SIZE}\"
+        type=\"application/octet-stream\"
+        sparkle:edSignature=\"${ED_SIGNATURE}\"
+      />
+    </item>"
+
+          python3 - <<PYEOF
+import sys
+appcast_path = "$APPCAST_PATH"
+new_item = """$NEW_ITEM"""
+with open(appcast_path, 'r') as f:
+    content = f.read()
+insert_before = '</channel>'
+if insert_before not in content:
+    print("ERROR: malformed appcast — </channel> not found", file=sys.stderr)
+    sys.exit(1)
+updated = content.replace(insert_before, new_item + '\n  ' + insert_before)
+with open(appcast_path, 'w') as f:
+    f.write(updated)
+print("Appcast amended successfully.")
+PYEOF
+
+          NEW_ITEM_COUNT="$(grep -c '<item>' "$APPCAST_PATH" || echo "0")"
+          if [ "$NEW_ITEM_COUNT" -lt "$PREV_ITEM_COUNT" ]; then
+            echo "ERROR: appcast item count decreased from $PREV_ITEM_COUNT to $NEW_ITEM_COUNT — feed must never shrink." >&2
+            exit 1
+          fi
+          echo "Appcast item count: $NEW_ITEM_COUNT (previous: $PREV_ITEM_COUNT)"
+
+          NOTES_HTML="$NOTES_DIR/${VERSION}.html"
+          cat > "$NOTES_HTML" <<HTML
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Stower ${VERSION}</title></head>
+<body>
+<h2>Stower ${VERSION}</h2>
+<p>See the <a href="https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}">GitHub Release</a> for details.</p>
+</body>
+</html>
+HTML
+
+          cd "$RUNNER_TEMP/pages"
+          git add messages/appcast.xml "messages/notes/${VERSION}.html"
+          git commit -m "release: Stower Messages ${VERSION} (build ${BUILD})"
+          git push origin "HEAD:$PAGES_BRANCH"
+          echo "Appcast pushed to $PAGES_BRANCH."

@@ -12,10 +12,22 @@ import SwiftUI
 @main
 struct StowerMacApp: App {
     @NSApplicationDelegateAdaptor(StowerAppDelegate.self) private var appDelegate
+    @StateObject private var updaterController = StowerUpdaterController()
 
     var body: some Scene {
         WindowGroup {
             StowerRootContainer(flusher: appDelegate.flusher)
+        }
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    updaterController.checkForUpdates()
+                }
+            }
+        }
+
+        Settings {
+            StowerUpdaterSettingsView(controller: updaterController)
         }
     }
 }
