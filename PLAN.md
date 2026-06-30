@@ -6,6 +6,29 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-06-30: **Sentry crash reporting — crash-only, consent-gated, EU-region, PII-scrubbed (`Sources/StowerMacUI/CrashReporting/`, `Diagnostics/`).**
+  New umbrella `StowerDiagnostics` facade (`public enum`) unifies crash + analytics behind one consent gate. `StowerCrashReporting` (the only `SentrySDK.start` site): all non-crash integrations disabled, EU DSN placeholder (OPS-GATED), `stop()` for mid-session opt-out. `StowerSentryScrubber`: drops non-crash events, rebuilds `exception.value` from content-free structured fields (A5), redacts `/Users/<name>/` in `frame.fileName`/`frame.package`/`debugMeta.codeFile`, backstop-drops hard-stop tokens. `StowerAnalyticsConsent` → **`StowerDiagnosticsConsent`** (keychain service strings unchanged). Precheck guards 6l (Sentry import allowlist 4 files), 6m (`options.debug` `#if DEBUG` only), 6n (no `\(` in assertion messages). 22 new Swift tests. Codex loop: 5 iterations, 4 P1/P2 fixed, 2 accepted (placeholder DSN OPS-GATED; re-enable-no-restart design constraint). **OPS-GATED before crash reports reach Sentry:** real EU DSN, dSYM upload, auth token, DPA, free-tier.
+- 2026-06-29: **Anonymous funnel analytics — TelemetryDeck-backed, default-on with one-click off (`Sources/StowerMacUI/Analytics/`).**
+  New app-side subsystem under `StowerMacUI`: `StowerAnalytics` (the `@MainActor` facade — public
+  `initialize()` / `reportAppLaunched()` / `reportSessionEnded()`; internal `report` / `setEnabled` /
+  `reconcileLicenseConsent`), `StowerAnalyticsConsent` (+ the in-memory `StowerAnalyticsKillLatch`),
+  `StowerAnalyticsIdentity` (+ `StowerAnalyticsKeychainKeys` and the shared `AnalyticsInstallRecord`),
+  `StowerAnalyticsEvent` (typed PII-safe taxonomy), `StowerAnalyticsReporting` (+ `StowerNoOpAnalyticsReporter`
+  / `StowerInMemoryAnalyticsReporter`), `StowerTelemetryDeckReporter` (the ONLY TelemetryDeck importer —
+  enforced by precheck **6k**), and `StowerAnalyticsBucket`. **Identity** = a random per-install Keychain
+  `UUID` (anonymous, not hardware/IDFV/IDFA), double-hashed by TelemetryDeck (salt + SHA-256) before it
+  leaves the device. **Kill switch** = never `initialize()` when consent is off (the Swift SDK has no
+  `stop()`); `setEnabled(false)` also trips `StowerAnalyticsKillLatch` so every reporter fails closed in
+  memory even if the Keychain write failed. **Default-on with disclosure**: the `StowerAnalyticsConsentCard`
+  appears once after ~60s of foreground board time (JC7), and a Privacy pane (`StowerSettingsView` →
+  `StowerPrivacySettingsView`) in a new `Settings { }` scene gives one-click off. Consent is license-scoped
+  ("off wins", reconciled against `diagnostics_opt_out` on check-in, JC8). `StowerMacApp` calls
+  `StowerAnalytics.initialize()` + `reportAppLaunched()` in `init`, and `reportSessionEnded()` in
+  `applicationShouldTerminate` (synchronous, no `await`). `StowerStartupModel.commit` emits the startup
+  funnel (`hardware_checked`, `license_gate_reached`, `fda_permission_requested`, `fda_permission_resolved`
+  at `.connectedPreparingBoard` only, `board_reached`); board view models emit `board_item_clicked` /
+  `feature_used`. Rationale captured in `Docs/Analytics.md`; `Docs/MacAppContract.md` updated for the new
+  Settings scene + launch/quit analytics hooks.
 - 2026-06-25: **Supabase licensing backend — the Edge Function is now the licensing brain (mint + check-in + webhook).**
   Decision (Emily, firm, 2-way door): the licensing brain is the existing `supabase/functions/license/`
   Edge Function, **not** a new Railway service (Railway plan superseded). Extended the function in place:

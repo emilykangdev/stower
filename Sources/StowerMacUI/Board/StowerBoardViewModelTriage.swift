@@ -32,6 +32,7 @@ extension StowerBoardViewModel {
     ///
     /// Kicks off the async work; the view calls this directly from its action closures.
     internal func dismiss(_ rows: Set<StowerBoardRow>) {
+        analyticsReporter.report(.boardItemClicked(itemType: "message_row_dismiss"))
         enqueueTriage { await self.performDismiss(rows) }
     }
 

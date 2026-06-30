@@ -20,6 +20,17 @@ struct StowerMacApp: App {
     /// (I6). Both ⌘Z and the draining-bar Undo button call `undo()` on this instance.
     private let undoManager = UndoManager()
 
+    init() {
+        // Initialize all diagnostics backends (crash reporting + analytics)
+        // behind the shared consent gate. Sentry crash handler starts first
+        // (earliest crash coverage, JC3); TelemetryDeck follows. When consent is
+        // off, initialize() is a complete no-op — no SDK init, no crash handler,
+        // no automatic Session.started (A3/JC3).
+        StowerDiagnostics.initialize()
+        // app_launched is gated by the analytics facade; no-op if disabled.
+        StowerAnalytics.reportAppLaunched()
+    }
+
     var body: some Scene {
         WindowGroup {
             StowerRootContainer(flusher: appDelegate.flusher, undoManager: undoManager)
@@ -39,6 +50,18 @@ struct StowerMacApp: App {
                 Button("Redo") { performRedo() }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
             }
+            #if DEBUG
+            // DEBUG-only: force a crash to verify the Sentry capture → next-launch
+            // upload → EU dashboard pipeline. Never compiled into a release build.
+            CommandMenu("Debug") {
+                Button("Force Crash (Sentry test)") {
+                    StowerDiagnostics.debugForceCrash()
+                }
+            }
+            #endif
+        }
+        Settings {
+            StowerSettingsView()
         }
     }
 
@@ -106,6 +129,10 @@ final class StowerAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {
+        // Emit session_ended synchronously before draining drafts. The SDK buffers
+        // this signal to disk and flushes on next launch (A2/Gotcha 7) — do NOT
+        // await here, and do NOT call requestImmediateSync(), which would delay quit.
+        StowerAnalytics.reportSessionEnded()
         // Drain pending draft writes, then let the app quit. `.terminateLater` keeps
         // the app alive until `reply(toApplicationShouldTerminate:)`.
         Task { @MainActor in

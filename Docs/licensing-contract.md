@@ -5,8 +5,13 @@
 > against. Grounded in source; updated when the **contract** changes, not when
 > code changes. If a plan describes a seam shape that contradicts this file, the
 > plan is wrong — not this file.
+>
+> **Verification lives here too:** the test-coverage map (§9) and the smoke runbook
+> (§10) were folded into this file (v1.20). They are operational docs — not part of
+> the version-pinned contract (§1–§8) — and may change without a contract version
+> bump. Plans still sign against the §1–§8 contract version only.
 
-**Version:** 1.19 · **Last updated:** 2026-06-26 · **Canonical home:** this file.
+**Version:** 1.20 · **Last updated:** 2026-06-30 · **Canonical home:** this file.
 
 When the contract changes: edit here, bump the version, record the change in
 §Changelog. Plans reference this file by version number.
@@ -644,3 +649,239 @@ vaporware. Plans must not violate these.
 | 1.17 | 2026-06-26 | **Documented the trial-dedupe abuse-resistance guarantee** in §5 (cont): `mintTrial` is idempotent on the device fingerprint (`device_trials.fingerprint` PK), so the JC6 `unknown_license` self-heal returns a device's *existing* license — clearing or tampering the local lease **cannot reset the trial clock** (a forged lease fails the `load()` signature check, I6). States the guarantee is **per-device, not per-human**, and that v0 accepts the residual reset vectors (a second Mac / `IOPlatformUUID` spoof / the Keychain fingerprint fallback) with hardening deferred to **PAR-36** (G6) before paid sales — a two-way-door call (no paid users; premature to harden pre-launch). No code/behavior change — documents existing `mintTrial` + fingerprint-PK behavior; the bypass procedures are intentionally kept out of the repo (local notes only). Grounded in `handlers.ts` (`mintTrial`), `20260618120000_license_core.sql` (`device_trials` PK), `StowerDeviceFingerprint.swift`. |
 | 1.18 | 2026-06-26 | Removed the unsupported manual key activation fallback from the intended Plan B seam. The app-facing Edge Function routes are `/mint-trial`, `/check-in`, `/ls-webhook`, and `/health`; none can turn an arbitrary pasted key into a persisted signed lease, and the Mac app must not call Keygen directly. Plan B therefore deletes the old Lemon Squeezy activation UI/seam and keeps purchase recovery to Buy + explicit Re-check. Also corrected the `/check-in` status table for `unknown_license`: a stored-lease 404 clears the stale lease and re-enters the shared mint flow (JC6), rather than mapping directly to `.needsTrialOnline`. |
 | 1.19 | 2026-06-26 | **Plan B landed — the Swift gate is wired to the Edge Function.** The §5b startup seam is now as-built: `StowerLicenseGating` is `hasLease()` + `currentStatus(now:)` (the old `activate`/`persistLicense`/manual-key path is deleted); new `StowerCheckInSignature` reproduces the JC5 parity vector (`fixtures/jc5-signature-vector.json`) byte-for-byte; new `StowerLicenseCheckInClient` (built on `StowerTrialMintClient`) does mint + JC5-signed `/check-in` (mapping the §5 status table) + a pure LS checkout-URL builder carrying `checkout[custom][license_id]`; new `StowerLicenseGate` composes the check-in client + `StowerLicenseLeaseStore` + `StowerDeviceFingerprint` (mint-on-first-run, reachable check-in stores the fresh signed file, offline fallback bounded by `meta.expiry` (I14) + the signed `STOWER_TRIAL`/`STOWER_V0` OR (I5), JC6 `unknown_license` self-heal). `StowerTrialMintClient` now decodes `licenseKey`/`machineFile`; `StowerLicenseLeaseStore` gained `offlineAuthority(now:)` decoding the signed `enc` payload. `StowerStartupState` cases keep their names with new payloads (`needsLicense(StowerLicenseEntryContext)`, `checkingLicense(StowerCheckingLicenseReason)`); `StowerRootView` builds `StowerLicenseGate()`. Deleted: `StowerLemonSqueezyClient`, `StowerLemonSqueezyLicenseGate`, `StowerLicenseStore`/`StowerStoredLicense` + their tests. Remaining future (all G10/prod ops): the real `keygenPublicKeyHex`, the Edge Function base URL, and the Lemon Squeezy product/variant checkout URL (the placeholder `…/checkout` does not resolve to a buyable product — Buy completes only once these are real; zero paid users until then), plus the PAR-36 fingerprint reversal. Grounded in the new Swift sources + `fixtures/jc5-signature-vector.json`. |
+| 1.20 | 2026-06-30 | **Docs-structure only — consolidated the licensing doc set from 4 files to 2.** Folded `licensing-test-coverage.md` → §9 and `license-smoke.md` → §10 into this file (their internal section numbers became §9.1–§9.3 and §10.1–§10.7; cross-refs renumbered). `licensing.md` (customer-facing terms) stays separate by audience. No contract/invariant/seam/model change — plans signed against ≤1.19 remain valid. Repointed the two external inbound refs: `EnvironmentVariables.md` (was `licensing-test-coverage.md` → now `licensing-contract.md` §9) and `StowerLicenseDebugArguments.swift` (was `Docs/license-smoke.md` → now `Docs/licensing-contract.md` §10). |
+
+---
+
+## 9. Test coverage map
+
+> Operational doc folded in at v1.20 (was `licensing-test-coverage.md`). Not part of
+> the version-pinned contract (§1–§8). The step-by-step *how-to* for the manual legs
+> is §10 (the smoke runbook below).
+
+What is verified automatically, what a human verifies by hand on a real build, and
+what **cannot** be automated for the trial → upgrade → expiry lifecycle. This is the
+coverage *map*; the step-by-step *how-to* for the manual legs is §10.
+
+The lifecycle is a revenue + trust boundary (a bug means we don't get paid, or we
+wrongly lock out a paying customer), so the cheap high-value layers — the server
+state machine, the webhook signature gate, and the pure client levers — are
+automated, and only the irreducibly-manual legs (on-screen expiry, a real payment)
+stay human.
+
+### 9.1 Manual Release checklist (a human, on a real build)
+
+- **The debug levers are absent in Release.** A Release archive ignores
+  `--fingerprint` / `--clear-lease-on-start` — the `StowerLicenseDebugArguments`
+  seam is `#if DEBUG`-only and compile-stripped (I-H5/I-H11). Confirm a Release
+  build does not react to them.
+- **The 60-second staging trial expires on-screen** → the `StowerLicenseEntryView`
+  `.trialExpired` screen, and the trial badge disappears (I-H8). See §10.5.
+- **A one-time real Lemon Squeezy payment upgrades the license** (A3) — board gear
+  menu → "Buy Stower v0" → test-mode checkout → webhook upgrade. See §10.6.
+- **The launch-arg flow only works via the Xcode scheme / `open --args`** — a
+  Finder/Dock double-click drops the args. See §10.1.
+- **The badge view-visibility matrix** (board overlay × gear-menu enable/disable ×
+  dismissal) — verified by eye; this repo forbids ViewInspector/XCUITest, so it is
+  not on the automated tier.
+
+### 9.2 What IS automated
+
+- **`Scripts/precheck.sh`** (every commit): swift-format, swiftlint, `swift build`,
+  `swift test`, the Deno license tests, and the static source guards —
+  **`6h`** (`StowerLicenseDebugArguments` is `#if DEBUG`-contained, I-H5),
+  **`6i`** (`/health` calls `trialDurationHealthFields`, I-H10),
+  **`6j`** (no `DEBUG` in any Xcode **Release** config, I-H11).
+- **`.github/workflows/ci.yml`**: `swift build -c release` — a Release reference to a
+  `#if DEBUG`-only symbol is a hard compile error (the authoritative I-H5 gate; the
+  `6h` source guard is the fast local canary).
+- **Deno `config.test.ts`**: `trialDurationMs` (I-H1..I-H4 — default / `60`→`60000` /
+  empty·`abc`·`-5`·`0`→default / not-in-`REQUIRED_ENV`) and `trialDurationHealthFields`
+  (I-H10 — default omits the field, non-default surfaces it + a warning).
+- **Deno `index.test.ts`**: the webhook **signature gate** via the real extracted
+  `verifyLemonSqueezySignature` (I-H9 — a genuine HMAC `order_created` upgrades; a
+  tampered body is `401` with no money-path side effects), plus the existing
+  upgrade-logic / idempotent-replay coverage.
+- **Swift `StowerLicenseDebugArgumentsTests`**: the parser matrix (I-H7 — dangling /
+  flag-eating / empty / whitespace / duplicate `--fingerprint` refuse; unknown args
+  ignored) and the hashed-fingerprint invariant (I-H6 — only `SHA-256(value)` ever
+  leaves the device).
+- **Swift `StowerLicenseGateTests` / `StowerLicenseLeaseStoreTests` /
+  `StowerTrialBadgeViewTests`**: the badge's pure/model branches (I-H12 —
+  `endLabel(for:)` formatting, `trialExpiry(forMachineFile:)` signature-fail,
+  `trialBadge()` on an unloadable lease, plain-ISO parse) and the
+  `EXPIRED → .trialExpired` mapping (`expiredMapsToTrialExpired`).
+- **The `keygen-integration` real-CE tier** (`Scripts/Keygen/integration`, CI-only):
+  exercises a real Keygen CE for the mint/upgrade attribute contract.
+
+### 9.3 What CANNOT be automated (by design)
+
+These have **no injection seam**, so forcing coverage would mean a brittle,
+global-mutating test — stated here so no one writes one:
+
+- **The on-screen expiry observation** (I-H8) — the no-arg `StowerLicenseGate.init()`
+  reads `CommandLine.arguments` + builds a real Keychain-backed store; only the live
+  UI shows the `.trialExpired` screen.
+- **The real Lemon Squeezy payment money path** (A3) — a one-time test-mode purchase.
+- **The `init()` glue + the `trialDurationMs` call site** — the gate wiring
+  (`clearLeaseOnStart → leaseStore.clear()`, the fingerprint pin, the
+  `.failure → stderr + exit` refusal) and `index.ts`'s `trialDurationMs(...)` call
+  (the Deno test stubs `createTrialLicense`) have no injection point. Covered by the
+  runbook, not a unit test.
+- **Release-archive QA** — that the shipped binary behaves correctly (levers absent,
+  `production` config pinned).
+
+---
+
+## 10. Smoke runbook — trial → expiry → upgrade
+
+> Operational doc folded in at v1.20 (was `license-smoke.md`). Not part of the
+> version-pinned contract (§1–§8).
+
+A from-cold, runnable-in-one-sitting checklist for the revenue-critical licensing
+lifecycle. The **60-second expiry smoke** needs **zero Lemon Squeezy setup** and is
+runnable today; the **real-payment smoke** is a separate, LS-gated section so it
+never blocks the expiry test.
+
+This is the step-by-step *how-to*. For the bird's-eye **coverage map** (what's
+automated vs. manual vs. can't-be-automated) see §9 above. For the env-var
+reference see [`EnvironmentVariables.md`](./EnvironmentVariables.md).
+
+> **Secrets:** this runbook names env-var **names** and LS test-mode references
+> only — never a secret value or real customer data.
+
+### 10.1 How the launch args actually reach the app (the DX gotcha)
+
+`StowerMac` is a SwiftUI `@main` app in `StowerMac/StowerMac.xcodeproj`. The DEBUG
+launch levers (`StowerLicenseDebugArguments`, `#if DEBUG` only) are read from
+`CommandLine.arguments` in `StowerLicenseGate.init()`. So:
+
+- **`swift run` does NOT launch the app** — it builds SPM products, not the Xcode
+  app target. Use Xcode or `open`.
+- **A Finder/Dock double-click drops the args silently** — you'll get a default
+  launch with no fingerprint pin and wonder why expiry never reproduces.
+
+Pick one of these two paths:
+
+- **Xcode scheme (recommended for iterating):** Product → Scheme → Edit Scheme →
+  Run → **Arguments** → *Arguments Passed On Launch* → add `--fingerprint dev-1`
+  (and `--clear-lease-on-start` only when you want a fresh mint). ⚠️ Scheme args
+  **persist across runs** — remove `--clear-lease-on-start` before the expiry test.
+- **`open --args` (cold launch only):**
+  `open /path/to/StowerMac.app --args --fingerprint dev-1`
+  (add `--clear-lease-on-start` for a fresh mint). `--args` is honored only when
+  `open` actually launches the app cold; if it's already running, quit it first.
+
+A **malformed** known flag (e.g. `--fingerprint` with no value) makes the DEBUG
+build refuse to start with `stower: --fingerprint requires a value …` on stderr —
+that's the deterministic refusal, not a crash. An **unknown** arg is ignored.
+
+### 10.2 Flag cheat-sheet
+
+| Goal | Flags | Effect |
+|------|-------|--------|
+| **Observe expiry** | `--fingerprint <v>` only (NO `--clear-lease-on-start`) | Holds one identity; the stored lease survives relaunch so `/check-in` reports `expired`. |
+| **Fresh trial** | `--fingerprint <v>` **+ `--clear-lease-on-start`** (one launch) | Bump `<v>` AND clear once: clears the lease so the next `currentStatus` mints a new trial under the new identity. |
+| ⚠️ Bump alone | `--fingerprint <newV>` (lease still stored) | **NOT a fresh trial.** `/check-in` sends the old `licenseID` with the new fingerprint → server `fingerprint_mismatch` (`handlers.ts`) → app degrades to `.couldNotReach`. |
+
+**Troubleshooting:** expiry behaving oddly → check the scheme isn't still passing
+`--clear-lease-on-start`; the canonical expiry smoke wants it **OFF** on the
+relaunch so it exercises the stored-lease `/check-in` path. (Leaving it on does not
+*hide* expiry — with the same held fingerprint, mint also returns `.trialExpired`
+from the server's reused expired row, in `StowerLicenseGate.mintFlow(now:)` — but it
+routes through mint and re-mints every launch, which is not the canonical path.)
+
+### 10.3 Preflight — reaching the board
+
+The license gate runs only **after** the earlier startup gates pass
+(`StowerStartupModel`: Apple-Intelligence availability → license → Messages/FDA).
+On a cold staging Mac you can be blocked before ever seeing licensing. Clear these
+first so the smoke runs in one sitting:
+
+1. **Apple Intelligence available** — macOS 26 + Apple Intelligence on (the model
+   availability gate, B-I11) — else you land on `StowerModelUnavailableView`.
+2. **Full Disk Access** granted to the app (Messages/`chat.db` load) — else the FDA
+   onboarding pane blocks before the board.
+3. **Messages** has at least loaded — the board renders after Messages/FDA succeed.
+
+### 10.4 "Is the harness armed?" — check BEFORE the 65s wait
+
+There is no logging in `StowerMacUI` (precheck 6g), so the **startup route UI is the
+readout**. Watch `StowerCheckingView`'s sub-label
+(`StowerCheckingView.subLabel`):
+
+- A **clear-mint first launch** commits `.checkingLicense(.startingTrial)` →
+  **"Starting your free trial…"**.
+- A **relaunch on the same held fingerprint** commits `.checkingLicense(.revalidating)`
+  → **"Checking your license…"**.
+
+Seeing the wrong copy = a flag typo, a stale `--clear-lease-on-start`, or
+`TRIAL_DURATION_SECONDS` not set on the linked staging project — caught **before**
+the wait, not after.
+
+### 10.5 The 60-second expiry smoke (zero LS setup)
+
+1. **Set the staging secret** (procedure below) — `TRIAL_DURATION_SECONDS=60` on the
+   staging Supabase project **only**.
+2. Launch with `--fingerprint dev-1 --clear-lease-on-start` (one fresh mint).
+3. Pass preflight (§10.3); confirm the **"Starting your free trial…"** copy (§10.4) and
+   reach the board (the trial badge shows "Free trial · ends …").
+4. **Remove `--clear-lease-on-start`** from the scheme (keep `--fingerprint dev-1`).
+5. Wait **~65 seconds**, then **⌘Q and relaunch** (same held `dev-1`, no clear).
+6. **Expect:** the `StowerLicenseEntryView` `.trialExpired` screen. The active-trial
+   badge is gone — on a `.trialExpired` verdict `StowerLicenseGate.currentStatus(now:)`
+   clears the lease.
+
+The on-screen `.trialExpired` state is the readout (no logging, no badge once
+expired) — this is the manual leg I-H8 the automated suite can't cover.
+
+#### Staging-secret procedure (REQUIRED — read before `secrets set`)
+
+```bash
+# 1. CONFIRM you are linked to STAGING, not prod. A wrong link gives prod 60-second
+#    trials silently (TRIAL_DURATION_SECONDS is intentionally NOT in REQUIRED_ENV,
+#    so /health stays "ok" — the leak is caught only by the canary field, step 4).
+supabase projects list          # the linked ref MUST be qxsrnsxvsgofaeblbmmv
+
+# 2. Set the staging secret (applies on the next function invocation — no redeploy).
+supabase secrets set TRIAL_DURATION_SECONDS=60
+
+# 3. RECOVERY when done — restore the 30-day default:
+supabase secrets unset TRIAL_DURATION_SECONDS
+
+# 4. Canary: a non-default duration is echoed by /health (default omits it).
+curl -s https://qxsrnsxvsgofaeblbmmv.supabase.co/functions/v1/license/health
+#   → {"status":"ok","trialDurationSeconds":60,"warning":"non-default trial duration"}
+#   With the secret unset → {"status":"ok"} (field absent). If you EVER see the
+#   trialDurationSeconds field on the PROD /health, unset it immediately (step 3).
+```
+
+### 10.6 The real-payment smoke (LS-gated — separate)
+
+One-time prerequisite: a Lemon Squeezy **test-mode** variant + a test webhook
+pointed at the staging `…/ls-webhook` route, with `LS_PAID_VARIANT_ID` +
+`LS_WEBHOOK_SECRET` set to the test values (see
+[`EnvironmentVariables.md`](./EnvironmentVariables.md) §4). Then:
+
+1. On an active trial, open the board toolbar **gear menu → "Buy Stower v0"**
+   (`StowerBoardView.licenseMenu`) — this opens the LS checkout
+   bound to this device's `license_id`.
+2. Complete a **test-mode** purchase.
+3. The `order_created` webhook upgrades the license (`handleWebhook` → `upgradeToPaid`
+   + `attachV0`); on the next `/check-in` the app stays `.valid` and the trial badge
+   disappears (paid → no `attributes.expiry`).
+
+### 10.7 Appendix — JC-T1 signed-webhook e2e
+
+The webhook **signature gate is now covered by an automated real-HMAC Deno test**
+(not faked): `supabase/functions/license/index.test.ts` exercises the real
+`verifyLemonSqueezySignature` (`handlers.ts`) — a genuinely HMAC-SHA256-signed
+`order_created` is accepted and drives the upgrade; a tampered body is `401` with no
+money-path side effects (I-H9). Run it with `cd supabase/functions/license &&
+deno test`.
+
+Optional zero-touch smoke against a deployed staging function: POST a test
+`order_created` body to `…/ls-webhook` with a genuine `X-Signature` HMAC over the
+raw body under the staging `LS_WEBHOOK_SECRET`, and confirm a `200` + the upgrade in
+Keygen. (Not required — the Deno test covers the gate; this only exercises the
+deployed wiring.)

@@ -120,6 +120,13 @@ internal final class StowerBoardViewModel {
     /// dismiss/mute/unmute action methods (`+Triage`).
     internal let interactions: any StowerInteractionRecording
 
+    /// The analytics reporter for coarse board-interaction events.
+    ///
+    /// Emits `board_item_clicked` from action methods (never from view closures).
+    /// Defaults to a no-op so previews and tests that don't assert on analytics
+    /// emit nothing.
+    internal let analyticsReporter: any StowerAnalyticsReporting
+
     /// The app-owned triage boundary the board WRITES dismiss/mute/unmute through, and
     /// reads the muted count from.
     ///
@@ -241,6 +248,7 @@ internal final class StowerBoardViewModel {
         contacts: StowerContactsAccess = .denied,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
         opener: StowerMessagesLinkOpener = StowerMessagesLinkOpener(),
+        analyticsReporter: any StowerAnalyticsReporting = StowerNoOpAnalyticsReporter(),
         onFailure: @escaping @MainActor (StowerStartupFailure) -> Void,
         clock: @escaping @Sendable () -> Date = { Date() },
         sleep: @escaping @Sendable (Duration) async throws -> Void = {
@@ -256,6 +264,7 @@ internal final class StowerBoardViewModel {
         self.contacts = contacts
         self.settings = settings
         self.opener = opener
+        self.analyticsReporter = analyticsReporter
         self.onFailure = onFailure
         self.clock = clock
         self.sleep = sleep

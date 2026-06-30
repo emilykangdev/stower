@@ -22,8 +22,18 @@ internal final class StowerStartupModel {
     private let clock: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
     private let onCommit: (@MainActor @Sendable (StowerStartupState) -> Void)?
+    private let reporter: any StowerAnalyticsReporting
     private var inFlight: Task<Void, Never>?
     private var generation = 0
+
+    /// `true` while a run is in an FDA-awaiting state; cleared after `fda_permission_resolved` fires.
+    ///
+    /// Drives the `wasAwaitingFDA` latch so `checkAgain()` re-runs don't double-fire
+    /// `fda_permission_requested`.
+    private var wasAwaitingFDA = false
+
+    /// Guards `board_reached` to one emission per launch (per-launch semantics).
+    private var boardReachedThisLaunch = false
 
     /// Minimum time the checking state stays up, so a fast result doesn't flash.
     private static let minimumCheckingDisplay: Duration = .milliseconds(400)
@@ -40,6 +50,8 @@ internal final class StowerStartupModel {
     ///   - clock: Supplies `now`; injectable so tests are deterministic.
     ///   - sleep: The minimum-display delay; injectable so tests need no real
     ///     wall-clock wait. Throwing, because `Task.sleep(for:)` throws.
+    ///   - reporter: The analytics reporter for funnel events; defaults to a
+    ///     no-op so previews and tests that don't assert on analytics emit nothing.
     ///   - onCommit: A test recorder fired with every committed state (after the
     ///     generation guard); `nil` in production.
     internal init(
@@ -50,6 +62,7 @@ internal final class StowerStartupModel {
         sleep: @escaping @Sendable (Duration) async throws -> Void = {
             try await Task.sleep(for: $0)
         },
+        reporter: any StowerAnalyticsReporting = StowerNoOpAnalyticsReporter(),
         onCommit: (@MainActor @Sendable (StowerStartupState) -> Void)? = nil
     ) {
         self.provider = provider
@@ -57,6 +70,7 @@ internal final class StowerStartupModel {
         self.config = config
         self.clock = clock
         self.sleep = sleep
+        self.reporter = reporter
         self.onCommit = onCommit
     }
 
@@ -107,7 +121,8 @@ internal final class StowerStartupModel {
         inFlight?.cancel()
         inFlight = nil
         generation += 1
-        state = route(failure, wasAwaitingFDA: state.isAwaitingFullDiskAccess)
+        let next = route(failure, wasAwaitingFDA: state.isAwaitingFullDiskAccess)
+        commit(next, generation: generation)
     }
 
     /// Re-checks the license without disrupting the board — called when the app
@@ -230,11 +245,74 @@ internal final class StowerStartupModel {
         }
     }
 
-    /// Applies a new state only if its run is still the current generation, so a
-    /// stale completion can't overwrite a newer run's result.
+    /// Applies a new state only if its run is still the current generation.
+    ///
+    /// A stale completion can't overwrite a newer run's result. Also emits funnel
+    /// analytics events via the reporter on each committed state (Eng F1).
     private func commit(_ newState: StowerStartupState, generation: Int) {
         guard generation == self.generation else { return }
         state = newState
         onCommit?(newState)
+        emitFunnelEvent(for: newState)
+    }
+
+    /// Emits the appropriate funnel analytics event for a committed state.
+    ///
+    /// Uses the `wasAwaitingFDA` latch so `fda_permission_resolved` fires
+    /// exactly once per run that entered an FDA state, and the
+    /// `boardReachedThisLaunch` flag so `board_reached` fires once per launch.
+    /// Driven off `commit` (not adjacent-state matching or `onAppear`) per
+    /// Eng F1/F2.
+    ///
+    /// `fda_permission_resolved(granted:true)` fires only at
+    /// `.connectedPreparingBoard` — NOT at `.checkingMessages`. The board is
+    /// entered optimistically: `.checkingMessages` commits before
+    /// `loadDebtBoard` runs, and that load can still throw
+    /// `fullDiskAccessMissing` and route to `.needsFullDiskAccessStillMissing`.
+    /// Resolving at `.checkingMessages` would record a false "granted" for every
+    /// user who returned from the FDA screen without granting. Reaching the board
+    /// is the only proof access actually works. FDA denial is measured as
+    /// `fda_permission_requested` without a subsequent `fda_permission_resolved`.
+    private func emitFunnelEvent(for state: StowerStartupState) {
+        switch state {
+        case .modelUnavailable(let reason):
+            reporter.report(.hardwareChecked(supported: false, reason: "\(reason)"))
+
+        case .checkingLicense:
+            // Model was available (hardware check passed).
+            reporter.report(.hardwareChecked(supported: true, reason: nil))
+
+        case .needsLicense(let context):
+            reporter.report(.licenseGateReached(context: context))
+
+        case .needsFullDiskAccess:
+            reporter.report(.fdaPermissionRequested)
+            wasAwaitingFDA = true
+
+        case .connectedPreparingBoard:
+            resolveFDAIfNeeded()
+            emitBoardReachedIfNeeded()
+
+        case .checkingModel, .checkingMessages, .needsFullDiskAccessStillMissing, .failed:
+            break
+        }
+    }
+
+    /// Emits `fda_permission_resolved(granted:true)` when the FDA latch is set.
+    ///
+    /// Fires once per run that entered a `needsFullDiskAccess` state, only after
+    /// the board is reached (access proven); clears the latch afterward so it
+    /// cannot double-fire.
+    private func resolveFDAIfNeeded() {
+        guard wasAwaitingFDA else { return }
+        reporter.report(.fdaPermissionResolved(granted: true))
+        wasAwaitingFDA = false
+    }
+
+    /// Emits `board_reached` at most once per launch via the `boardReachedThisLaunch` latch.
+    private func emitBoardReachedIfNeeded() {
+        guard !boardReachedThisLaunch else { return }
+        reporter.report(.boardReached)
+        boardReachedThisLaunch = true
     }
 }

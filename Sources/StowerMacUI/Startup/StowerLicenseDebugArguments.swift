@@ -14,8 +14,8 @@ import Foundation
     /// — mirroring `StowerLicenseConfig.resolve`, so the parse matrix is unit-tested
     /// deterministically.
     ///
-    /// See `Docs/license-smoke.md` for how these args reach the app and the manual
-    /// expiry/payment smoke runbook.
+    /// See `Docs/licensing-contract.md` §10 for how these args reach the app and the
+    /// manual expiry/payment smoke runbook.
     internal struct StowerLicenseDebugArguments: Equatable {
         /// Whether to clear the stored lease before the gate runs (forces a mint).
         internal let clearLeaseOnStart: Bool

@@ -170,8 +170,15 @@ fi
 
 # 6e — chat.db must not be a literal in production app/UI code: the FDA disclosure
 #      renders the path from the .fullDiskAccessMissing(path:) payload, never a constant.
-if grep -RInE --include="*.swift" 'chat\.db' StowerMac/StowerMac Sources/StowerMacUI 2>/dev/null; then
-    echo "ERROR: chat.db must not appear as a literal in app/UI code — render it from the FDA payload" >&2
+#      CrashReporting/ is excluded: the scrubber legitimately pattern-matches the
+#      token as a hard-stop fragment to detect accidental crash-payload leaks.
+if grep -RInE --include="*.swift" 'chat\.db' StowerMac/StowerMac 2>/dev/null; then
+    echo "ERROR: chat.db must not appear as a literal in StowerMacApp code — render it from the FDA payload" >&2
+    exit 1
+fi
+if grep -RInE --include="*.swift" 'chat\.db' Sources/StowerMacUI \
+    --exclude-dir=CrashReporting 2>/dev/null; then
+    echo "ERROR: chat.db must not appear as a literal in UI code — render it from the FDA payload" >&2
     exit 1
 fi
 
@@ -262,5 +269,93 @@ if ! awk '
         END { exit (bad ? 1 : 0) }
     ' StowerMac/StowerMac.xcodeproj/project.pbxproj; then
     echo "ERROR: a Release build configuration of StowerMac.xcodeproj defines DEBUG — every #if DEBUG lever would ship in the archive; remove DEBUG from the Release config's SWIFT_ACTIVE_COMPILATION_CONDITIONS (I-H11)" >&2
+    exit 1
+fi
+
+# 6k — TelemetryDeck is imported by EXACTLY ONE file: StowerTelemetryDeckReporter.swift.
+#      Admits attributed imports with or without argument lists
+#      (@preconcurrency, @testable, @attr(args)) by extending the attribute
+#      sub-pattern to allow an optional parenthesised arg list. A second import
+#      anywhere defeats the kill-switch quarantine. Must-be-EXACTLY-ONE polarity.
+TD_ALLOWED="$(printf '%s\n' \
+    "Sources/StowerMacUI/Analytics/StowerTelemetryDeckReporter.swift" \
+    | LC_ALL=C sort)"
+TD_IMPORTERS="$(grep -RIlE --include="*.swift" \
+    '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?([[:space:]]|$))*import[[:space:]]+([a-z]+[[:space:]]+)?TelemetryDeck([[:space:].]|$)' \
+    Sources/ StowerMac/StowerMac/ 2>/dev/null | LC_ALL=C sort || true)"
+if [ "$TD_IMPORTERS" != "$TD_ALLOWED" ]; then
+    echo "ERROR: TelemetryDeck must be imported by exactly one file (StowerTelemetryDeckReporter.swift)." >&2
+    echo "       Allowed: $TD_ALLOWED" >&2
+    echo "       Found: ${TD_IMPORTERS:-<none>}" >&2
+    exit 1
+fi
+
+# 6l — Sentry is imported by EXACTLY FOUR files: the two CrashReporting
+#      production sources and their two direct test files. Admits attributed
+#      imports with or without argument lists (@preconcurrency, @testable,
+#      @attr(args)) — same pattern as 6k. A fifth Sentry import anywhere spreads
+#      the vendor past the quarantine and defeats the kill-switch isolation.
+#      Must-be-EXACTLY-FOUR polarity (sorted-set allowlist, same shape as 6b).
+SENTRY_ALLOWED="$(printf '%s\n' \
+    "Sources/StowerMacUI/CrashReporting/StowerCrashReporting.swift" \
+    "Sources/StowerMacUI/CrashReporting/StowerSentryScrubber.swift" \
+    "Tests/StowerMacUITests/StowerCrashReportingTests.swift" \
+    "Tests/StowerMacUITests/StowerSentryScrubberTests.swift" \
+    | LC_ALL=C sort)"
+SENTRY_IMPORTERS="$(grep -RIlE --include="*.swift" \
+    '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?([[:space:]]|$))*import[[:space:]]+([a-z]+[[:space:]]+)?Sentry([[:space:].]|$)' \
+    Sources/ StowerMac/StowerMac/ Tests/ 2>/dev/null | LC_ALL=C sort || true)"
+if [ "$SENTRY_IMPORTERS" != "$SENTRY_ALLOWED" ]; then
+    echo "ERROR: Sentry must be imported by exactly the two CrashReporting files + their two test files." >&2
+    echo "       Allowed:" >&2
+    echo "$SENTRY_ALLOWED" | sed 's/^/       /' >&2
+    echo "       Found: ${SENTRY_IMPORTERS:-<none>}" >&2
+    exit 1
+fi
+
+# 6m — options.debug must ONLY appear inside a #if DEBUG region in
+#      StowerCrashReporting.swift. An unguarded options.debug in a Release archive
+#      ships debug logging. Reuses the debug_region_violation awk helper from 6h.
+if ! debug_region_violation \
+    Sources/StowerMacUI/CrashReporting/StowerCrashReporting.swift \
+    'options[[:space:]]*\.[[:space:]]*debug'; then
+    echo "ERROR: options.debug must only appear inside a #if DEBUG region in" >&2
+    echo "       StowerCrashReporting.swift — a Release-reachable assignment ships debug logging (6m)" >&2
+    exit 1
+fi
+
+# 6n — No string interpolation (\() inside crash-reason trap messages or
+#      queue/thread labels in first-party source. The KSCrash notable-address
+#      converter promotes trap message content INTO exception.value (A5, spike).
+#      First-party code must never inject user data into these strings; the
+#      scrubber covers dependency-originated content. Pattern: \( inside a
+#      fatalError/preconditionFailure/assertionFailure/precondition/assert message
+#      argument, or inside a DispatchQueue(label:)/Thread.name assignment, in
+#      Sources/ only. Grep family — line-local fact.
+if grep -RInE --include="*.swift" \
+    '(fatalError|preconditionFailure|assertionFailure|precondition|assert)[[:space:]]*\([^)]*\\\(' \
+    Sources/ 2>/dev/null; then
+    echo "ERROR: no string interpolation (\() in fatalError/preconditionFailure/" >&2
+    echo "       assertionFailure/precondition/assert messages in Sources/ — user" >&2
+    echo "       data interpolated here can leak into exception.value (A5). Use" >&2
+    echo "       a static string; the scrubber covers introspected content (6n)." >&2
+    exit 1
+fi
+if grep -RInE --include="*.swift" \
+    'DispatchQueue[[:space:]]*\([[:space:]]*label:[[:space:]]*"[^"]*\\\(' \
+    Sources/ 2>/dev/null; then
+    echo "ERROR: no string interpolation (\() in DispatchQueue(label:) strings in" >&2
+    echo "       Sources/ — user data in queue labels can reach crash-reason strings (6n)." >&2
+    exit 1
+fi
+# Thread.name interpolation (the comment above claims this coverage). Scoped to
+# `Thread.name` / `Thread.current.name` so it can't false-positive on an unrelated
+# `.name` property; thread names surface in crash reports, so user data in them
+# would reach crash-reason strings (6n).
+if grep -RInE --include="*.swift" \
+    'Thread[[:space:]]*\.[[:space:]]*(current[[:space:]]*\.[[:space:]]*)?name[[:space:]]*=[[:space:]]*"[^"]*\\\(' \
+    Sources/ 2>/dev/null; then
+    echo "ERROR: no string interpolation (\() in Thread.name assignments in" >&2
+    echo "       Sources/ — user data in thread names can reach crash-reason strings (6n)." >&2
     exit 1
 fi

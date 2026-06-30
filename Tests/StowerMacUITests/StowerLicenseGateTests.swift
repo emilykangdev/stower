@@ -18,7 +18,7 @@ import Testing
 
     /// The SHA-256 hash the fixed fingerprint produces — what mint/check-in receive.
     private var expectedFingerprint: String {
-        StowerDeviceFingerprint.sha256Hex(knownUUID)
+        StowerKeychainFingerprint.sha256Hex(knownUUID)
     }
 
     private var publicKeyHex: String {
@@ -36,10 +36,7 @@ import Testing
         StowerLicenseGate(
             client: client,
             leaseStore: store,
-            fingerprint: StowerDeviceFingerprint(
-                readHardwareUUID: { self.knownUUID },
-                fallbackUUID: { self.knownUUID }
-            )
+            fingerprint: StowerKeychainFingerprint(installUUID: { self.knownUUID })
         )
     }
 

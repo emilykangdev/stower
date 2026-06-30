@@ -62,7 +62,7 @@ licenses. Then only these values change:
 | `LS_WEBHOOK_SECRET` | The **test-mode** webhook's signing secret | The **live-mode** webhook's secret | LS test & live secrets are separate |
 | `SUPABASE_URL` | Test/staging project (or branch) URL | Prod project URL | differs |
 | `SUPABASE_SERVICE_ROLE_KEY` | That test project's key | Prod project's key | differs |
-| `KEYGEN_ACCOUNT` | Same — staging + production **share one Keygen account** (account-level keypair, commit `3d39142`); test/prod are isolated by distinct **Supabase** projects + policies, not by account | Same account | **same** — test trials accrue as harmless orphans under the trial policy (see `licensing-test-coverage.md`); differs only if prod moves to its own account |
+| `KEYGEN_ACCOUNT` | Same — staging + production **share one Keygen account** (account-level keypair, commit `3d39142`); test/prod are isolated by distinct **Supabase** projects + policies, not by account | Same account | **same** — test trials accrue as harmless orphans under the trial policy (see `licensing-contract.md` §9); differs only if prod moves to its own account |
 | `KEYGEN_TOKEN` | Admin token for the test account | Prod admin token | differs |
 | `KEYGEN_V0_ENTITLEMENT` | Entitlement id in the test setup | Prod entitlement id | differs (account-specific UUID) |
 | `KEYGEN_TRIAL_POLICY` | Test trial policy id | Prod trial policy id | differs |

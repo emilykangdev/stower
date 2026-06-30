@@ -3,8 +3,17 @@
 // Trial and Paid policies, the `STOWER_TRIAL` and `STOWER_V0` entitlements, and
 // the policy-level `STOWER_TRIAL` attachment. It NEVER attaches `STOWER_V0` to a
 // policy or license — Plan Beta's Railway webhook attaches `STOWER_V0` directly to
-// each paid license on purchase. Safe to rerun against sandbox/test or production
-// accounts: existing matches are reused, never duplicated.
+// each paid license on purchase. Idempotent by product **code** + policy **name**:
+// existing matches are reused, never duplicated.
+//
+// SCOPE (2026-06-30): these constants describe the PROD set (`Stower` / `stower` /
+// `STOWER_*_POLICY`). The live TEST/staging account was manually renamed to
+// `StowerTest` / `stowertest` / `STOWER_TEST_*` so test and prod licenses never mix,
+// so this script no longer MATCHES those test resources (different code + names) and
+// runtime is unaffected (the edge function references policy **IDs** via env vars, not
+// names). Treat this script as the PROD template: run it at prod standup to create the
+// clean prod product/policies, then point the prod env vars at the new IDs. Do NOT run
+// it against the test account — it would create a duplicate prod-named set there.
 //
 // Every side effect (HTTP, env, stdout, stderr) is injected so the Deno tests run
 // with no network, disk, or env. `import.meta.main` wires the real Deno
