@@ -19,10 +19,16 @@ import Sentry
 /// 3. **Redact home-directory paths** in frame `fileName`, frame `package`
 ///    (binary image path), and debug-meta `codeFile` fields:
 ///    `/Users/<name>/` → `/Users/<redacted>/`.
-/// 4. **Backstop-drop** the whole event if a hard-stop token survives in any
-///    string field (chat.db path, Photos path, message/contact-looking text,
-///    license-ID shape, device-fingerprint, email, phone). Dropping is safer
-///    than partial redaction for tokens we cannot deterministically scrub.
+/// 4. **Backstop-drop** the whole event if a hard-stop token survives in a scanned
+///    **data** field — `extra`, `tags`, `context`, `user`, `mechanism.desc`
+///    (chat.db path, Photos path, message/contact-looking text, license-ID shape,
+///    device-fingerprint, email, phone). Dropping is safer than partial redaction
+///    for tokens we cannot deterministically scrub. **Code-path fields** (frame
+///    `fileName`/`package`, debug-meta `codeFile`) are deliberately NOT
+///    hard-stop-scanned: they carry only build paths whose sole PII is the home-dir
+///    username (redacted in steps 2–3), and they legitimately contain Apple
+///    framework names like `Photos`/`MediaAnalysis` that the fragments would
+///    false-drop a real crash on.
 ///
 /// `scrub` is a pure function (no side effects, no main-actor hops) as required
 /// for `beforeSend` which runs on the SDK's background thread (Gotcha 5).
@@ -197,12 +203,14 @@ internal enum StowerSentryScrubber {
 
     // MARK: — Step 4: backstop hard-stop scan
 
-    /// Returns `true` if any string field in the event contains a hard-stop token.
+    /// Returns `true` if any scanned **data** field contains a hard-stop token.
     ///
     /// Scans: `event.extra`, `event.tags`, `event.context`, `event.user`
     /// string fields, and mechanism desc. The `exception.value` fields have
     /// already been rebuilt in step 1 (content-free), so this backstop catches
-    /// anything that slipped through other fields.
+    /// anything that slipped through other fields. Code-path fields (frame
+    /// `fileName`/`package`, debug-meta `codeFile`) are intentionally excluded —
+    /// see job 4 in the type doc for why (false-drop on framework names).
     private static func containsHardStopToken(_ event: Event) -> Bool {
         let strings = gatherScanStrings(from: event)
         return strings.contains { isHardStop($0) }

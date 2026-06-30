@@ -7,8 +7,10 @@ import Foundation
 /// backend: the SDK init helper and the event reporter. The consent/identity
 /// types live in `Sources/StowerMacUI/Diagnostics/`.
 ///
-/// All methods are safe to call from any context (the reporter is `Sendable`).
-/// Synchronous throughout — no `await` needed or allowed (Eng F4/F5).
+/// `@MainActor`-isolated: call from the main actor (the app's startup and UI
+/// already do). Synchronous — an async caller off the main actor must hop to it
+/// first; there is no `await` *within* main-actor code (Eng F4/F5). The reporter
+/// itself is `Sendable`.
 @MainActor
 public final class StowerAnalytics {
     /// The singleton built by `startBackend` and used by `report`.

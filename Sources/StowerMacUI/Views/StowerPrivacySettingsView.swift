@@ -18,7 +18,7 @@ internal struct StowerPrivacySettingsView: View {
     internal var body: some View {
         Form {
             Section {
-                Toggle(isOn: $analyticsEnabled) {
+                Toggle(isOn: consentBinding) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Share anonymous usage analytics")
                             .font(.body)
@@ -31,13 +31,6 @@ internal struct StowerPrivacySettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     }
-                }
-                .onChange(of: analyticsEnabled) { _, newValue in
-                    StowerDiagnostics.setEnabled(newValue)
-                    // An explicit Settings choice supersedes the first-run
-                    // disclosure card, so an opted-out user is never re-prompted
-                    // (and can't accidentally re-enable via the card). (JC7)
-                    StowerDiagnosticsConsent().markDisclosureShown()
                 }
             } header: {
                 Text("Analytics & Crash Reporting")
@@ -69,5 +62,29 @@ internal struct StowerPrivacySettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        // Re-sync the displayed toggle with the live consent state each time the
+        // pane appears: consent can flip elsewhere while this view exists (license
+        // opt-out reconciliation, the first-run disclosure card), and a `@State`
+        // seeded once at init would otherwise show stale. This writes the `@State`
+        // DIRECTLY (not through `consentBinding`), so a resync never triggers a
+        // spurious `setEnabled` / `markDisclosureShown`.
+        .onAppear { analyticsEnabled = StowerDiagnostics.isEnabled() }
+    }
+
+    /// The toggle's binding — only a USER flip writes consent through.
+    ///
+    /// A user flip calls `StowerDiagnostics.setEnabled` and marks the disclosure
+    /// shown (an explicit Settings choice supersedes the first-run card, JC7). The
+    /// `.onAppear` display-resync updates `analyticsEnabled` directly and never fires
+    /// this setter — so refreshing the view can't re-enable consent or re-mark the card.
+    private var consentBinding: Binding<Bool> {
+        Binding(
+            get: { analyticsEnabled },
+            set: { newValue in
+                analyticsEnabled = newValue
+                StowerDiagnostics.setEnabled(newValue)
+                StowerDiagnosticsConsent().markDisclosureShown()
+            }
+        )
     }
 }

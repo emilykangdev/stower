@@ -348,3 +348,14 @@ if grep -RInE --include="*.swift" \
     echo "       Sources/ — user data in queue labels can reach crash-reason strings (6n)." >&2
     exit 1
 fi
+# Thread.name interpolation (the comment above claims this coverage). Scoped to
+# `Thread.name` / `Thread.current.name` so it can't false-positive on an unrelated
+# `.name` property; thread names surface in crash reports, so user data in them
+# would reach crash-reason strings (6n).
+if grep -RInE --include="*.swift" \
+    'Thread[[:space:]]*\.[[:space:]]*(current[[:space:]]*\.[[:space:]]*)?name[[:space:]]*=[[:space:]]*"[^"]*\\\(' \
+    Sources/ 2>/dev/null; then
+    echo "ERROR: no string interpolation (\() in Thread.name assignments in" >&2
+    echo "       Sources/ — user data in thread names can reach crash-reason strings (6n)." >&2
+    exit 1
+fi
