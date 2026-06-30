@@ -149,18 +149,20 @@ internal enum StowerSentryScrubber {
     /// `fileName` carries the source path; `package` carries the binary image path
     /// (the Sentry native crash converter fills `package` from the Mach-O binary
     /// image name, which can be an absolute path containing the system username).
+    ///
+    /// The thread and exception stacktrace blocks are intentionally independent
+    /// (no early-return guards that short-circuit one when the other is absent).
     private static func redactFramePaths(in event: Event) {
-        guard let threads = event.threads else { return }
-        for thread in threads {
+        // Redact paths in per-thread stacktraces.
+        for thread in event.threads ?? [] {
             guard let stacktrace = thread.stacktrace else { continue }
             for frame in stacktrace.frames {
                 frame.fileName = frame.fileName.map { redactHomePath(in: $0) }
                 frame.package = frame.package.map { redactHomePath(in: $0) }
             }
         }
-        // Also walk exception stacktraces.
-        guard let exceptions = event.exceptions else { return }
-        for ex in exceptions {
+        // Redact paths in per-exception stacktraces (independent — no early return above).
+        for ex in event.exceptions ?? [] {
             guard let stacktrace = ex.stacktrace else { continue }
             for frame in stacktrace.frames {
                 frame.fileName = frame.fileName.map { redactHomePath(in: $0) }

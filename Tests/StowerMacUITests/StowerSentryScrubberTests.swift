@@ -200,6 +200,36 @@ import Testing
         )
     }
 
+    @Test internal func exceptionStacktrace_pathRedactedWhenNoThreads() {
+        // Verifies that exception stacktrace paths are redacted even when
+        // event.threads is nil (the two blocks in redactFramePaths must be
+        // independent — no early return on missing threads).
+        let ex = Exception(
+            value: "EXC_BAD_ACCESS (KERN_INVALID_ADDRESS)",
+            type: "EXC_BAD_ACCESS"
+        )
+        ex.mechanism = Mechanism(type: "signal")
+        let frame = Frame()
+        frame.fileName =
+            "/Users/dave/Developer/Stower/Sources/StowerMacUI/StowerRootView.swift"
+        ex.stacktrace = SentryStacktrace(frames: [frame], registers: [:])
+        let event = Event(level: .fatal)
+        event.exceptions = [ex]
+        // Intentionally leave event.threads = nil.
+
+        let scrubbed = StowerSentryScrubber.scrub(event)
+        guard let result = scrubbed else {
+            Issue.record("scrub returned nil for a clean crash event with no threads")
+            return
+        }
+
+        let resultFrame = result.exceptions?.first?.stacktrace?.frames.first
+        #expect(
+            resultFrame?.fileName?.contains("/Users/dave/") == false,
+            "username must be redacted from exception stacktrace even when threads is nil"
+        )
+    }
+
     // MARK: — Clean crash event passes through (scrubbed, not dropped)
 
     @Test internal func cleanCrashEvent_passesThrough() {
