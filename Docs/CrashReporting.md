@@ -106,3 +106,22 @@ SDK's background thread) wired as `beforeSend`. Four steps, in order:
   notable-address converter promotes those strings into `exception.value` (A5).
   First-party code must never inject user data there; the scrubber covers
   dependency-originated content.
+
+## Verifying a crash locally (run WITHOUT the debugger)
+
+The DEBUG-only **Debug → Force Crash (Sentry test)** menu item (`StowerMacApp`, wrapped
+in `#if DEBUG`) calls `StowerDiagnostics.debugForceCrash()` (a `fatalError`). To actually
+capture it you **must run without the Xcode debugger attached** — LLDB intercepts the trap
+otherwise, no report is written, and Sentry logs `no items to flush` on the next launch.
+
+- **Stay in Xcode:** Edit Scheme → Run → Info → uncheck **"Debug executable."** This is a
+  *runtime* toggle (whether LLDB attaches); it does **not** change the Debug build
+  configuration, so `#if DEBUG` stays true and the Force Crash menu still appears.
+- **Or** build (`⌘B`) and launch the product directly: `open …/DerivedData/…/Debug/StowerMac.app`.
+
+Sentry writes the report to disk **during** the crash and uploads it on the **next
+launch** (A2) — so crash, relaunch, then check the EU dashboard. Verify capture on disk:
+`~/Library/Caches/SentryCrash/StowerMac/Reports/` gains a file and
+`Data/CrashState.json` flips `crashedLastLaunch: true`. (Empty `Reports/` +
+`crashedLastLaunch: false` ⇒ the crash was not caught — almost always the debugger.)
+Stacks are **unsymbolicated** until dSYMs are uploaded (the ops-gated symbolication step).

@@ -107,3 +107,16 @@ events fired).
 `Scripts/precheck.sh` step **6k** fails the build if any other file imports it, so
 the SDK surface stays behind the app-owned `StowerAnalyticsReporting` seam and the
 facade never needs to name TelemetryDeck types.
+
+## Verifying signals locally (DEBUG builds are "Test Mode")
+
+A DEBUG build run from Xcode tags **every** signal as a TelemetryDeck **Test Signal**
+— `StowerTelemetryDeckReporter.initializeSDK` builds `TelemetryDeck.Config(appID:salt:)`
+with no explicit `testMode`, so it inherits the SDK's DEBUG-is-test default. The
+TelemetryDeck dashboard **hides test data by default**, so signals appear only when you
+flip the **"Test Mode"** toggle (next to the date filter). The SDK log line
+`Sending N signals leaving a cache of 0 signals` confirms the signal flushed — so when
+nothing shows in the dashboard it is the test-mode view filter, not a consent/init bug.
+A Release build sends live (production) signals that show without the toggle. The app id
+is `StowerAnalytics.appID` (DEBUG points the build at staging via `StowerLicenseConfig`,
+but the analytics app id is the same).
