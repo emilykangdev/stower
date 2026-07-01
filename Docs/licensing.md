@@ -2,7 +2,18 @@
 
 There is no guarantee that there will be a v1 or v2. However, this is the licensing strategy document set in stone, out of consideration for major releases that might happen.
 
-Last Updated Date: 2026-06-23. 
+Last Updated Date: 2026-06-23.
+
+> **Note (2026-07-01): the shipped v0 mechanism is simpler than described
+> below.** The Keygen + Supabase licensing backend this document was written
+> against has been deleted and replaced with a client-only Lemon Squeezy
+> activate-once flow plus a **7-day** local trial clock — not the 30-day
+> trial or per-major-version entitlement stacking described in §2–§5 below.
+> See "As-built (v0)" callouts near each affected section for what the code
+> actually does today. This page's pricing philosophy (§1, §6, §7) is kept
+> as Emily's stated intent; whether the 30-day/per-major mechanics return in
+> a future version is a business decision, not yet made — see
+> `licensing-contract.md` §"Open questions."
 
 ---
 
@@ -21,6 +32,14 @@ Patch versions will use the third number: x.y.Z. Thus, 0.1.5 < 0.1.6.
 Stower will only "upgrade" to the major version X+1 and start releasing new minor updates based on X+1 if significant new capabilities are added. These will be documented. Users are not obligated to pay for any future major version.
 
 ### Payment model
+
+> **As-built (v0) note (2026-07-01):** the shipped trial is **7 days**, not
+> 30 (`StowerTrialClock.trialDuration`), it is a purely local `UserDefaults`
+> clock with no server involved, and there is no trial-extension mechanism —
+> the "new major ships → +7 days" behavior described below does not exist in
+> code today (there is no concept of "major" the trial clock reasons about
+> at all). The aspirational 30-day/extension text below is kept as Emily's
+> stated pricing intent, not a description of the current build.
 
 Every customer gets **30 days to try Stower before paying** — whether you're new or
 an existing customer. Existing customers also get a **discount on upgrades**, as a
@@ -70,6 +89,17 @@ There will not necessarily be ongoing support for an old version like v0. It'll 
 
 ## 2. How a trial becomes a paid license
 
+> **As-built (v0) note (2026-07-01):** the Supabase Edge Function, Keygen
+> licenses, `device_trials` table, and `/mint-trial`/`/ls-webhook` routes
+> described below have all been **deleted**. There is no server-minted
+> trial and no webhook. The real v0 flow is: the app starts a **local,
+> 7-day** trial clock on first launch (no network call); buying sends you a
+> Lemon Squeezy license key by email; you paste that key into the app, which
+> makes a single `POST` to Lemon Squeezy's own `/v1/licenses/activate`
+> endpoint to verify it, then stores it locally and never checks again. See
+> `licensing-contract.md` §1 and §3 for the grounded mechanism. The
+> paragraphs below describe the **retired** design, kept for history.
+
 Plain version, with the exact pieces in parentheses.
 
 - **Each Mac gets one free 30-day trial.** The first time Stower opens, it asks Stower's
@@ -100,7 +130,11 @@ Plain version, with the exact pieces in parentheses.
 - **You keep exactly what you paid for.** A paid license never expires and unlocks
   only the major(s) you bought.
 
-## 3. Keygen primitives (reference) `[DECIDED]`
+## 3. Keygen primitives (reference) `[RETIRED — see note]`
+
+> **As-built (v0) note (2026-07-01):** Keygen is no longer part of this
+> system at all — no account, no policies, no entitlements. Kept for
+> history only.
 
 - **Policy = the template/rules** (crypto scheme, encrypted/pooled flags,
   `maxMachines`, expiration strategy, fingerprint strategy). You create a few:
@@ -113,6 +147,16 @@ Plain version, with the exact pieces in parentheses.
   than Trial's**. (`maxMachines` may differ — Trial = 1.)
 
 ## 4. How "you only get the version you bought" works
+
+> **As-built (v0) note (2026-07-01):** there is no per-major-version
+> entitlement mechanism in the shipped code. `StowerLemonSqueezyClient`
+> checks only that an activated key's Lemon Squeezy `store_id`/`product_id`
+> match Stower's — i.e. "is this a Stower license," not "which major
+> version." A stored license unlocks every build, forever, today. Whether
+> per-major gating (`STOWER_V0`/`STOWER_V1`-style unlock codes) comes back in
+> a future version is an open business decision — see
+> `licensing-contract.md` §"Open questions" — not something this section's
+> Keygen-based description still does.
 
 Stower uses Keygen **entitlements** — think of them as **unlock codes**. Each major
 version has its own: `STOWER_V0`, `STOWER_V1`, and so on. A license can only run a
@@ -141,6 +185,16 @@ version if it holds that version's unlock.
   v1.
 
 ## 5. How the license is actually enforced
+
+> **As-built (v0) note (2026-07-01):** the "signed Keygen machine file" /
+> online-Edge-Function / offline-signature-verification design below is
+> retired. The real v0 enforcement is much simpler: the app checks **local**
+> state at every launch (a stored license, else a 7-day local trial clock);
+> the **only** network call in the entire licensing system is the one-time
+> `POST` to Lemon Squeezy's `/v1/licenses/activate` when you enter a key.
+> There is no ongoing online/offline distinction because there is no
+> ongoing network check at all after that one activation. See
+> `licensing-contract.md` §1/§3/§4.
 
 - **Downloading is free; *using* it is what's checked.** Anyone can download any
   build — the repo is open and the app is freely shareable — so locking downloads
@@ -196,8 +250,8 @@ Note to dev: see private repo me/Business/Plans/stower-strategy.md for further d
 
 > **Engineering contract:** the stable facade shapes, seam contracts, and
 > load-bearing invariants live in [`licensing-contract.md`](./licensing-contract.md);
-> the runtime topology (who talks to whom — app → Edge Function → Keygen/Supabase/Lemon
-> Squeezy, with diagrams) lives in [`Lifecycle.md`](./Lifecycle.md). The Edge Function
-> code is `supabase/functions/license/` (`index.ts` routes → `handlers.ts` brain).
-> Implementation plans sign against the contract file by version; this doc is the
-> customer-facing terms.
+> the runtime topology (who talks to whom — as of v2.0 of that contract, just the
+> app talking directly to Lemon Squeezy's `/v1/licenses/activate`, once) lives in
+> [`Lifecycle.md`](./Lifecycle.md). There is no Edge Function or other Stower-operated
+> backend anymore. Implementation plans sign against the contract file by version;
+> this doc is the customer-facing terms.
