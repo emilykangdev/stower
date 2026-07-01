@@ -71,17 +71,18 @@ internal struct StowerBoardView: View {
     /// text the user has already typed.
     @State internal var feedbackFormModel: StowerFeedbackFormModel?
 
-    /// The in-flight task that clears `showsFeedbackConfirmation` after a dwell.
-    ///
-    /// Held so a second success cancels the prior timer — otherwise an older
-    /// timer could clear the confirmation early (overlapping-timer race).
-    @State private var feedbackConfirmationTask: Task<Void, Never>?
-
     /// Whether the board-level feedback success confirmation is visible.
     ///
     /// Set to `true` when the sheet's `onSuccess` fires; auto-clears after a
     /// short dwell so the confirmation reads as a momentary acknowledgement.
     @State internal var showsFeedbackConfirmation = false
+
+    /// Monotonic token bumped on each successful send.
+    ///
+    /// Keys the confirmation overlay's dwell `.task(id:)`, so a second success
+    /// restarts the dwell timer (rather than inheriting the first success's
+    /// remaining time) — closing the overlapping-timer race.
+    @State private var feedbackConfirmationToken = 0
 
     /// The row hovered right now, so only its trailing dismiss control is revealed
     /// (the list stays clean at rest). `internal` so the `+Triage` view extension reads it.
@@ -288,18 +289,16 @@ internal struct StowerBoardView: View {
         .accessibilityLabel("Refresh board")
     }
 
-    /// Shows the feedback success confirmation for a short dwell, then clears it.
+    /// Requests the feedback success confirmation.
     ///
-    /// Cancels any prior dwell task first so overlapping successes can't let an
-    /// older timer clear the confirmation early.
+    /// Only raises the flag — the dwell timer is owned by the overlay's `.task`, so
+    /// the clock starts when the capsule actually becomes visible. That way a
+    /// success arriving while `model.undoBar` is up (the capsule is suppressed so it
+    /// can't cover the Undo button) still shows for its full dwell once the undo bar
+    /// clears, rather than draining unseen.
     private func showFeedbackConfirmation() {
-        feedbackConfirmationTask?.cancel()
+        feedbackConfirmationToken += 1
         showsFeedbackConfirmation = true
-        feedbackConfirmationTask = Task { @MainActor in
-            try? await Task.sleep(for: Self.feedbackConfirmationDwell)
-            guard !Task.isCancelled else { return }
-            showsFeedbackConfirmation = false
-        }
     }
 
     /// The brief bottom-edge confirmation shown after a successful feedback send.
@@ -324,6 +323,17 @@ internal struct StowerBoardView: View {
                 .padding(.bottom, Self.undoBarBottomPadding)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .accessibilityLabel("Thanks for the feedback! Emily reads every one.")
+                // The dwell clock lives here, not at send time: it starts only once the
+                // capsule is actually on screen (this branch renders only when
+                // `undoBar == nil`), so a confirmation queued behind an undo bar isn't
+                // cleared before the user ever sees it. Keyed on
+                // `feedbackConfirmationToken` so a second success restarts the dwell
+                // rather than inheriting the first's remaining time.
+                .task(id: feedbackConfirmationToken) {
+                    try? await Task.sleep(for: Self.feedbackConfirmationDwell)
+                    guard !Task.isCancelled else { return }
+                    showsFeedbackConfirmation = false
+                }
         }
     }
 
