@@ -59,6 +59,34 @@ import Testing
         #expect(state == .expired)
     }
 
+    @Test("hasSeededFirstLaunch is false before the first read and true after")
+    internal func hasSeededFirstLaunchReflectsSeedState() {
+        let suite = "stower.trialclock.hasseeded"
+        let defaults = makeDefaults(suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let clock = StowerTrialClock(defaults: defaults)
+
+        #expect(clock.hasSeededFirstLaunch == false)
+        _ = clock.state(now: Date(timeIntervalSince1970: 1_700_000_000))
+        #expect(clock.hasSeededFirstLaunch)
+    }
+
+    @Test("hasSeededFirstLaunch stays true across a second read (relaunch mid-trial)")
+    internal func hasSeededFirstLaunchStaysTrueOnRelaunch() {
+        let suite = "stower.trialclock.hasseeded.relaunch"
+        let defaults = makeDefaults(suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let clock = StowerTrialClock(defaults: defaults)
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
+        _ = clock.state(now: t0)
+
+        // A fresh clock instance over the same defaults simulates a relaunch.
+        let relaunchedClock = StowerTrialClock(defaults: defaults)
+        #expect(relaunchedClock.hasSeededFirstLaunch)
+        _ = relaunchedClock.state(now: t0.addingTimeInterval(3 * 24 * 60 * 60))
+        #expect(relaunchedClock.hasSeededFirstLaunch)
+    }
+
     @Test("reset clears the first-launch date so the next read seeds a fresh one")
     internal func resetClearsFirstLaunch() {
         let suite = "stower.trialclock.reset"

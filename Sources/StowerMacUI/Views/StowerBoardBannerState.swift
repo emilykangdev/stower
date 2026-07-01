@@ -47,6 +47,10 @@ internal enum StowerBoardBannerState: Sendable, Equatable {
     }
 
     /// F3 threshold: one day or less of trial remaining (highest intent, least nag).
-    private static let buyNudgeThresholdDays: Double = 1
+    ///
+    /// `internal` (not `private`) so `StowerRootView.scheduleTrialExpiryRecheckIfNeeded`
+    /// can schedule a re-render at this same threshold — the single source of truth
+    /// for "how soon before expiry does F3 start" lives here, not duplicated there.
+    internal static let buyNudgeThresholdDays: Double = 1
     private static let secondsPerDay: Double = 24 * 60 * 60
 }

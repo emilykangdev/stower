@@ -26,6 +26,19 @@ internal struct StowerTrialClock: Sendable {
         self.defaults = defaults
     }
 
+    /// Whether the first-launch date has been seeded yet — a pure read, never
+    /// writes. `true` means the trial clock has already started (this launch
+    /// or an earlier one); `false` means the very next `state(now:)` call will
+    /// be the one that starts it.
+    ///
+    /// Callers that need "did the trial truly just start" (as opposed to "is
+    /// it merely still active") check this BEFORE calling `state(now:)` —
+    /// once `state(now:)` runs, the seed always exists, so checking after
+    /// can't distinguish first-ever launch from a relaunch mid-trial.
+    internal var hasSeededFirstLaunch: Bool {
+        defaults.object(forKey: Self.firstLaunchDefaultsKey) != nil
+    }
+
     /// Resolves the trial state as of `now`, seeding the first-launch date on
     /// the first call.
     ///
@@ -54,14 +67,23 @@ internal struct StowerTrialClock: Sendable {
     }
 
     /// The free-trial window: 7 days, card-free (JC1).
-    internal static let trialDuration: Duration = .seconds(7 * 24 * 60 * 60)
+    internal static let trialDuration: Duration = .seconds(trialDays * Self.secondsPerDay)
 
+    private static let trialDays = 7
+    private static let secondsPerDay = 24 * 60 * 60
     private static let firstLaunchDefaultsKey = "com.stower.trial.firstLaunch"
 }
 
 extension Duration {
     /// The duration expressed as a `TimeInterval` (seconds), for `Date` arithmetic.
     fileprivate var seconds: TimeInterval {
-        TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
+        TimeInterval(components.seconds)
+            + TimeInterval(components.attoseconds) / StowerDurationConversion.attosecondsPerSecond
     }
+}
+
+/// A case-less namespace for the one homeless conversion constant `Duration.seconds`
+/// needs — attoseconds-per-second has no natural owner type of its own.
+private enum StowerDurationConversion {
+    fileprivate static let attosecondsPerSecond: TimeInterval = 1_000_000_000_000_000_000
 }

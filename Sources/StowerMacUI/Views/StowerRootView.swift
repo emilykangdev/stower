@@ -12,63 +12,76 @@ import SwiftUI
 /// screens, hands off to the board at `.connectedPreparingBoard`, and reruns the
 /// flow on Check Again.
 public struct StowerRootView: View {
-    @State private var model: StowerStartupModel
+    @State internal var model: StowerStartupModel
     @State private var boardModel: StowerBoardViewModel
 
     /// The typed text in the key-entry screen; a `@State` on the stable root so
     /// it survives an in-flight activate and any error re-render.
-    @State private var licenseKey = ""
+    @State internal var licenseKey = ""
 
     /// Cached active-trial badge data, resolved when entering the board state.
     ///
     /// Nil means "no active trial" (licensed, or expired); it is NOT cleared on
     /// banner dismissal, so the gear-menu Buy/Enter-key path persists.
-    @State private var trialBadge: StowerTrialBadge?
+    ///
+    /// `internal` (not `private`) — along with the other licensing/trial/banner
+    /// `@State` below — so `StowerRootViewLicensing.swift`'s extension methods
+    /// can read/write them; a stored property can't live in an extension.
+    @State internal var trialBadge: StowerTrialBadge?
 
     /// Whether the user has dismissed the (pre-F3) trial banner this session.
     ///
     /// Seeded from the persisted dismissal flag on board entry. Only suppresses
     /// the `.trialBadge` banner state — F2/F3 are never suppressed by this flag,
     /// since they are higher-intent moments than the quiet status badge.
-    @State private var trialBannerDismissed = false
+    @State internal var trialBannerDismissed = false
 
     /// F2: set when the user taps Buy; cleared once a license is stored.
     ///
     /// Drives the "Finished your purchase? Enter the license key" banner on
     /// return.
-    @State private var boughtThisSession = false
+    @State internal var boughtThisSession = false
 
     /// Drives the F1 purchase-confirmation alert.
-    @State private var showPurchaseThanks = false
+    @State internal var showPurchaseThanks = false
 
     /// Whether the analytics disclosure card is currently showing.
     ///
     /// Set to `true` after ~60 seconds of foreground board time, once, if the
     /// card has never been shown. Cleared when the user makes a choice.
-    @State private var showConsentCard = false
-    @State private var consentCardTask: Task<Void, Never>?
+    @State internal var showConsentCard = false
+    @State internal var consentCardTask: Task<Void, Never>?
 
     /// Sleeps until the active trial's `expiry`, then re-checks the license so
     /// a continuously-foregrounded session (never backgrounded/foregrounded
     /// again) still routes to the paywall the moment the 7-day trial elapses,
     /// instead of only on the next `didBecomeActive`.
-    @State private var trialExpiryTask: Task<Void, Never>?
+    @State internal var trialExpiryTask: Task<Void, Never>?
+
+    /// Forces a `body` re-render at the F3 threshold.
+    ///
+    /// Bumped when `scheduleTrialExpiryRecheckIfNeeded`'s F3-threshold timer
+    /// fires, so `currentBannerState` re-renders at `expiry - 1 day` even
+    /// though `trialBadge` itself hasn't changed — the value is never read
+    /// for its own sake, only to force the diff.
+    @State internal var bannerRecomputeTick = Date()
 
     /// The consent state accessor shared by the disclosure card and the settings toggle.
     ///
     /// A single instance covers both surfaces so they never desync (the Keychain record
-    /// is the underlying source of truth — shared across all readers).
-    private let consent = StowerDiagnosticsConsent()
+    /// is the underlying source of truth — shared across all readers). `internal` so
+    /// `StowerRootViewLicensing.swift`'s `scheduleConsentCardIfNeeded()` can read it.
+    internal let consent = StowerDiagnosticsConsent()
 
-    private let settings: StowerSystemSettingsOpener
-    private let analyticsReporter: any StowerAnalyticsReporting
+    internal let settings: StowerSystemSettingsOpener
+    internal let analyticsReporter: any StowerAnalyticsReporting
 
     /// The dismissal seam for the trial badge.
     ///
     /// Reads and writes the UserDefaults flag that hides the (pre-F3) badge
     /// persistently across launches. The production path uses
     /// `UserDefaults.standard`; tests inject a fake.
-    private let badgeDismissal: any StowerTrialBadgeDismissing
+    internal let badgeDismissal: any StowerTrialBadgeDismissing
 
     /// Builds the production root wired to the shared engine-backed composition and
     /// the real Lemon-Squeezy-backed license gate.
@@ -223,7 +236,10 @@ public struct StowerRootView: View {
                 consentCardTask?.cancel()
                 trialExpiryTask?.cancel()
             }
-            .onReceive(Self.willResignActive) { _ in consentCardTask?.cancel() }
+            .onReceive(Self.willResignActive) { _ in
+                consentCardTask?.cancel()
+                trialExpiryTask?.cancel()
+            }
             // Returning to the app (e.g. back from the Lemon Squeezy checkout)
             // re-checks the license so an elapsed trial reflects instantly — a
             // pure local read (no network); activation itself only happens when
@@ -245,96 +261,6 @@ public struct StowerRootView: View {
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
         }
-    }
-
-    /// The board's current bottom-banner state (F2/F3), recomputed on every
-    /// render from the cached trial badge, the F2 session flag, and whether the
-    /// pre-F3 badge has been dismissed.
-    ///
-    /// The board is reached only when licensed or on an active trial, so a nil
-    /// `trialBadge` here always means licensed.
-    private var currentBannerState: StowerBoardBannerState {
-        let resolved = StowerBoardBannerState.resolve(
-            hasStoredLicense: trialBadge == nil,
-            boughtThisSession: boughtThisSession,
-            trialBadge: trialBadge,
-            now: Date()
-        )
-        // The quiet trial badge alone (not F2/F3) honors the dismiss flag.
-        if case .trialBadge = resolved, trialBannerDismissed {
-            return .none
-        }
-        return resolved
-    }
-
-    /// Activates `key` via the model, then — on success — jumps straight to the
-    /// F1 confirmation alert (the model's `.activate` reruns startup into the
-    /// board).
-    private func activate(key: String) {
-        Task {
-            await model.activate(key: key)
-            await model.activeRun?.value
-            if model.state == .connectedPreparingBoard {
-                licenseKey = ""
-                boughtThisSession = false
-                showPurchaseThanks = true
-            }
-        }
-    }
-
-    /// Jumps to the key-entry screen from the board (gear menu / F2 banner,
-    /// JC5) without waiting for the trial to expire.
-    private func jumpToKeyEntry() {
-        model.showLicenseEntry()
-    }
-
-    /// Schedules the analytics consent card to appear after ~60 seconds of
-    /// foreground board time, shown at most once ever (JC7).
-    ///
-    /// The countdown is cancelled when the app backgrounds or the board screen
-    /// leaves the hierarchy, and rescheduled on return — so the card honors
-    /// *foreground board* time, never firing while backgrounded or off-board.
-    /// The shown-flag is stored in `UserDefaults` by `StowerDiagnosticsConsent` so
-    /// the card never reappears after the user has made a choice.
-    private func scheduleConsentCardIfNeeded() {
-        guard !consent.hasShownDisclosure else { return }
-        consentCardTask?.cancel()
-        consentCardTask = Task { @MainActor in
-            try? await Task.sleep(for: Self.consentCardDelay)
-            guard !Task.isCancelled, !consent.hasShownDisclosure else { return }
-            consent.markDisclosureShown()
-            withAnimation { showConsentCard = true }
-        }
-    }
-
-    /// Sleeps until `trialBadge.expiry`, then re-checks the license so the
-    /// board routes to the paywall the moment the trial elapses even if the
-    /// app stays foregrounded the whole time (no intervening `didBecomeActive`).
-    ///
-    /// A no-op when licensed (`trialBadge == nil`) or already past expiry —
-    /// the next foreground/appear re-check handles that case. Re-armed on
-    /// every appear/foreground so the sleep duration is always fresh.
-    private func scheduleTrialExpiryRecheckIfNeeded() {
-        trialExpiryTask?.cancel()
-        guard let expiry = trialBadge?.expiry, expiry > Date() else { return }
-        trialExpiryTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(expiry.timeIntervalSinceNow))
-            guard !Task.isCancelled else { return }
-            await model.refreshLicenseIfOnBoard()
-            trialBadge = model.trialBadge()
-        }
-    }
-
-    /// Opens the static Lemon Squeezy checkout URL and sets the F2 session flag.
-    ///
-    /// A return to the app with no license yet stored then shows the "Enter
-    /// license key" banner. A no-op if the configured URL won't build (fails
-    /// closed rather than opening a malformed URL).
-    private func openCheckout() {
-        guard let url = URL(string: StowerLicenseConfig.resolved.checkoutURL) else { return }
-        boughtThisSession = true
-        analyticsReporter.report(.checkoutOpened)
-        NSWorkspace.shared.open(url)
     }
 
     private func fdaView(path: String, stillMissing: Bool) -> some View {
@@ -363,12 +289,6 @@ public struct StowerRootView: View {
     private static let purchaseThanksTitle = "You're all set."
     private static let purchaseThanksMessage =
         "Thanks for buying Stower — your license is active on this Mac. Enjoy."
-
-    /// The delay before showing the analytics consent card after the board appears.
-    ///
-    /// ~60 seconds of foreground board time (JC7 — after the user has seen value,
-    /// not at startup or at the FDA permission cliff).
-    private static let consentCardDelay: Duration = .seconds(60)
 
     private static let minWidth: CGFloat = 520
     private static let minHeight: CGFloat = 360

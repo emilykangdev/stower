@@ -48,7 +48,7 @@ import Testing
 
     @Test("a licensed state still routes an FDA-missing load to the FDA screen")
     internal func licensedStateRoutesFDAFailure() async {
-        let path = "~/Library/Messages/chat.db"
+        let path = "/var/db"
         let provider = StowerFakeStartupProvider(
             loadBehaviors: [.failure(.fullDiskAccessMissing(path: path))]
         )

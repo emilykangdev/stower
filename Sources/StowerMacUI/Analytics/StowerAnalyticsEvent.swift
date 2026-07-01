@@ -61,7 +61,7 @@ internal enum StowerAnalyticsEvent: Sendable {
 
     /// A license key was successfully activated and persisted.
     ///
-    /// Emitted from `StowerStartupModel.activate(key:)` on `.activated`, before
+    /// Emitted from `StowerStartupModel.activate(key:)` on `.activated`, after
     /// persisting. **Per-occurrence** (once per successful activation).
     case activated
 

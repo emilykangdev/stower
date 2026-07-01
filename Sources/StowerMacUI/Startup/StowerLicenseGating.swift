@@ -31,6 +31,17 @@ internal struct StowerTrialBadge: Sendable, Equatable {
 /// Parallel to `StowerStartupProviding`. The production conformer is
 /// `StowerLemonSqueezyLicenseGate`; tests pass `StowerFakeLicenseGate`.
 internal protocol StowerLicenseGating: Sendable {
+    /// Whether the trial clock has never been observed before this call — i.e.
+    /// the very next `licenseState(now:)` call is the one that starts the
+    /// 7-day trial, not a read of an already-running one.
+    ///
+    /// Callers that emit a "trial started" analytics event must check this
+    /// BEFORE calling `licenseState(now:)`: once that call runs, the trial
+    /// clock is always seeded, so checking after can't distinguish a true
+    /// first launch from a relaunch mid-trial. Always `false` once a license
+    /// is stored (a licensed device never seeds a trial clock read this way).
+    func isFirstTrialObservation(now: Date) -> Bool
+
     /// Resolves the current license state: a pure local read of the stored
     /// license, else the trial clock. No network.
     func licenseState(now: Date) -> StowerLicenseState

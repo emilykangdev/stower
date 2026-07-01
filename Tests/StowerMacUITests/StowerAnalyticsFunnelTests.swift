@@ -190,6 +190,27 @@ import Testing
         #expect(trialStartedCount == 1, "trial_started must fire at most once per launch")
     }
 
+    @Test("trial_started does NOT fire on a relaunch that merely observes an already-seeded trial")
+    internal func trialStartedDoesNotFireOnRelaunch() async throws {
+        let expiry = Date(timeIntervalSince1970: 1_800_000_000)
+        let provider = StowerFakeStartupProvider()
+        // A fresh model instance simulates a relaunch: the trial clock was
+        // already seeded on a prior launch (isFirstTrialObservation: false),
+        // even though this launch's license read still observes .trial.
+        let licenseGate = StowerFakeLicenseGate(
+            states: [.trial(expiry: expiry)],
+            firstTrialObservationResults: [false]
+        )
+        let spy = StowerInMemoryAnalyticsReporter()
+        let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
+        model.start()
+        let run = try #require(model.activeRun)
+        await run.value
+
+        let trialStartedCount = spy.recorded().filter { $0.signalName == "trial_started" }.count
+        #expect(trialStartedCount == 0, "trial_started must not fire on a relaunch")
+    }
+
     @Test("activated fires on a successful activation")
     internal func activatedFiresOnSuccess() async throws {
         let provider = StowerFakeStartupProvider()
@@ -263,5 +284,27 @@ import Testing
 
         let hwEvent = spy.recorded().first { $0.signalName == "hardware_checked" }
         #expect(hwEvent?.parameters["supported"] == "false")
+    }
+
+    @Test("hardware_checked fires only once when loadDebtBoard throws modelUnavailable mid-run")
+    internal func hardwareCheckedDoesNotDoubleFireWithinOneRun() async throws {
+        // Preflight availability passes (so route() commits the optimistic,
+        // funnel-silent .checkingMessages), but loadDebtBoard itself then throws
+        // .modelUnavailable — a real path (e.g. Apple Intelligence toggled off
+        // between the preflight and the load). Only the run's true terminal
+        // outcome (supported:false) is recorded, exactly once.
+        let provider = StowerFakeStartupProvider(
+            availability: .available,
+            loadBehaviors: [.failure(.modelUnavailable(.deviceNotEligible))]
+        )
+        let spy = StowerInMemoryAnalyticsReporter()
+        let model = makeModel(provider: provider, reporter: spy)
+        model.start()
+        let run = try #require(model.activeRun)
+        await run.value
+
+        let hwEvents = spy.recorded().filter { $0.signalName == "hardware_checked" }
+        #expect(hwEvents.count == 1, "one run must report hardware_checked exactly once")
+        #expect(hwEvents.first?.parameters["supported"] == "false")
     }
 }

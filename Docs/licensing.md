@@ -2,7 +2,7 @@
 
 There is no guarantee that there will be a v1 or v2. However, this is the licensing strategy document set in stone, out of consideration for major releases that might happen.
 
-Last Updated Date: 2026-06-23.
+Last Updated Date: 2026-07-01.
 
 > **Note (2026-07-01): the shipped v0 mechanism is simpler than described
 > below.** The Keygen + Supabase licensing backend this document was written

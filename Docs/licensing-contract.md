@@ -28,7 +28,7 @@ When the contract changes: edit here, bump the version, record the change in
 
 ## Sequencing
 
-```
+```text
 Lemon Squeezy migration ✓ (done — Keygen/Supabase backend deleted,
   StowerLemonSqueezyClient + StowerLicenseStore + StowerTrialClock landed)
   → prod ops (real Lemon Squeezy store id / product id / checkout URL, G1)

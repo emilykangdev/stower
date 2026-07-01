@@ -14,7 +14,9 @@ internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Send
     private let states: [StowerLicenseState]
     private let activationResult: StowerLicenseActivation
     private let blocksActivation: Bool
+    private let firstTrialObservationResults: [Bool]
     private var stateIndex = 0
+    private var firstTrialObservationIndex = 0
     private var recordedNows: [Date] = []
     private var persistedCalls: [(key: String, instanceID: String)] = []
     private var released = false
@@ -34,14 +36,21 @@ internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Send
     ///     test calls `releaseActivation()` — for the in-flight race test:
     ///     the caller drives a `cancel()` while activation is still pending,
     ///     proving the generation guard drops the late persist.
+    ///   - firstTrialObservationResults: The scripted `isFirstTrialObservation`
+    ///     results, reusing the last once spent. Defaults to always `true` so
+    ///     existing per-launch-latch tests (`trialStartedThisLaunch`) see
+    ///     unchanged behavior; a test asserting the cross-launch "seeded once
+    ///     ever" semantics scripts `[true, false]` explicitly.
     internal init(
         states: [StowerLicenseState] = [.licensed],
         activationResult: StowerLicenseActivation = .couldNotReach,
-        blocksActivation: Bool = false
+        blocksActivation: Bool = false,
+        firstTrialObservationResults: [Bool] = [true]
     ) {
         self.states = states
         self.activationResult = activationResult
         self.blocksActivation = blocksActivation
+        self.firstTrialObservationResults = firstTrialObservationResults
     }
 
     /// How many times `licenseState` was invoked.
@@ -57,6 +66,15 @@ internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Send
     /// Every `persist(key:instanceID:)` call recorded, in order.
     internal var persistCalls: [(key: String, instanceID: String)] {
         lock.withLock { persistedCalls }
+    }
+
+    internal func isFirstTrialObservation(now: Date) -> Bool {
+        lock.withLock {
+            guard !firstTrialObservationResults.isEmpty else { return true }
+            let index = min(firstTrialObservationIndex, firstTrialObservationResults.count - 1)
+            firstTrialObservationIndex += 1
+            return firstTrialObservationResults[index]
+        }
     }
 
     internal func licenseState(now: Date) -> StowerLicenseState {

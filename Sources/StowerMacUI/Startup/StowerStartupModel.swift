@@ -22,21 +22,42 @@ internal final class StowerStartupModel {
     private let clock: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
     private let onCommit: (@MainActor @Sendable (StowerStartupState) -> Void)?
-    private let reporter: any StowerAnalyticsReporting
+
+    /// The analytics reporter.
+    ///
+    /// `internal` (not `private`) so `StowerStartupModelAnalytics.swift`'s
+    /// `emitFunnelEvent(for:)` and its helpers can report funnel events without
+    /// widening access beyond the module.
+    internal let reporter: any StowerAnalyticsReporting
     private var inFlight: Task<Void, Never>?
     private var generation = 0
 
     /// `true` while a run is in an FDA-awaiting state; cleared after `fda_permission_resolved` fires.
     ///
     /// Drives the `wasAwaitingFDA` latch so `checkAgain()` re-runs don't double-fire
-    /// `fda_permission_requested`.
-    private var wasAwaitingFDA = false
+    /// `fda_permission_requested`. `internal` so `StowerStartupModelAnalytics.swift`
+    /// can read/clear it.
+    internal var wasAwaitingFDA = false
 
     /// Guards `board_reached` to one emission per launch (per-launch semantics).
-    private var boardReachedThisLaunch = false
+    /// `internal` so `StowerStartupModelAnalytics.swift` can read/set it.
+    internal var boardReachedThisLaunch = false
 
     /// Guards `trial_started` to one emission per launch (per-launch semantics).
-    private var trialStartedThisLaunch = false
+    /// `internal` so `StowerStartupModelAnalytics.swift` can read/set it.
+    internal var trialStartedThisLaunch = false
+
+    /// Guards `hardware_checked` to one emission per RUN (reset at the top of
+    /// every `runStartup`, unlike the per-launch latches above).
+    ///
+    /// `.checkingMessages`/`.needsLicense` report `supported: true` optimistically
+    /// before `loadDebtBoard` runs, but that load can still throw
+    /// `.modelUnavailable` and route the same run to `supported: false` — without
+    /// this latch, one run would report the metric twice with conflicting
+    /// verdicts. The FIRST commit in a run wins; a Check Again is a fresh run
+    /// (fresh `runStartup` call) and may report again. `internal` so
+    /// `StowerStartupModelAnalytics.swift` can read/set it.
+    internal var hardwareCheckedThisRun = false
 
     /// `true` while an `activate(key:)` call is in flight.
     ///
@@ -127,14 +148,23 @@ internal final class StowerStartupModel {
     ///
     /// A no-op while a prior call is still in flight (`isActivating`) — a
     /// rapid double-submit must never fire two concurrent `/activate` calls
-    /// against Lemon Squeezy's finite `activation_limit`.
+    /// against Lemon Squeezy's finite `activation_limit`. Also a no-op once the
+    /// board has already been reached: `isActivating` clears (and the entry
+    /// screen's Activate button re-enables) as soon as this call's network
+    /// round-trip finishes, which can be before `beginRun()`'s rerun actually
+    /// commits `.connectedPreparingBoard` — this second check closes that gap
+    /// so a stray second submit in between can't consume another activation
+    /// slot. Checks `state` (not `licenseGate.licenseState(now:)` again) so it
+    /// never double-consumes the license gate's own read for this call.
     ///
     /// On `.activated`, persists the key, emits the `activated` funnel event,
     /// and reruns the startup flow so the newly-stored license routes to the
     /// board. On `.invalid` / `.couldNotReach`, commits `.needsLicense` carrying
-    /// the error so the entry screen can show it.
+    /// the error so the entry screen can show it — without re-emitting
+    /// `hardware_checked`/`paywall_reached`: a failed re-attempt is an error
+    /// re-render of a paywall visit already counted, not a new one.
     internal func activate(key: String) async {
-        guard !isActivating else { return }
+        guard !isActivating, state != .connectedPreparingBoard else { return }
         isActivating = true
         defer { isActivating = false }
         let runGeneration = generation
@@ -146,9 +176,13 @@ internal final class StowerStartupModel {
             reporter.report(.activated)
             beginRun()
         case .invalid:
-            commit(.needsLicense(.invalid), generation: runGeneration)
+            commit(.needsLicense(.invalid), generation: runGeneration, emitsFunnelEvent: false)
         case .couldNotReach:
-            commit(.needsLicense(.couldNotReach), generation: runGeneration)
+            commit(
+                .needsLicense(.couldNotReach),
+                generation: runGeneration,
+                emitsFunnelEvent: false
+            )
         }
     }
 
@@ -194,11 +228,13 @@ internal final class StowerStartupModel {
     ///
     /// Cancels any in-flight run and bumps the generation, mirroring
     /// `handleBoardFailure` — a late startup completion can't overwrite this.
+    /// Does NOT emit a funnel event: this is a voluntary mid-trial visit, not
+    /// the forced paywall routing `hardware_checked`/`paywall_reached` measure.
     internal func showLicenseEntry() {
         inFlight?.cancel()
         inFlight = nil
         generation += 1
-        commit(.needsLicense(nil), generation: generation)
+        commit(.needsLicense(nil), generation: generation, emitsFunnelEvent: false)
     }
 
     /// Cancels any in-flight run, bumps the generation, and starts a fresh run.
@@ -215,6 +251,7 @@ internal final class StowerStartupModel {
     /// The flow body: preflight availability, load, route — under the generation
     /// token and the minimum-display delay.
     private func runStartup(generation: Int, wasAwaitingFDA: Bool) async {
+        hardwareCheckedThisRun = false
         commit(.checkingModel, generation: generation)
         let sleepClosure = sleep
         let minimumDisplay = Self.minimumCheckingDisplay
@@ -228,15 +265,26 @@ internal final class StowerStartupModel {
             // The license check is a pure local read (no network) — licensed and
             // trial both proceed straight into the board probe; only an expired
             // trial with no license routes to the paywall.
+            //
+            // `isFirstTrialObservation` must be read BEFORE `licenseState`: the
+            // latter's trial-clock read seeds the first-launch date as a side
+            // effect, so checking after would always see it as already seeded.
+            let isFirstTrialObservation = licenseGate.isFirstTrialObservation(now: clock())
             let licenseState = licenseGate.licenseState(now: clock())
             guard generation == self.generation else { return }
-            emitTrialStartedIfNeeded(for: licenseState)
+            emitTrialStartedIfNeeded(for: licenseState, isFirstObservation: isFirstTrialObservation)
             let target = try await route(
                 licenseState: licenseState,
                 generation: generation,
                 wasAwaitingFDA: wasAwaitingFDA
             )
             try await minimumDisplayDone
+            // `target` is this run's TRUE terminal state (reached only after
+            // `loadAndRoute` resolves), so `commit` here is the single place that
+            // reports this run's real `hardware_checked` verdict — see the
+            // `.checkingMessages` commit in `route(licenseState:...)` (which passes
+            // `emitsFunnelEvent: false`) for why the optimistic UI commit must not
+            // also report one.
             commit(target, generation: generation)
         } catch is CancellationError {
             // A superseded / cancelled run never routes to a failure screen.
@@ -248,6 +296,12 @@ internal final class StowerStartupModel {
     /// Maps a license state to the next state: `.licensed`/`.trial` both probe
     /// the board (the trial badge is read separately by the view), `.expired`
     /// routes to the paywall/key-entry screen.
+    ///
+    /// The `.checkingMessages` commit here is UI-only (`emitsFunnelEvent: false`):
+    /// it renders the "checking your messages" screen, but `loadAndRoute` hasn't
+    /// run yet, so whether hardware is actually supported isn't known yet — that
+    /// call still can throw `.modelUnavailable`. `hardware_checked` is emitted once,
+    /// correctly, from the run's true terminal state in `runStartup`.
     private func route(
         licenseState: StowerLicenseState,
         generation: Int,
@@ -255,7 +309,7 @@ internal final class StowerStartupModel {
     ) async throws -> StowerStartupState {
         switch licenseState {
         case .licensed, .trial:
-            commit(.checkingMessages, generation: generation)
+            commit(.checkingMessages, generation: generation, emitsFunnelEvent: false)
             return try await loadAndRoute(wasAwaitingFDA: wasAwaitingFDA)
         case .expired:
             return .needsLicense(nil)
@@ -293,82 +347,25 @@ internal final class StowerStartupModel {
     /// Applies a new state only if its run is still the current generation.
     ///
     /// A stale completion can't overwrite a newer run's result. Also emits funnel
-    /// analytics events via the reporter on each committed state (Eng F1).
-    private func commit(_ newState: StowerStartupState, generation: Int) {
+    /// analytics events via the reporter on each committed state (Eng F1), unless
+    /// `emitsFunnelEvent` is `false` — used by the voluntary key-entry jump
+    /// (`showLicenseEntry()`), a failed re-activation attempt, and the on-board
+    /// expiry re-check, none of which are the startup-flow's own paywall/hardware
+    /// funnel visit and must not re-emit `hardware_checked`/`paywall_reached`.
+    ///
+    /// `emitFunnelEvent(for:)` and its helpers live in
+    /// `StowerStartupModelAnalytics.swift` (the same split-across-files posture as
+    /// `StowerBoardViewModel`'s `Drafts`/`Load`/`Triage` extensions) so this file
+    /// stays focused on the state machine itself.
+    internal func commit(
+        _ newState: StowerStartupState,
+        generation: Int,
+        emitsFunnelEvent: Bool = true
+    ) {
         guard generation == self.generation else { return }
         state = newState
         onCommit?(newState)
+        guard emitsFunnelEvent else { return }
         emitFunnelEvent(for: newState)
-    }
-
-    /// Emits the appropriate funnel analytics event for a committed state.
-    ///
-    /// Uses the `wasAwaitingFDA` latch so `fda_permission_resolved` fires
-    /// exactly once per run that entered an FDA state, and the
-    /// `boardReachedThisLaunch` flag so `board_reached` fires once per launch.
-    /// Driven off `commit` (not adjacent-state matching or `onAppear`) per
-    /// Eng F1/F2.
-    ///
-    /// `fda_permission_resolved(granted:true)` fires only at
-    /// `.connectedPreparingBoard` — NOT at `.checkingMessages`. The board is
-    /// entered optimistically: `.checkingMessages` commits before
-    /// `loadDebtBoard` runs, and that load can still throw
-    /// `fullDiskAccessMissing` and route to `.needsFullDiskAccessStillMissing`.
-    /// Resolving at `.checkingMessages` would record a false "granted" for every
-    /// user who returned from the FDA screen without granting. Reaching the board
-    /// is the only proof access actually works. FDA denial is measured as
-    /// `fda_permission_requested` without a subsequent `fda_permission_resolved`.
-    private func emitFunnelEvent(for state: StowerStartupState) {
-        switch state {
-        case .modelUnavailable(let reason):
-            reporter.report(.hardwareChecked(supported: false, reason: "\(reason)"))
-
-        case .checkingMessages:
-            // First state reached once the model is available (hardware check
-            // passed) and the license read (licensed/trial) let the run proceed.
-            reporter.report(.hardwareChecked(supported: true, reason: nil))
-
-        case .needsLicense(let error):
-            // Model was available; the license read is what routed here.
-            reporter.report(.hardwareChecked(supported: true, reason: nil))
-            reporter.report(.paywallReached(error: error))
-
-        case .needsFullDiskAccess:
-            reporter.report(.fdaPermissionRequested)
-            wasAwaitingFDA = true
-
-        case .connectedPreparingBoard:
-            resolveFDAIfNeeded()
-            emitBoardReachedIfNeeded()
-
-        case .checkingModel, .needsFullDiskAccessStillMissing, .failed:
-            break
-        }
-    }
-
-    /// Emits `fda_permission_resolved(granted:true)` when the FDA latch is set.
-    ///
-    /// Fires once per run that entered a `needsFullDiskAccess` state, only after
-    /// the board is reached (access proven); clears the latch afterward so it
-    /// cannot double-fire.
-    private func resolveFDAIfNeeded() {
-        guard wasAwaitingFDA else { return }
-        reporter.report(.fdaPermissionResolved(granted: true))
-        wasAwaitingFDA = false
-    }
-
-    /// Emits `board_reached` at most once per launch via the `boardReachedThisLaunch` latch.
-    private func emitBoardReachedIfNeeded() {
-        guard !boardReachedThisLaunch else { return }
-        reporter.report(.boardReached)
-        boardReachedThisLaunch = true
-    }
-
-    /// Emits `trial_started` at most once per launch, the first time this
-    /// launch's license read observes an active trial.
-    private func emitTrialStartedIfNeeded(for licenseState: StowerLicenseState) {
-        guard case .trial = licenseState, !trialStartedThisLaunch else { return }
-        reporter.report(.trialStarted)
-        trialStartedThisLaunch = true
     }
 }

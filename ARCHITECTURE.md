@@ -105,12 +105,11 @@ stateDiagram-v2
     [*] --> checkingModel : .task → start()
 
     checkingModel --> modelUnavailable : availability unavailable
-    checkingModel --> needsLicense : available, no stored license
-    checkingModel --> checkingMessages : available + license stored
+    checkingModel --> needsLicense : available, trial expired / no license
+    checkingModel --> checkingMessages : available + licensed or trial active
 
-    needsLicense --> checkingLicense : Activate (submit key)
-    checkingLicense --> checkingMessages : activate succeeds
-    checkingLicense --> needsLicense : invalid / couldNotReach
+    needsLicense --> checkingMessages : Activate (POST /v1/licenses/activate succeeds)
+    needsLicense --> needsLicense : invalid / couldNotReach
 
     checkingMessages --> connectedPreparingBoard : loadDebtBoard succeeds
     checkingMessages --> needsFullDiskAccess : FDA missing (first time)
@@ -138,13 +137,16 @@ stateDiagram-v2
 ```
 
 The **license gate** sits between model-availability and the board load: once the
-model is available, `runStartup` commits `checkingLicense` and awaits
-`licenseGate.currentStatus(now:)` — the wired gate is `StowerLicenseGate`, which
-mints on first run or runs a JC5-signed `/check-in` when a lease exists, with a
-signed offline fallback. A `.valid` status routes straight to `checkingMessages`;
-every other status routes to the entry screen (`needsLicense`) with its context.
-`licenseGate.hasLease()` is the pure-local Keychain check (no network); there is no
-pasted-key `activate` path anymore.
+model is available, `runStartup` reads `licenseGate.licenseState(now:)` — the
+wired gate is `StowerLemonSqueezyLicenseGate`, a pure local read of the
+plaintext `UserDefaults`-backed `StowerLicenseStore`, falling back to the local
+7-day `StowerTrialClock` when no license is stored. `.licensed`/`.trial` both
+route straight to `checkingMessages`; `.expired` routes to the entry screen
+(`needsLicense`) with the last activation error, if any. The user pastes a key
+there and taps Activate, which calls `StowerLemonSqueezyLicenseGate.activate(key:)`
+— the app's only network call, a direct `POST` to Lemon Squeezy's
+`/v1/licenses/activate` — and on success persists the key/instance id locally
+and reruns startup into `checkingMessages`.
 
 Every transition runs under a **generation token**: `beginRun()` bumps a counter,
 and `commit` writes `state` only if the completing run is still the current

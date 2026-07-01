@@ -21,9 +21,13 @@ internal protocol StowerLeaseStorage: Sendable {
 
 /// A typed read/write/delete over a single Keychain generic-password item.
 ///
-/// Stored with `kSecAttrAccessibleAfterFirstUnlock` (device-only, available
-/// after the first unlock, survives reboot) and `kSecAttrSynchronizable: false`
-/// (never synced to iCloud) — a device-bound record must not roam.
+/// Stored with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnlyThisDeviceOnly` (available
+/// after the first unlock, survives reboot, excluded from backup/restore to a
+/// different Mac) and `kSecAttrSynchronizable: false` (never synced to
+/// iCloud) — a device-bound record must not roam. The non-`ThisDeviceOnly`
+/// variant only blocks iCloud Keychain sync; it does NOT block a Time
+/// Machine/Migration Assistant restore onto another Mac, which would let a
+/// supposedly device-bound record be reused there.
 internal struct StowerKeychainItem: StowerLeaseStorage {
     private let service: String
     private let account: String
@@ -65,14 +69,14 @@ internal struct StowerKeychainItem: StowerLeaseStorage {
         // explicit clear().
         let updates: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         ]
         let updateStatus = SecItemUpdate(baseQuery as CFDictionary, updates as CFDictionary)
         if updateStatus == errSecSuccess { return true }
         guard updateStatus == errSecItemNotFound else { return false }
         var attributes = baseQuery
         attributes[kSecValueData as String] = data
-        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
     }
 

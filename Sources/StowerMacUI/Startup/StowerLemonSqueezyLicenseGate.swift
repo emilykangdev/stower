@@ -59,6 +59,11 @@ internal struct StowerLemonSqueezyLicenseGate: StowerLicenseGating {
         )
     }
 
+    internal func isFirstTrialObservation(now: Date) -> Bool {
+        guard store.read() == nil else { return false }
+        return !trialClock.hasSeededFirstLaunch
+    }
+
     internal func licenseState(now: Date) -> StowerLicenseState {
         guard store.read() == nil else { return .licensed }
         switch trialClock.state(now: now) {

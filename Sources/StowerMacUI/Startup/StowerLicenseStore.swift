@@ -6,7 +6,13 @@ import Foundation
 /// `instance_id` is captured free from the activate response and kept for a
 /// future `/validate` / `/deactivate`; no launch logic reads it. Nothing else
 /// from the response (notably `meta.customer_email`) is ever stored here.
-internal struct StowerStoredLicense: Sendable, Equatable {
+///
+/// `Codable` so `StowerLicenseStore` persists both fields as one encoded
+/// record under a single `UserDefaults` key — a crash between two separate
+/// writes can never leave a real activation's `key` stored without its
+/// `instanceID` (or vice versa), which would make an already-activated
+/// license look absent on the next launch.
+internal struct StowerStoredLicense: Sendable, Equatable, Codable {
     /// The license key, in its trimmed form (equals the activated key).
     internal let key: String
 
@@ -34,28 +40,26 @@ internal struct StowerLicenseStore: Sendable {
         self.defaults = defaults
     }
 
-    /// Reads the stored license, or `nil` if either field is absent.
+    /// Reads the stored license, or `nil` if absent or undecodable.
+    ///
+    /// One encoded record behind one key — never two independently-missing
+    /// fields — so a torn write can only ever read back as "no license," not
+    /// a corrupted partial one.
     internal func read() -> StowerStoredLicense? {
-        guard let key = defaults.string(forKey: Self.keyDefaultsKey),
-            let instanceID = defaults.string(forKey: Self.instanceIDDefaultsKey)
-        else {
-            return nil
-        }
-        return StowerStoredLicense(key: key, instanceID: instanceID)
+        guard let data = defaults.data(forKey: Self.licenseDefaultsKey) else { return nil }
+        return try? JSONDecoder().decode(StowerStoredLicense.self, from: data)
     }
 
-    /// Persists the license key and instance id.
+    /// Persists the license key and instance id as one encoded record.
     internal func write(_ license: StowerStoredLicense) {
-        defaults.set(license.key, forKey: Self.keyDefaultsKey)
-        defaults.set(license.instanceID, forKey: Self.instanceIDDefaultsKey)
+        guard let data = try? JSONEncoder().encode(license) else { return }
+        defaults.set(data, forKey: Self.licenseDefaultsKey)
     }
 
     /// Removes the stored license (used by a failed re-activation / reset path).
     internal func clear() {
-        defaults.removeObject(forKey: Self.keyDefaultsKey)
-        defaults.removeObject(forKey: Self.instanceIDDefaultsKey)
+        defaults.removeObject(forKey: Self.licenseDefaultsKey)
     }
 
-    private static let keyDefaultsKey = "com.stower.license.key"
-    private static let instanceIDDefaultsKey = "com.stower.license.instanceID"
+    private static let licenseDefaultsKey = "com.stower.license"
 }

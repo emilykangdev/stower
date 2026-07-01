@@ -62,9 +62,16 @@ internal struct StowerTrialBadgeView: View {
     private static let badgeBackground = Color.secondary.opacity(0.1)
 }
 
+extension StowerTrialBadgeView {
+    /// A far-future expiry offset (in seconds) for the "Active trial" preview only.
+    fileprivate static let previewExpiryOffsetSeconds: TimeInterval = 30 * 24 * 60 * 60
+}
+
 #Preview("Active trial") {
     StowerTrialBadgeView(
-        badge: StowerTrialBadge(expiry: Date().addingTimeInterval(30 * 24 * 3600)),
+        badge: StowerTrialBadge(
+            expiry: Date().addingTimeInterval(StowerTrialBadgeView.previewExpiryOffsetSeconds)
+        ),
         onDismiss: {}
     )
     .frame(width: 400)

@@ -66,7 +66,7 @@ internal struct StowerBoardBannerView: View {
     }
 
     private static let buyNudgeMessage =
-        "Your free trial ends tomorrow — Buy Stower to keep your board."
+        "Your free trial ends soon — Buy Stower to keep your board."
     private static let enterKeyMessage =
         "Finished your purchase? Enter the license key from your email."
 }
