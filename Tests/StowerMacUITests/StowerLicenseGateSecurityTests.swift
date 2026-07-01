@@ -169,7 +169,7 @@ import Testing
         )
         let store = makeStore()
         store.save(lease(key: "KEY", id: "lic-1", file: foreign))
-        let client = SpyCheckInClient(checkIn: [.unreachable])
+        let client = SpyCheckInClient(checkIn: [.unreachable(.transport)])
         let gate = makeGate(client: client, store: store)
         #expect(await gate.currentStatus(now: now) == .couldNotReach)
     }
@@ -183,7 +183,7 @@ import Testing
         )
         let store = makeStore()
         store.save(lease(key: "KEY", id: "lic-1", file: own))
-        let client = SpyCheckInClient(checkIn: [.unreachable])
+        let client = SpyCheckInClient(checkIn: [.unreachable(.transport)])
         let gate = makeGate(client: client, store: store)
         #expect(await gate.currentStatus(now: now) == .valid)
     }
@@ -204,7 +204,9 @@ import Testing
         )
         let store = makeStore()
         store.save(lease(key: "KEY", id: "lic-1", file: file))
-        let client = SpyCheckInClient(checkIn: [.trialExpired(licenseID: "lic-1"), .unreachable])
+        let client = SpyCheckInClient(
+            checkIn: [.trialExpired(licenseID: "lic-1"), .unreachable(.transport)]
+        )
         let gate = makeGate(client: client, store: store)
 
         // Online: paywall — and the lease is KEPT (the behavior change).

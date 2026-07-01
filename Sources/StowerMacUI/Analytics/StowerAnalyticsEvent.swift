@@ -96,6 +96,26 @@ internal enum StowerAnalyticsEvent: Sendable {
     ///   - surface: The surface the user triggered it from.
     case featureUsed(feature: String, surface: String)
 
+    // MARK: — Licensing operational errors
+
+    /// A license check could not reach a verdict ("can't connect").
+    ///
+    /// Emitted from `StowerLicenseGate` on a genuine-unreachable or local-failure
+    /// resolution — first-run mint and returning-user check-in — never on a
+    /// reachable-but-rejected verdict (401/409). **Per-occurrence.**
+    ///
+    /// Both associated values are bounded enums mapped to stable, PII-safe tokens;
+    /// the URL, license key, license id, and fingerprint never appear.
+    ///
+    /// - Parameters:
+    ///   - reason: The coarse cause (transport / HTTP status / decode / bad URL /
+    ///     local-store / unauthorized).
+    ///   - endpoint: Which licensing call failed (`mintTrial` or `checkIn`).
+    case licenseUnreachable(
+        reason: StowerLicenseUnreachableReason,
+        endpoint: StowerLicenseEndpoint
+    )
+
     // MARK: — Signal mapping
 
     /// The TelemetryDeck signal name for this event (dot-separated namespace).
@@ -110,6 +130,7 @@ internal enum StowerAnalyticsEvent: Sendable {
         case .boardReached: return "board_reached"
         case .boardItemClicked: return "board_item_clicked"
         case .featureUsed: return "feature_used"
+        case .licenseUnreachable: return "license_unreachable"
         }
     }
 
@@ -138,6 +159,9 @@ internal enum StowerAnalyticsEvent: Sendable {
 
         case .featureUsed(let feature, let surface):
             return ["feature": feature, "surface": surface]
+
+        case .licenseUnreachable(let reason, let endpoint):
+            return ["reason": Self.reasonToken(reason), "endpoint": endpoint.token]
         }
     }
 
@@ -148,6 +172,41 @@ internal enum StowerAnalyticsEvent: Sendable {
         case .upgradeRequired: return "upgrade_required"
         case .connectOnce: return "connect_once"
         case .couldNotReach: return "could_not_reach"
+        }
+    }
+
+    /// Maps a `StowerLicenseUnreachableReason` to a coarse, bounded, PII-safe token.
+    ///
+    /// The HTTP-status case embeds only the integer status code, never a
+    /// URL/key/id/fingerprint.
+    private static func reasonToken(_ reason: StowerLicenseUnreachableReason) -> String {
+        switch reason {
+        case .transport: return "transport"
+        case .httpStatus(let code): return "http_\(code)"
+        case .decodeFailure: return "decode_failure"
+        case .badURL: return "bad_url"
+        case .localStoreFailure: return "local_store_failure"
+        case .machineFileUnauthorized: return "machine_file_unauthorized"
+        }
+    }
+}
+
+/// Which licensing call could not reach a verdict, for
+/// `StowerAnalyticsEvent.licenseUnreachable(reason:endpoint:)`.
+///
+/// A bounded enum mapped to a stable token — never a raw URL.
+internal enum StowerLicenseEndpoint: Sendable, Equatable {
+    /// The first-run trial-mint call (`…/license/mint-trial`).
+    case mintTrial
+
+    /// The returning-user check-in call (`…/license/check-in`).
+    case checkIn
+
+    /// The stable, PII-safe analytics token for this endpoint.
+    internal var token: String {
+        switch self {
+        case .mintTrial: return "mint_trial"
+        case .checkIn: return "check_in"
         }
     }
 }

@@ -14,9 +14,9 @@ internal enum StowerTrialMint: Sendable, Equatable {
     /// crashed claim is still inside the reclaim window) — retry shortly.
     case retryShortly
 
-    /// Transport throw / 5xx / undecodable body — the server could not be reached
-    /// for a verdict.
-    case unreachable
+    /// Transport throw / any non-success HTTP status / undecodable body — the
+    /// server could not produce a verdict; carries the coarse PII-safe cause.
+    case unreachable(StowerLicenseUnreachableReason)
 }
 
 /// POSTs a device `fingerprint` to the Supabase `mint-trial` route and classifies
@@ -52,23 +52,25 @@ internal struct StowerTrialMintClient: Sendable {
     ///   `.unreachable` on a transport throw, any other status, or a 200 missing
     ///   any required field.
     internal func mint(fingerprint: String) async -> StowerTrialMint {
-        guard let request = mintRequest(fingerprint: fingerprint) else { return .unreachable }
+        guard let request = mintRequest(fingerprint: fingerprint) else {
+            return .unreachable(.badURL)
+        }
         let data: Data
         let response: URLResponse
         do {
             (data, response) = try await transport(request)
         } catch {
-            return .unreachable
+            return .unreachable(.transport)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == Self.retryStatus { return .retryShortly }
-        guard status == Self.okStatus,
-            let body = try? JSONDecoder().decode(StowerMintResponse.self, from: data),
+        guard status == Self.okStatus else { return .unreachable(.httpStatus(status)) }
+        guard let body = try? JSONDecoder().decode(StowerMintResponse.self, from: data),
             let licenseKey = body.licenseKey, let licenseID = body.licenseID,
             let machineFile = body.machineFile,
             !licenseKey.isEmpty, !licenseID.isEmpty, !machineFile.isEmpty
         else {
-            return .unreachable
+            return .unreachable(.decodeFailure)
         }
         return .minted(licenseKey: licenseKey, licenseID: licenseID, machineFile: machineFile)
     }
