@@ -61,8 +61,16 @@ struct StowerMacApp: App {
             }
             #endif
         }
+        // SwiftUI allows exactly one Settings scene. The Privacy pane (library
+        // module) and the Updates pane (app target) are composed into that single
+        // scene by passing the updater pane in as an additional tab.
         Settings {
-            StowerSettingsView()
+            StowerSettingsView {
+                StowerUpdaterSettingsView(controller: updaterController)
+                    .tabItem {
+                        Label("Updates", systemImage: "arrow.down.circle")
+                    }
+            }
         }
         .commands {
             CommandGroup(after: .appInfo) {
@@ -70,10 +78,6 @@ struct StowerMacApp: App {
                     updaterController.checkForUpdates()
                 }
             }
-        }
-
-        Settings {
-            StowerUpdaterSettingsView(controller: updaterController)
         }
     }
 

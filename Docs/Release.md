@@ -25,11 +25,19 @@ will trust. **Losing it permanently strands every existing install** — they ca
 never receive another update.
 
 ```bash
-# Install Sparkle release tools
-brew install --cask sparkle
+# Install Sparkle release tools. The Homebrew cask installs only "Sparkle Test
+# App.app" — NOT generate_keys/sign_update — so fetch the distribution tarball
+# (its bin/ holds the tools). Match the version to StowerMac.xcodeproj's
+# Package.resolved (currently 2.9.3).
+SPARKLE_VERSION=2.9.3
+mkdir -p /tmp/sparkle-tools
+curl -fsSL "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" \
+  | tar -xJ -C /tmp/sparkle-tools
+export PATH="/tmp/sparkle-tools/bin:$PATH"   # generate_keys, sign_update now on PATH
 
-# Generate the keypair. The private key is stored in your login Keychain
-# under the account "Stower". The public key is printed to stdout.
+# Generate the keypair. generate_keys stores the private key in your login
+# Keychain as an item labeled "Private key for signing Sparkle updates"
+# (default account "ed25519"). The public key is printed to stdout.
 generate_keys
 
 # Back up the private key to an offline location (USB drive / printed / 1Password):
@@ -41,8 +49,8 @@ rm ~/Desktop/sparkle_private_key_backup.txt
 generate_keys -x /dev/stdout
 
 # Restore drill (run at least once before the first release):
-#   1. Delete the Keychain item "Stower" in Keychain Access.
-#   2. Restore from your offline backup with: generate_keys --import <backup-file>
+#   1. In Keychain Access, delete the item named "Private key for signing Sparkle updates".
+#   2. Restore from your offline backup with: generate_keys -f <backup-file>
 #   3. Confirm `sign_update --ed-key-file <backup-file> <any-file>` produces a non-empty signature.
 #      (The CI workflow passes the key via --ed-key-file from the SPARKLE_EDDSA_PRIVATE_KEY secret.)
 ```
@@ -107,7 +115,7 @@ is set in both Debug and Release configs in `project.pbxproj`. No action needed.
 
 ### P6 — GitHub Environment hardening (JC7)
 
-```
+```text
 GitHub repository → Settings → Environments → New environment → name: release
   → Add required reviewers (yourself for solo)
   → Add secrets: all five secrets from P1–P3 above
@@ -184,4 +192,4 @@ Sparkle cannot downgrade. The rollback path is always forward:
 | CFBundleVersion strictly increases | build = (prev appcast build) + 1 |
 | Appcast item count never decreases | item count assertion post-amend |
 | Temp keychain deleted on job exit | `if: always()` cleanup step |
-| Dry-run does NOT create a GitHub Release | gate on `github.ref_type == 'tag'` |
+| Dry-run does NOT create a GitHub Release | publish steps gate on `github.event_name == 'push'` |

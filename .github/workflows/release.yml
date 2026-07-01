@@ -40,7 +40,11 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then
+          # A real publish is ALWAYS a tag push (the `push` trigger is scoped to
+          # messages-v* tags); workflow_dispatch is dry-run only. Gate on the
+          # event, not github.ref_type — a workflow_dispatch can target a tag ref,
+          # which would otherwise be misread as a publish.
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
             VERSION="${REF_NAME#messages-v}"
           else
             VERSION="$INPUT_VERSION"
@@ -83,6 +87,10 @@ jobs:
           P12_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/release-signing.keychain-db"
+          # Publish KEYCHAIN_PATH to the job env BEFORE any failable step below, so
+          # the `if: always()` cleanup step can always delete the temp keychain even
+          # if `security import` fails partway through.
+          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
           KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
           echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
@@ -93,13 +101,24 @@ jobs:
             -P "$P12_PASSWORD" \
             -T /usr/bin/codesign \
             -T /usr/bin/security
-          security list-keychains -d user -s "$KEYCHAIN_PATH" "$(security list-keychains -d user | tr -d '"')"
+          # Prepend the temp keychain to the user search list WITHOUT collapsing the
+          # existing keychains into one argument. `security list-keychains` prints one
+          # quoted, indented path per line; read each into an array so every existing
+          # keychain is passed to `-s` as its own argument (a quoted command
+          # substitution would merge them into a single malformed argument).
+          EXISTING_KEYCHAINS=()
+          while IFS= read -r kc; do
+            kc="$(printf '%s' "$kc" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/"//g')"
+            [ -n "$kc" ] && EXISTING_KEYCHAINS+=("$kc")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$KEYCHAIN_PATH" "${EXISTING_KEYCHAINS[@]}"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           rm "$RUNNER_TEMP/cert.p12"
-          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
 
       - name: Archive
         env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.build.outputs.build }}
           NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
         run: |
           ARCHIVE_PATH="$RUNNER_TEMP/StowerMac.xcarchive"
@@ -109,8 +128,8 @@ jobs:
             -configuration Release \
             -destination "generic/platform=macOS" \
             -archivePath "$ARCHIVE_PATH" \
-            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
-            CURRENT_PROJECT_VERSION="${{ steps.build.outputs.build }}" \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Developer ID Application" \
             DEVELOPMENT_TEAM="$NOTARY_TEAM_ID"
@@ -189,8 +208,9 @@ jobs:
           echo "Info.plist gates: PASSED (SUFeedURL correct, SUEnableAutomaticChecks absent)"
 
       - name: Zip (pre-notarize, before staple)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
           ZIP_NAME="StowerMac-${VERSION}.zip"
           ZIP_PATH="$RUNNER_TEMP/$ZIP_NAME"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
@@ -226,8 +246,9 @@ jobs:
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
           NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
           NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          SUBMISSION_ID: ${{ steps.notarize.outputs.submission_id }}
         run: |
-          xcrun notarytool log "${{ steps.notarize.outputs.submission_id }}" \
+          xcrun notarytool log "$SUBMISSION_ID" \
             --apple-id "$NOTARY_APPLE_ID" \
             --password "$NOTARY_APP_PASSWORD" \
             --team-id "$NOTARY_TEAM_ID" || true
@@ -261,45 +282,53 @@ jobs:
           fi
 
       - name: Stop here for dry-run (workflow_dispatch)
-        if: github.ref_type != 'tag'
+        if: github.event_name == 'workflow_dispatch'
         run: |
           echo "Dry-run complete: stapled artifact at $ZIP_PATH"
           echo "No GitHub Release or appcast changes made."
           exit 0
 
       - name: Create GitHub Release
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           NOTES_FILE="$RUNNER_TEMP/release_notes.md"
-          VERSION="${{ steps.version.outputs.version }}"
           echo "## Stower ${VERSION}" > "$NOTES_FILE"
           echo "" >> "$NOTES_FILE"
           echo "See [release notes](https://updates.stower.app/messages/notes/${VERSION}.html) for details." >> "$NOTES_FILE"
-          gh release create "${{ github.ref_name }}" \
+          gh release create "$GITHUB_REF_NAME" \
             "$ZIP_PATH" \
             --title "Stower $VERSION" \
             --notes-file "$NOTES_FILE"
-          ASSET_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$ZIP_NAME"
+          ASSET_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$ZIP_NAME"
           echo "ASSET_URL=$ASSET_URL" >> "$GITHUB_ENV"
-        env:
-          GH_TOKEN: ${{ github.token }}
 
       - name: Sign update and amend appcast
-        if: github.ref_type == 'tag'
+        if: github.event_name == 'push'
         env:
           SPARKLE_EDDSA_PRIVATE_KEY: ${{ secrets.SPARKLE_EDDSA_PRIVATE_KEY }}
           PAGES_BRANCH: gh-pages
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.build.outputs.build }}
+          PREV_ITEM_COUNT: ${{ steps.build.outputs.prev_item_count }}
+          # Must match the Sparkle version resolved in StowerMac.xcodeproj's
+          # Package.resolved — sign_update has to match the framework that verifies.
+          SPARKLE_VERSION: "2.9.3"
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          BUILD="${{ steps.build.outputs.build }}"
-          PREV_ITEM_COUNT="${{ steps.build.outputs.prev_item_count }}"
-
-          brew install --cask sparkle 2>/dev/null || true
-          SIGN_UPDATE="$(find /Applications -name 'sign_update' -type f 2>/dev/null | head -1 || \
-            find /usr/local -name 'sign_update' -type f 2>/dev/null | head -1 || \
-            which sign_update 2>/dev/null || echo "")"
-          if [ -z "$SIGN_UPDATE" ]; then
-            echo "ERROR: sign_update not found — install Sparkle release tools." >&2
+          # sign_update ships in Sparkle's official release tarball under bin/. The
+          # Homebrew cask only installs "Sparkle Test App.app" (no bin/ tools), so
+          # fetch the version-matched distribution archive directly for a
+          # deterministic, offline-from-brew tool source.
+          SPARKLE_TOOLS="$RUNNER_TEMP/sparkle-tools"
+          mkdir -p "$SPARKLE_TOOLS"
+          curl -fsSL \
+            "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz" \
+            | tar -xJ -C "$SPARKLE_TOOLS"
+          SIGN_UPDATE="$SPARKLE_TOOLS/bin/sign_update"
+          if [ ! -x "$SIGN_UPDATE" ]; then
+            echo "ERROR: sign_update not found at $SIGN_UPDATE after extracting Sparkle ${SPARKLE_VERSION}." >&2
             exit 1
           fi
 
@@ -343,44 +372,10 @@ jobs:
               '</rss>' > "$APPCAST_PATH"
           fi
 
-          AMEND_SCRIPT="$RUNNER_TEMP/amend_appcast.py"
-          printf '%s\n' \
-            'import sys, os' \
-            'p = os.environ["APPCAST_PATH"]' \
-            'v = os.environ["VERSION"]' \
-            'b = os.environ["BUILD"]' \
-            'd = os.environ["PUB_DATE"]' \
-            'n = os.environ["NOTES_URL"]' \
-            'a = os.environ["ASSET_URL"]' \
-            'z = os.environ["FILE_SIZE"]' \
-            'e = os.environ["ED_SIGNATURE"]' \
-            'r = os.environ["ROLLOUT_INTERVAL"]' \
-            'item = (' \
-            '"    <item>\n"' \
-            '"      <title>Stower " + v + "</title>\n"' \
-            '"      <pubDate>" + d + "</pubDate>\n"' \
-            '"      <sparkle:releaseNotesLink>" + n + "</sparkle:releaseNotesLink>\n"' \
-            '"      <sparkle:version>" + b + "</sparkle:version>\n"' \
-            '"      <sparkle:shortVersionString>" + v + "</sparkle:shortVersionString>\n"' \
-            '"      <sparkle:phasedRolloutInterval>" + r + "</sparkle:phasedRolloutInterval>\n"' \
-            '"      <enclosure\n"' \
-            '"        url=\"" + a + "\"\n"' \
-            '"        length=\"" + z + "\"\n"' \
-            '"        type=\"application/octet-stream\"\n"' \
-            '"        sparkle:edSignature=\"" + e + "\"\n"' \
-            '"      />\n"' \
-            '"    </item>"' \
-            ')' \
-            'with open(p) as f: content = f.read()' \
-            'tag = "</channel>"' \
-            'if tag not in content: print("ERROR: </channel> not found",file=sys.stderr); sys.exit(1)' \
-            'updated = content.replace(tag, item + "\n  " + tag)' \
-            'with open(p, "w") as f: f.write(updated)' \
-            'print("Appcast amended.")' > "$AMEND_SCRIPT"
           APPCAST_PATH="$APPCAST_PATH" VERSION="$VERSION" BUILD="$BUILD" \
             PUB_DATE="$PUB_DATE" NOTES_URL="$NOTES_URL" ASSET_URL="$ASSET_URL" \
             FILE_SIZE="$FILE_SIZE" ED_SIGNATURE="$ED_SIGNATURE" ROLLOUT_INTERVAL="$ROLLOUT_INTERVAL" \
-            python3 "$AMEND_SCRIPT"
+            python3 "$GITHUB_WORKSPACE/Scripts/release/amend_appcast.py"
 
           NEW_ITEM_COUNT="$(grep -c '<item>' "$APPCAST_PATH" || true)"
           if [ "$NEW_ITEM_COUNT" -lt "$PREV_ITEM_COUNT" ]; then
@@ -390,15 +385,13 @@ jobs:
           echo "Appcast item count: $NEW_ITEM_COUNT (previous: $PREV_ITEM_COUNT)"
 
           NOTES_HTML="$NOTES_DIR/${VERSION}.html"
-          REPO="${{ github.repository }}"
-          TAG="${{ github.ref_name }}"
           printf '%s\n' \
             '<!DOCTYPE html>' \
             '<html lang="en">' \
             "<head><meta charset=\"utf-8\"><title>Stower ${VERSION}</title></head>" \
             '<body>' \
             "<h2>Stower ${VERSION}</h2>" \
-            "<p>See the <a href=\"https://github.com/${REPO}/releases/tag/${TAG}\">GitHub Release</a> for details.</p>" \
+            "<p>See the <a href=\"https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}\">GitHub Release</a> for details.</p>" \
             '</body>' \
             '</html>' > "$NOTES_HTML"
 
