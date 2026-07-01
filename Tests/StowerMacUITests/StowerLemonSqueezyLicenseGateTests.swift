@@ -162,4 +162,40 @@ import Testing
 
         #expect(gate.licenseState(now: Date()) == .licensed)
     }
+
+    /// S2 end-to-end: a trial seeded at first launch, read six days later
+    /// (one day remaining), drives the board's bottom banner to F3
+    /// (`.buyNudge`) — the programmatic equivalent of backdating
+    /// `com.stower.trial.firstLaunch` to six days ago and relaunching.
+    @Test("S2: a 6-day-old trial routes to .trial and the banner resolves to F3 .buyNudge")
+    internal func sixDayOldTrialResolvesF3BuyNudge() {
+        let suite = "stower.lsgate.s2-f3"
+        let (store, defaults) = makeStore(suite)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let clock = StowerTrialClock(defaults: defaults)
+        let gate = StowerLemonSqueezyLicenseGate(
+            client: StowerLemonSqueezyClient(expectedStoreID: 1, expectedProductID: 2),
+            store: store,
+            trialClock: clock
+        )
+        let firstLaunch = Date(timeIntervalSince1970: 1_700_000_000)
+        _ = gate.licenseState(now: firstLaunch)  // seeds the first-launch date
+        let sixDaysLater = firstLaunch.addingTimeInterval(6 * 24 * 60 * 60)
+        let expiry = firstLaunch.addingTimeInterval(7 * 24 * 60 * 60)
+
+        let state = gate.licenseState(now: sixDaysLater)
+        let badge = { () -> StowerTrialBadge? in
+            guard case .trial(let expiry) = state else { return nil }
+            return StowerTrialBadge(expiry: expiry)
+        }()
+        let banner = StowerBoardBannerState.resolve(
+            hasStoredLicense: false,
+            boughtThisSession: false,
+            trialBadge: badge,
+            now: sixDaysLater
+        )
+
+        #expect(state == .trial(expiry: expiry))
+        #expect(banner == .buyNudge(expiry: expiry))
+    }
 }
