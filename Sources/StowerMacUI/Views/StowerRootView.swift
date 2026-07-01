@@ -176,6 +176,15 @@ public struct StowerRootView: View {
             .animation(.easeInOut(duration: Self.crossFade), value: model.state)
             .task { model.start() }
             .onDisappear { model.cancel() }
+            // F1 lives at the root, not inside the board case: a successful
+            // activation's startup rerun can stop short of the board (FDA
+            // onboarding, model unavailable), and the confirmation must present
+            // over whichever screen the rerun lands on.
+            .alert(Self.purchaseThanksTitle, isPresented: $showPurchaseThanks) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(Self.purchaseThanksMessage)
+            }
     }
 
     @ViewBuilder private var screen: some View {
@@ -252,11 +261,6 @@ public struct StowerRootView: View {
                 }
                 // Re-arm the disclosure countdown for this foreground board session.
                 scheduleConsentCardIfNeeded()
-            }
-            .alert(Self.purchaseThanksTitle, isPresented: $showPurchaseThanks) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(Self.purchaseThanksMessage)
             }
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })

@@ -37,9 +37,17 @@ extension StowerRootView {
         return resolved
     }
 
-    /// Activates `key` via the model, then — on success — jumps straight to the
-    /// F1 confirmation alert (the model's `.activate` reruns startup into the
+    /// Activates `key` via the model, then — on success — fires the F1
+    /// confirmation alert (the model's `.activate` reruns startup into the
     /// board).
+    ///
+    /// Success is keyed off `activate(key:)`'s return value, NOT the rerun's
+    /// terminal state: a successful activation persists the license before the
+    /// rerun, and that rerun can legitimately stop short of the board (FDA
+    /// onboarding, `StowerModelUnavailableView`). The user still paid and
+    /// activated, so F1 must fire on every success path — the alert is attached
+    /// at `StowerRootView.body`'s root, so it presents over whichever screen
+    /// the rerun lands on.
     ///
     /// Refreshes `trialBadge` explicitly here rather than relying on the board's
     /// `onAppear` to refire: a mid-trial activation (F2/gear-menu entry) commits
@@ -49,14 +57,12 @@ extension StowerRootView {
     /// to `nil` at this point, so a direct read here is the correct fix either way.
     internal func activate(key: String) {
         Task {
-            await model.activate(key: key)
+            guard await model.activate(key: key) else { return }
             await model.activeRun?.value
-            if model.state == .connectedPreparingBoard {
-                trialBadge = model.trialBadge()
-                licenseKey = ""
-                boughtThisSession = false
-                showPurchaseThanks = true
-            }
+            trialBadge = model.trialBadge()
+            licenseKey = ""
+            boughtThisSession = false
+            showPurchaseThanks = true
         }
     }
 

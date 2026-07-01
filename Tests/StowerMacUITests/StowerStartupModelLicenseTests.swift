@@ -158,12 +158,39 @@ import Testing
         await model.activeRun?.value
         #expect(model.state == .needsLicense(nil))
 
-        await model.activate(key: "KEY")
+        let activated = await model.activate(key: "KEY")
         await model.activeRun?.value
 
+        #expect(activated)
         #expect(gate.persistCalls.map(\.key) == ["KEY"])
         #expect(gate.persistCalls.map(\.instanceID) == ["inst-1"])
         #expect(model.state == .connectedPreparingBoard)
+    }
+
+    @Test("a successful activate returns true even when the rerun stops short of the board")
+    internal func activateSuccessReturnsTrueWhenRerunStopsOnFDA() async {
+        // The persisted-license rerun routes to FDA onboarding, not the board —
+        // the F1 confirmation is keyed off activate's return value, so it must
+        // report success here regardless of the rerun's terminal state.
+        let path = "/var/db"
+        let provider = StowerFakeStartupProvider(
+            loadBehaviors: [.failure(.fullDiskAccessMissing(path: path))]
+        )
+        let gate = StowerFakeLicenseGate(
+            states: [.expired, .licensed],
+            activationResult: .activated(instanceID: "inst-1")
+        )
+        let model = makeModel(provider: provider, licenseGate: gate)
+        model.start()
+        await model.activeRun?.value
+        #expect(model.state == .needsLicense(nil))
+
+        let activated = await model.activate(key: "KEY")
+        await model.activeRun?.value
+
+        #expect(activated)
+        #expect(gate.persistCalls.map(\.key) == ["KEY"])
+        #expect(model.state == .needsFullDiskAccess(path: path))
     }
 
     @Test("an invalid activation commits needsLicense(.invalid)")
@@ -173,8 +200,9 @@ import Testing
         model.start()
         await model.activeRun?.value
 
-        await model.activate(key: "KEY")
+        let activated = await model.activate(key: "KEY")
 
+        #expect(!activated)
         #expect(model.state == .needsLicense(.invalid))
         #expect(gate.persistCalls.isEmpty)
     }
@@ -186,8 +214,9 @@ import Testing
         model.start()
         await model.activeRun?.value
 
-        await model.activate(key: "KEY")
+        let activated = await model.activate(key: "KEY")
 
+        #expect(!activated)
         #expect(model.state == .needsLicense(.couldNotReach))
         #expect(gate.persistCalls.isEmpty)
     }
@@ -209,11 +238,12 @@ import Testing
         }
         // cancel() bumps the generation while activate(key:) is still blocked
         // inside licenseGate.activate — the generation guard must then drop
-        // the late persist.
+        // the late persist (and report failure, so no F1 alert fires).
         model.cancel()
         gate.releaseActivation()
-        await activateTask.value
+        let activated = await activateTask.value
 
+        #expect(!activated)
         #expect(gate.persistCalls.isEmpty)
     }
 
@@ -236,12 +266,15 @@ import Testing
         #expect(model.isActivating)
 
         // A second call while the first is still blocked inside licenseGate.activate
-        // must return immediately without invoking the gate a second time.
-        await model.activate(key: "KEY")
+        // must return immediately (reporting failure) without invoking the gate
+        // a second time.
+        let secondActivated = await model.activate(key: "KEY")
+        #expect(!secondActivated)
         #expect(gate.activationCallCountValue == 1)
 
         gate.releaseActivation()
-        await first.value
+        let firstActivated = await first.value
+        #expect(firstActivated)
         #expect(model.isActivating == false)
     }
 }

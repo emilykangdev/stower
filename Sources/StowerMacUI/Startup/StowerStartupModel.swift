@@ -163,26 +163,36 @@ internal final class StowerStartupModel {
     /// the error so the entry screen can show it — without re-emitting
     /// `hardware_checked`/`paywall_reached`: a failed re-attempt is an error
     /// re-render of a paywall visit already counted, not a new one.
-    internal func activate(key: String) async {
-        guard !isActivating, state != .connectedPreparingBoard else { return }
+    ///
+    /// Returns `true` only when this call activated and persisted the key —
+    /// the caller-visible success signal for the F1 confirmation. The rerun's
+    /// terminal state is deliberately NOT that signal: a successful activation
+    /// can still land on `.needsFullDiskAccess` or `.modelUnavailable`, and the
+    /// purchase confirmation must fire on every success path regardless.
+    @discardableResult
+    internal func activate(key: String) async -> Bool {
+        guard !isActivating, state != .connectedPreparingBoard else { return false }
         isActivating = true
         defer { isActivating = false }
         let runGeneration = generation
         let outcome = await licenseGate.activate(key: key)
-        guard generation == runGeneration else { return }
+        guard generation == runGeneration else { return false }
         switch outcome {
         case .activated(let instanceID):
             licenseGate.persist(key: key, instanceID: instanceID)
             reporter.report(.activated)
             beginRun()
+            return true
         case .invalid:
             commit(.needsLicense(.invalid), generation: runGeneration, emitsFunnelEvent: false)
+            return false
         case .couldNotReach:
             commit(
                 .needsLicense(.couldNotReach),
                 generation: runGeneration,
                 emitsFunnelEvent: false
             )
+            return false
         }
     }
 
