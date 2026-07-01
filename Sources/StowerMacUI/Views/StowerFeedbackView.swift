@@ -125,6 +125,7 @@ internal struct StowerFeedbackView: View {
                 isPresented = false
             }
             .keyboardShortcut(.cancelAction)
+            .disabled(model.isSending)
             sendButton
         }
     }
