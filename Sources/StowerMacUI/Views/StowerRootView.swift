@@ -51,6 +51,18 @@ public struct StowerRootView: View {
 
     private let settings: StowerSystemSettingsOpener
 
+    /// The feedback submission client.
+    ///
+    /// Built once at init from `StowerLicenseConfig.resolved.feedbackBaseURL`.
+    /// Injected so tests can substitute a spy without the real config.
+    private let feedbackClient: StowerFeedbackClient
+
+    /// The human-readable app version string included in every feedback payload.
+    ///
+    /// Read nil-safely from `Bundle.main` at init; falls back to `"unknown"` and
+    /// `"?"` rather than force-unwrapping `Any?` values (AGENTS.md).
+    private let appVersion: String
+
     /// The dismissal seam for the trial badge.
     ///
     /// Reads and writes the UserDefaults flag that hides the badge persistently
@@ -117,6 +129,9 @@ public struct StowerRootView: View {
         licenseGate: any StowerLicenseGating,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
         badgeDismissal: any StowerTrialBadgeDismissing = StowerUserDefaultsBadgeDismissal(),
+        feedbackClient: StowerFeedbackClient = StowerFeedbackClient(
+            functionBaseURL: StowerLicenseConfig.resolved.feedbackBaseURL
+        ),
         flusher: StowerTerminationFlusher? = nil
     ) {
         let startupModel = StowerStartupModel(
@@ -141,6 +156,11 @@ public struct StowerRootView: View {
         flusher?.onFlush { [weak boardModel] in await boardModel?.flushAll() }
         self.settings = settings
         self.badgeDismissal = badgeDismissal
+        self.feedbackClient = feedbackClient
+        let infoDict = Bundle.main.infoDictionary
+        let short = (infoDict?["CFBundleShortVersionString"] as? String) ?? "unknown"
+        let build = (infoDict?["CFBundleVersion"] as? String) ?? "?"
+        self.appVersion = short + " (" + build + ")"
     }
 
     /// The startup screen for the current state, cross-fading on change.
@@ -179,6 +199,11 @@ public struct StowerRootView: View {
                     trial: trialBadge,
                     showsTrialBanner: !trialBannerDismissed,
                     onBuy: { openCheckout(licenseID: $0) },
+                    onSendFeedback: { draft in
+                        await feedbackClient.send(draft: draft)
+                    },
+                    feedbackLicenseID: model.currentLicenseID(),
+                    feedbackAppVersion: appVersion,
                     onDismissTrial: {
                         badgeDismissal.dismiss()
                         trialBannerDismissed = true

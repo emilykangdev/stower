@@ -109,6 +109,16 @@ internal final class StowerStartupModel {
         licenseGate.trialBadge()
     }
 
+    /// The Keygen license resource id from the stored lease, or `nil` when no lease
+    /// is present.
+    ///
+    /// Read-through to `licenseGate.currentLicenseID()`. Present for both trial and
+    /// paid leases; `trialBadge()?.licenseID` must NOT be used as a substitute
+    /// because paid leases have a nil badge but a non-nil id.
+    internal func currentLicenseID() -> String? {
+        licenseGate.currentLicenseID()
+    }
+
     /// Routes a board-load failure back into the startup screen flow.
     ///
     /// The board runs as a child `StowerBoardViewModel` rooted at

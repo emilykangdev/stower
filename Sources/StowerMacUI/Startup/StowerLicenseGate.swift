@@ -95,6 +95,10 @@ internal struct StowerLicenseGate: StowerLicenseGating {
         leaseStore.load() != nil
     }
 
+    internal func currentLicenseID() -> String? {
+        leaseStore.load()?.licenseID
+    }
+
     internal func trialBadge() -> StowerTrialBadge? {
         guard let lease = leaseStore.load(),
             let expiry = leaseStore.trialExpiry(forLicenseID: lease.licenseID)

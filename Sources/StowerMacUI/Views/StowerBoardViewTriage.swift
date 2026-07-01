@@ -23,18 +23,18 @@ extension StowerBoardView {
         }
         ToolbarItem(placement: .primaryAction) { presetPicker }
         ToolbarItem(placement: .primaryAction) { refreshButton }
-        // The permanent license home: always mounted so the Buy path is
-        // discoverable even after the badge is dismissed. Shows the trial end
-        // date + a "Buy Stower v0" action only while on an active trial.
+        // The permanent gear menu: always mounted and always enabled. Shows the
+        // trial end date + "Buy Stower v0" only while on an active trial; always
+        // shows "Send Feedback…" so both trial and paid users can reach it.
         ToolbarItem(placement: .primaryAction) { licenseMenu }
     }
 
-    /// A gear menu that surfaces the license status and the single buy action.
+    /// A gear menu that surfaces the license status, the buy action, and feedback.
     ///
-    /// The trial date label is non-actionable (status only); the "Buy Stower v0"
-    /// item opens the checkout. The gear is always visible so users can find the
-    /// buy path even after dismissing the badge. Paid / no-trial → the menu
-    /// renders with no trial label and no buy item.
+    /// The trial date label is non-actionable (status only); "Buy Stower v0" opens
+    /// the checkout. "Send Feedback…" is always present in its own divider-separated
+    /// section so both trial and paid users can reach it. The gear is always enabled
+    /// because it always contains at least the feedback item.
     internal var licenseMenu: some View {
         Menu {
             if let badge = trial {
@@ -44,15 +44,18 @@ extension StowerBoardView {
                 Button("Buy Stower v0") {
                     onBuy(badge.licenseID)
                 }
+                Divider()
+            }
+            Section {
+                Button("Send Feedback\u{2026}") {
+                    showingFeedback = true
+                }
             }
         } label: {
             Image(systemName: "gearshape")
         }
-        // Paid / no-trial has no menu items, so disable the control rather than open
-        // an empty dead-end; the anchor stays visible for when a trial is active.
-        .disabled(trial == nil)
-        .help("License & settings")
-        .accessibilityLabel("License and settings menu")
+        .help("License & feedback")
+        .accessibilityLabel("License and feedback menu")
     }
 
     /// The clean at-rest row: a real Button opens the composer (so keyboard/VoiceOver

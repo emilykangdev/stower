@@ -14,11 +14,10 @@ import SwiftUI
 /// draining-bar undo, a batch Select mode, a `Muted Senders…` toolbar popover, and a
 /// conditional zero-state line — every surface gated to stay calm at rest.
 ///
-/// When `trial` is non-nil the board shows a gear menu "Buy Stower v0" item, and —
-/// while `showsTrialBanner` is true — a quiet, dismissible "Free trial · ends
-/// <date>" status banner. The banner is dismissible; the gear menu Buy is not (it
-/// is the permanent license home, so the buy path survives a banner dismissal).
-/// Both are absent for paid users (`trial == nil`).
+/// The gear menu is always enabled and always contains "Send Feedback…". When
+/// `trial` is non-nil it also shows the trial end date and a "Buy Stower v0" item.
+/// A quiet, dismissible "Free trial · ends <date>" banner is shown while
+/// `showsTrialBanner` is true; the gear-menu Buy survives a banner dismissal.
 internal struct StowerBoardView: View {
     @Bindable internal var model: StowerBoardViewModel
 
@@ -40,11 +39,37 @@ internal struct StowerBoardView: View {
     /// The only payment path in the board. Called exclusively from the gear menu item.
     internal let onBuy: (String) -> Void
 
+    /// Submits the feedback draft and returns the result.
+    ///
+    /// Assembled and injected by `StowerRootView` (models the `onBuy` closure
+    /// seam). The board owns the sheet presentation and the success confirmation;
+    /// it delegates all network + payload work to this closure.
+    internal let onSendFeedback: (StowerFeedbackDraft) async -> StowerFeedbackResult
+
+    /// The Keygen license resource id to attach to feedback submissions, or `nil` when no lease exists.
+    ///
+    /// Assembled by `StowerRootView` from the startup model.
+    internal let feedbackLicenseID: String?
+
+    /// The app version string included in every feedback payload, e.g. `"1.0 (42)"`.
+    ///
+    /// Assembled by `StowerRootView` from `Bundle.main`.
+    internal let feedbackAppVersion: String
+
     /// Persists the banner dismissal.
     ///
     /// Called when the user taps the banner's dismiss control; `StowerRootView` then
     /// hides the banner (but keeps `trial` so the gear-menu Buy persists).
     internal let onDismissTrial: () -> Void
+
+    /// Whether the feedback sheet is presented.
+    @State internal var showingFeedback = false
+
+    /// Whether the board-level feedback success confirmation is visible.
+    ///
+    /// Set to `true` when the sheet's `onSuccess` fires; auto-clears after a
+    /// short dwell so the confirmation reads as a momentary acknowledgement.
+    @State internal var showsFeedbackConfirmation = false
 
     /// The row hovered right now, so only its trailing dismiss control is revealed
     /// (the list stays clean at rest). `internal` so the `+Triage` view extension reads it.
@@ -66,9 +91,11 @@ internal struct StowerBoardView: View {
                 .toolbar { toolbarContent }
                 .overlay(alignment: .bottomTrailing) { composerOverlay }
                 .overlay(alignment: .bottom) { undoBarOverlay }
+                .overlay(alignment: .bottom) { feedbackConfirmationOverlay }
                 .safeAreaInset(edge: .top, spacing: 0) { trialBadgeOverlay }
         }
         .animation(.easeInOut(duration: Self.undoBarFade), value: model.undoBar?.id)
+        .animation(.easeInOut(duration: Self.undoBarFade), value: showsFeedbackConfirmation)
         .confirmationDialog(
             "Mute this sender?",
             isPresented: muteConfirmationBinding,
@@ -80,6 +107,24 @@ internal struct StowerBoardView: View {
             Text(
                 "They'll be hidden from this board, not from Messages. "
                     + "Unmute anytime from Muted Senders in the toolbar."
+            )
+        }
+        .sheet(isPresented: $showingFeedback) {
+            let formModel = StowerFeedbackFormModel(
+                licenseID: feedbackLicenseID,
+                appVersion: feedbackAppVersion,
+                onSubmit: onSendFeedback
+            )
+            StowerFeedbackView(
+                model: formModel,
+                onSuccess: {
+                    showsFeedbackConfirmation = true
+                    Task {
+                        try? await Task.sleep(for: Self.feedbackConfirmationDwell)
+                        showsFeedbackConfirmation = false
+                    }
+                },
+                isPresented: $showingFeedback
             )
         }
         .task { model.onAppear() }
@@ -242,9 +287,37 @@ internal struct StowerBoardView: View {
         .accessibilityLabel("Refresh board")
     }
 
+    /// The brief bottom-edge confirmation shown after a successful feedback send.
+    ///
+    /// Reuses the same bottom-edge anchoring as `undoBarOverlay` — a calm capsule
+    /// that appears for a short dwell then fades. No undo action (fire-and-forget).
+    @ViewBuilder internal var feedbackConfirmationOverlay: some View {
+        if showsFeedbackConfirmation {
+            Text("Thanks for the feedback! Emily reads every one.")
+                .font(.callout)
+                .padding(.horizontal, Self.confirmationHPadding)
+                .padding(.vertical, Self.confirmationVPadding)
+                .background(.ultraThinMaterial, in: Capsule())
+                .shadow(
+                    color: .black.opacity(Self.confirmationShadowOpacity),
+                    radius: Self.confirmationShadowRadius,
+                    y: Self.confirmationShadowY
+                )
+                .padding(.bottom, Self.undoBarBottomPadding)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .accessibilityLabel("Thanks for the feedback! Emily reads every one.")
+        }
+    }
+
     private static let yourTurnEmpty =
         "No conversations are waiting on your reply in this window."
     private static let followUpEmpty =
         "No conversations are waiting on their reply in this window."
     private static let undoBarFade: Double = 0.2
+    private static let feedbackConfirmationDwell: Duration = .seconds(4)
+    private static let confirmationHPadding: CGFloat = 16
+    private static let confirmationVPadding: CGFloat = 10
+    private static let confirmationShadowOpacity: CGFloat = 0.15
+    private static let confirmationShadowRadius: CGFloat = 8
+    private static let confirmationShadowY: CGFloat = 2
 }

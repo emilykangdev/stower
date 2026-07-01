@@ -351,4 +351,22 @@ extension StowerLicenseGateTests {
 
         #expect(gate.trialBadge() == nil)
     }
+
+    // I6 — currentLicenseID() returns the lease's licenseID when a lease exists
+    // (trial or paid) and nil otherwise; never throws.
+    @Test("I6: currentLicenseID returns the licenseID when a lease is stored")
+    internal func currentLicenseIDWithLease() throws {
+        let file = try machineFile(expiry: futureExpiry, codes: ["STOWER_TRIAL"])
+        let store = makeStore()
+        store.save(lease(key: "KEY", id: "lic-42", file: file))
+        let gate = makeGate(client: SpyCheckInClient(), store: store)
+
+        #expect(gate.currentLicenseID() == "lic-42")
+    }
+
+    @Test("I6: currentLicenseID returns nil when no lease is stored")
+    internal func currentLicenseIDNilWithNoLease() {
+        let gate = makeGate(client: SpyCheckInClient(), store: makeStore())
+        #expect(gate.currentLicenseID() == nil)
+    }
 }

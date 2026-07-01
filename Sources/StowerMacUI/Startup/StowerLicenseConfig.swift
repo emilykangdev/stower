@@ -1,8 +1,8 @@
 import Foundation
 
-/// The app-side licensing endpoints + keys, resolved once at launch.
+/// The app-side backend endpoints + keys, resolved once at launch.
 ///
-/// All three values are PUBLIC (the Edge Function URL, the Keygen account's
+/// All values are PUBLIC (the Edge Function URLs, the Keygen account's
 /// Ed25519 *public* key, the Lemon Squeezy checkout URL) — no secret ships in the
 /// binary (the vendor-split invariant). So the compiled defaults are safe to ship.
 ///
@@ -24,13 +24,21 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     /// The Lemon Squeezy product checkout URL the Buy action opens.
     internal let checkoutBaseURL: String
 
+    /// The Supabase Edge Function base for feedback submissions.
+    ///
+    /// The feedback client POSTs to this URL (no `/`-suffix; the path is appended
+    /// by `StowerFeedbackClient`). Deployed `--no-verify-jwt` so the app sends no
+    /// auth header, matching the license function's pattern (A1).
+    internal let feedbackBaseURL: String
+
     /// Production defaults — the Keygen key is already real (same account as
     /// staging, account-level keypair); the Edge Function URL + LS checkout URL stay
     /// placeholders until a prod environment is stood up (G10).
     internal static let production = StowerLicenseConfig(
         functionBaseURL: "https://stower-license.supabase.co/functions/v1/license",
         keygenPublicKeyHex: accountPublicKeyHex,
-        checkoutBaseURL: "https://stower.lemonsqueezy.com/checkout"
+        checkoutBaseURL: "https://stower.lemonsqueezy.com/checkout",
+        feedbackBaseURL: "https://stower-license.supabase.co/functions/v1/feedback"
     )
 
     /// Staging defaults — the live test deployment a `DEBUG` build points at.
@@ -39,7 +47,8 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
         keygenPublicKeyHex: accountPublicKeyHex,
         checkoutBaseURL:
             "https://emilykangdev.lemonsqueezy.com/checkout/buy/"
-            + "4b930b6d-727b-4f93-9f9a-b4b8b738ab46"
+            + "4b930b6d-727b-4f93-9f9a-b4b8b738ab46",
+        feedbackBaseURL: "https://qxsrnsxvsgofaeblbmmv.supabase.co/functions/v1/feedback"
     )
 
     /// The compiled default for this build configuration.
@@ -67,7 +76,8 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
         return StowerLicenseConfig(
             functionBaseURL: override(functionURLEnvKey, compiled.functionBaseURL),
             keygenPublicKeyHex: override(keygenPublicKeyEnvKey, compiled.keygenPublicKeyHex),
-            checkoutBaseURL: override(checkoutURLEnvKey, compiled.checkoutBaseURL)
+            checkoutBaseURL: override(checkoutURLEnvKey, compiled.checkoutBaseURL),
+            feedbackBaseURL: override(feedbackURLEnvKey, compiled.feedbackBaseURL)
         )
     }
 
@@ -114,4 +124,5 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     private static let functionURLEnvKey = "STOWER_FUNCTION_URL"
     private static let keygenPublicKeyEnvKey = "STOWER_KEYGEN_PUBLIC_KEY"
     private static let checkoutURLEnvKey = "STOWER_CHECKOUT_URL"
+    private static let feedbackURLEnvKey = "STOWER_FEEDBACK_BASE_URL"
 }

@@ -88,4 +88,13 @@ internal protocol StowerLicenseGating: Sendable {
     /// Pure local read — no network. The badge exposes no payment affordance;
     /// payment lives in the board toolbar's gear menu.
     func trialBadge() -> StowerTrialBadge?
+
+    /// The Keygen license resource id from the stored lease, or `nil` when no lease
+    /// is present.
+    ///
+    /// Returns non-nil for both trial and paid leases — the lease always carries a
+    /// `licenseID` regardless of paid/trial status. `trialBadge()?.licenseID` must
+    /// NOT be used as a substitute: paid leases have a nil badge but a non-nil id.
+    /// Pure local read — no network.
+    func currentLicenseID() -> String?
 }

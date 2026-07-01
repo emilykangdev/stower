@@ -9,7 +9,8 @@ import Testing
     private let compiled = StowerLicenseConfig(
         functionBaseURL: "https://compiled.example/license",
         keygenPublicKeyHex: "aa",
-        checkoutBaseURL: "https://compiled.example/checkout"
+        checkoutBaseURL: "https://compiled.example/checkout",
+        feedbackBaseURL: "https://compiled.example/feedback"
     )
 
     @Test("an empty environment falls back to every compiled field")
@@ -74,5 +75,33 @@ import Testing
             allowOverrides: true
         )
         #expect(resolved.keygenPublicKeyHex == "bb")
+    }
+
+    // I7 — feedbackBaseURL resolves to the compiled default and honors
+    // STOWER_FEEDBACK_BASE_URL only when overrides are allowed.
+    @Test("I7: feedbackBaseURL falls back to compiled when no override is set")
+    internal func feedbackURLFallsBackToCompiled() {
+        let resolved = StowerLicenseConfig.resolve(environment: [:], compiled: compiled)
+        #expect(resolved.feedbackBaseURL == compiled.feedbackBaseURL)
+    }
+
+    @Test("I7: STOWER_FEEDBACK_BASE_URL overrides the feedback URL in a debug build")
+    internal func feedbackURLOverriddenInDebug() {
+        let resolved = StowerLicenseConfig.effectiveConfig(
+            environment: ["STOWER_FEEDBACK_BASE_URL": "https://override.example/feedback"],
+            compiled: compiled,
+            allowOverrides: true
+        )
+        #expect(resolved.feedbackBaseURL == "https://override.example/feedback")
+    }
+
+    @Test("I7: STOWER_FEEDBACK_BASE_URL is ignored in a release build")
+    internal func feedbackURLIgnoredInRelease() {
+        let resolved = StowerLicenseConfig.effectiveConfig(
+            environment: ["STOWER_FEEDBACK_BASE_URL": "https://attacker.example/feedback"],
+            compiled: compiled,
+            allowOverrides: false
+        )
+        #expect(resolved.feedbackBaseURL == compiled.feedbackBaseURL)
     }
 }
