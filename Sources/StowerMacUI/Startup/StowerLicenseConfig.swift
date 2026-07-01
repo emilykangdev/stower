@@ -27,14 +27,18 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     /// match this before the key is accepted (I1).
     internal let productID: Int
 
-    /// Production defaults — placeholders until Emily supplies the real
-    /// store/product ids and checkout URL (OQ1/OQ3).
+    /// Production defaults — the live `store_id` is confirmed (supplied
+    /// 2026-07-01, via `GET /v1/stores` with a live-mode API key); the
+    /// product id and checkout URL stay fail-closed placeholders until
+    /// Emily confirms the LIVE (not test-mode) product id (OQ1/OQ3) — a
+    /// dashboard id read while Test mode was on can be the test object's id,
+    /// which differs from its live counterpart.
     ///
     /// A placeholder `0` fails every activation closed; this is a release
     /// gate, not a bug (Known gotcha #2).
     internal static let production = StowerLicenseConfig(
         checkoutURL: "",
-        storeID: 0,
+        storeID: 349_917,
         productID: 0
     )
 
