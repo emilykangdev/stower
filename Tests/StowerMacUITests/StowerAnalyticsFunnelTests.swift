@@ -12,10 +12,7 @@ import Testing
 
     private func makeModel(
         provider: StowerFakeStartupProvider,
-        licenseGate: any StowerLicenseGating = StowerFakeLicenseGate(
-            hasLease: true,
-            statuses: [.status(.valid)]
-        ),
+        licenseGate: any StowerLicenseGating = StowerFakeLicenseGate(states: [.licensed]),
         reporter: StowerInMemoryAnalyticsReporter
     ) -> StowerStartupModel {
         StowerStartupModel(
@@ -75,10 +72,7 @@ import Testing
                 .success
             ]
         )
-        let licenseGate = StowerFakeLicenseGate(
-            hasLease: true,
-            statuses: [.status(.valid), .status(.valid)]
-        )
+        let licenseGate = StowerFakeLicenseGate(states: [.licensed, .licensed])
         let spy = StowerInMemoryAnalyticsReporter()
         let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
         model.start()
@@ -108,10 +102,7 @@ import Testing
                 .failure(.fullDiskAccessMissing(path: "/var/db"))
             ]
         )
-        let licenseGate = StowerFakeLicenseGate(
-            hasLease: true,
-            statuses: [.status(.valid), .status(.valid)]
-        )
+        let licenseGate = StowerFakeLicenseGate(states: [.licensed, .licensed])
         let spy = StowerInMemoryAnalyticsReporter()
         let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
         model.start()
@@ -144,10 +135,7 @@ import Testing
                 .failure(.fullDiskAccessMissing(path: "/var/db"))
             ]
         )
-        let licenseGate = StowerFakeLicenseGate(
-            hasLease: true,
-            statuses: [.status(.valid), .status(.valid)]
-        )
+        let licenseGate = StowerFakeLicenseGate(states: [.licensed, .licensed])
         let spy = StowerInMemoryAnalyticsReporter()
         let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
         model.start()
@@ -166,15 +154,12 @@ import Testing
         )
     }
 
-    // MARK: — License gate
+    // MARK: — License / trial funnel (PA3)
 
-    @Test("license_gate_reached fires when startup commits needsLicense")
-    internal func licenseGateReachedFires() async throws {
+    @Test("paywall_reached fires when startup commits needsLicense")
+    internal func paywallReachedFires() async throws {
         let provider = StowerFakeStartupProvider()
-        let licenseGate = StowerFakeLicenseGate(
-            hasLease: true,
-            statuses: [.status(.trialExpired(licenseID: "test-id"))]
-        )
+        let licenseGate = StowerFakeLicenseGate(states: [.expired])
         let spy = StowerInMemoryAnalyticsReporter()
         let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
         model.start()
@@ -182,9 +167,47 @@ import Testing
         await run.value
 
         let names = spy.recorded().map(\.signalName)
-        #expect(names.contains("license_gate_reached"))
-        let gateEvent = spy.recorded().first { $0.signalName == "license_gate_reached" }
-        #expect(gateEvent?.parameters["context"] == "trial_expired")
+        #expect(names.contains("paywall_reached"))
+    }
+
+    @Test("trial_started fires once per launch when an active trial is observed")
+    internal func trialStartedFiresOncePerLaunch() async throws {
+        let expiry = Date(timeIntervalSince1970: 1_800_000_000)
+        let provider = StowerFakeStartupProvider(loadBehaviors: [.success, .success])
+        let licenseGate = StowerFakeLicenseGate(
+            states: [.trial(expiry: expiry), .trial(expiry: expiry)]
+        )
+        let spy = StowerInMemoryAnalyticsReporter()
+        let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
+        model.start()
+        let run1 = try #require(model.activeRun)
+        await run1.value
+        model.checkAgain()
+        let run2 = try #require(model.activeRun)
+        await run2.value
+
+        let trialStartedCount = spy.recorded().filter { $0.signalName == "trial_started" }.count
+        #expect(trialStartedCount == 1, "trial_started must fire at most once per launch")
+    }
+
+    @Test("activated fires on a successful activation")
+    internal func activatedFiresOnSuccess() async throws {
+        let provider = StowerFakeStartupProvider()
+        let licenseGate = StowerFakeLicenseGate(
+            states: [.expired, .licensed],
+            activationResult: .activated(instanceID: "inst-1")
+        )
+        let spy = StowerInMemoryAnalyticsReporter()
+        let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
+        model.start()
+        let run = try #require(model.activeRun)
+        await run.value
+
+        await model.activate(key: "KEY")
+        await model.activeRun?.value
+
+        let names = spy.recorded().map(\.signalName)
+        #expect(names.contains("activated"))
     }
 
     // MARK: — Board failure routing
@@ -220,7 +243,7 @@ import Testing
         // Simulate a mid-session board failure that routes to .failed.
         model.handleBoardFailure(.unexpected)
 
-        // .unexpected routes to .failed, which does NOT emit license_gate_reached;
+        // .unexpected routes to .failed, which does NOT emit paywall_reached;
         // verify the commit path is exercised (state changed correctly).
         #expect(model.state == .failed(.unexpected))
     }

@@ -1,119 +1,147 @@
 import SwiftUI
 
-/// The license entry / paywall / connectivity screen, mode-driven by
-/// `StowerLicenseEntryContext`.
+/// The license-key entry / paywall screen: paste the key from the Lemon
+/// Squeezy purchase email, activate once, then into the board.
 ///
-/// Mirrors `StowerModelUnavailableView` on `StowerOnboardingPane` so the startup
-/// screens stay visually consistent. There is no key field: Plan B deletes manual
-/// activation. The buy contexts (`.trialExpired` / `.upgradeRequired`) carry the
-/// device's `licenseID` so Buy opens the checkout bound to this license; the
-/// connectivity contexts (`.connectOnce` / `.couldNotReach`) only retry.
+/// Mirrors `StowerModelUnavailableView` on `StowerOnboardingPane`. The typed
+/// text is a `@Binding` owned by `StowerRootView` (whose identity is stable),
+/// so it survives an in-flight activate and is still there when an
+/// activation error returns to this screen. This is the only screen from
+/// which the app makes a network call; the message says so.
 internal struct StowerLicenseEntryView: View {
-    internal let context: StowerLicenseEntryContext
-    /// Opens the Lemon Squeezy checkout carrying the given `licenseID`.
-    internal let onBuy: (String) -> Void
-    /// Re-runs the license check (Re-check after purchase, or retry connectivity).
-    internal let onRetry: () -> Void
+    @Binding internal var key: String
+    internal let error: StowerLicenseGateError?
+    internal let onActivate: (String) -> Void
+    /// Opens the Lemon Squeezy checkout in the browser.
+    internal let onBuy: () -> Void
+
+    @FocusState private var fieldFocused: Bool
 
     internal var body: some View {
-        StowerOnboardingPane(title: title, message: message) {
-            StowerPaneIcon(iconName, tint: .accentColor)
+        StowerOnboardingPane(title: Self.title, message: Self.message) {
+            StowerPaneIcon("key.fill")
+        } content: {
+            entryField
         } actions: {
             actions
         }
+        .onAppear { fieldFocused = true }
+    }
+
+    @ViewBuilder private var entryField: some View {
+        VStack(alignment: .leading, spacing: Self.fieldSpacing) {
+            TextField("License key", text: $key)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+                .autocorrectionDisabled()
+                .focused($fieldFocused)
+                .onSubmit(activate)
+                .accessibilityLabel("License key")
+                .accessibilityHint(error.map(Self.errorMessage) ?? "")
+            if let error {
+                Text(Self.errorMessage(error))
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder private var actions: some View {
-        switch context {
-        case .trialExpired(let licenseID), .upgradeRequired(let licenseID):
-            VStack(spacing: Self.actionSpacing) {
-                Button(Self.buyTitle) { onBuy(licenseID) }
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                Button(Self.recheckTitle, action: onRetry)
-                    .buttonStyle(.bordered)
-                supportLink
+        VStack(spacing: Self.actionSpacing) {
+            Button("Activate", action: activate)
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(normalizedKey.isEmpty)
+            HStack(spacing: Self.helpSpacing) {
+                if let supportURL = Self.supportURL {
+                    Link("Lost your key?", destination: supportURL)
+                }
+                Button("Buy a license", action: onBuy)
             }
-        case .connectOnce, .couldNotReach:
-            VStack(spacing: Self.actionSpacing) {
-                Button(Self.retryTitle, action: onRetry)
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                supportLink
-            }
+            .font(.callout)
+            .buttonStyle(.link)
         }
     }
 
-    @ViewBuilder private var supportLink: some View {
-        if let supportURL = Self.supportURL {
-            Link("Need help? Contact support", destination: supportURL)
-                .font(.callout)
-                .buttonStyle(.link)
-        }
+    /// The typed key with paste-forgiveness applied: leading/trailing
+    /// whitespace/newlines trimmed, then an obvious `key:` or URL prefix
+    /// stripped, so a valid key with copy-paste junk isn't falsely rejected.
+    private var normalizedKey: String {
+        Self.normalize(key)
     }
 
-    private var iconName: String {
-        switch context {
-        case .trialExpired: return "hourglass"
-        case .upgradeRequired: return "arrow.up.circle"
-        case .connectOnce, .couldNotReach: return "wifi"
-        }
+    /// Activates the normalized key; an empty result can't submit (the
+    /// Activate button is also disabled in that case).
+    private func activate() {
+        let normalized = normalizedKey
+        guard !normalized.isEmpty else { return }
+        onActivate(normalized)
     }
 
-    private var title: String {
-        switch context {
-        case .trialExpired: return "Your free trial has ended"
-        case .upgradeRequired: return "Upgrade to keep using Stower"
-        case .connectOnce: return "Connect once to start your free trial"
-        case .couldNotReach: return "Couldn't reach the license server"
+    /// Trims whitespace/newlines, then strips a leading `key:` label or a
+    /// `https://…/` URL prefix a user might paste alongside the key itself.
+    internal static func normalize(_ rawKey: String) -> String {
+        var trimmed = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in stripPrefixes where trimmed.lowercased().hasPrefix(prefix) {
+            trimmed = String(trimmed.dropFirst(prefix.count))
+            trimmed = trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        if let lastSlash = trimmed.lastIndex(of: "/"), trimmed.lowercased().hasPrefix("http") {
+            trimmed = String(trimmed[trimmed.index(after: lastSlash)...])
+        }
+        return trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var message: String {
-        switch context {
-        case .trialExpired:
-            return "Buy Stower to keep finding messages you might want to respond to. "
-                + "After your purchase, click Re-check and you're back in."
-        case .upgradeRequired:
-            return "Your license doesn't cover this version of Stower yet. Upgrade to "
-                + "unlock it, then click Re-check."
-        case .connectOnce:
-            return "Stower starts your free trial on this Mac with a one-time connection. "
-                + "Check your internet, then try again."
+    /// The non-blaming, internals-free copy for each entry-screen error.
+    private static func errorMessage(_ error: StowerLicenseGateError) -> String {
+        switch error {
+        case .invalid:
+            return "That key didn't work. Double-check you copied the whole key from your "
+                + "purchase email. Still stuck? Contact support."
         case .couldNotReach:
-            return "Stower needs to reach the license server to check your access. Check "
-                + "your connection, then try again."
+            return "Couldn't reach the license server. Stower needs to connect once to verify "
+                + "your purchase — check your connection, then click Activate again."
         }
     }
 
-    private static let buyTitle = "Buy Stower"
-    private static let recheckTitle = "I've completed my purchase — Re-check"
-    private static let retryTitle = "Try Again"
+    private static let title = "Enter your license key"
+    private static let message =
+        "Paste the license key from your Lemon Squeezy purchase email. Stower connects once to "
+        + "verify your purchase, then works entirely offline."
     private static var supportURL: URL? { URL(string: supportURLString) }
     private static let supportURLString = "mailto:support@stower.app"
+    private static let stripPrefixes = ["key:", "license key:", "license_key="]
+    private static let fieldSpacing: CGFloat = 6
     private static let actionSpacing: CGFloat = 8
+    private static let helpSpacing: CGFloat = 16
 }
 
-#Preview("Trial expired") {
+#Preview("No error") {
     StowerLicenseEntryView(
-        context: .trialExpired(licenseID: "lic-1"),
-        onBuy: { _ in },
-        onRetry: {}
+        key: .constant(""),
+        error: nil,
+        onActivate: { _ in },
+        onBuy: {}
     )
 }
 
-#Preview("Upgrade required") {
+#Preview("Invalid key") {
     StowerLicenseEntryView(
-        context: .upgradeRequired(licenseID: "lic-1"),
-        onBuy: { _ in },
-        onRetry: {}
+        key: .constant("ABCD-1234"),
+        error: .invalid,
+        onActivate: { _ in },
+        onBuy: {}
     )
-}
-
-#Preview("Connect once") {
-    StowerLicenseEntryView(context: .connectOnce, onBuy: { _ in }, onRetry: {})
 }
 
 #Preview("Could not reach") {
-    StowerLicenseEntryView(context: .couldNotReach, onBuy: { _ in }, onRetry: {})
+    StowerLicenseEntryView(
+        key: .constant("ABCD-1234"),
+        error: .couldNotReach,
+        onActivate: { _ in },
+        onBuy: {}
+    )
 }

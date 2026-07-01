@@ -36,16 +36,34 @@ internal enum StowerAnalyticsEvent: Sendable {
     ///   - reason: A coarse failure token when `supported` is false, or `nil`.
     case hardwareChecked(supported: Bool, reason: String?)
 
-    /// The forced license-entry wall appeared (conversion funnel).
+    /// The trial clock started (first-ever local trial read seeded a
+    /// first-launch date).
     ///
-    /// Emitted when `onCommit` commits `.needsLicense(context)`. This is the
-    /// **returning-user** conversion funnel (first-run users typically skip it
-    /// because a trial is auto-minted silently). The voluntary buy-anytime path
-    /// from the board emits `featureUsed`, not this event.
+    /// Emitted once per install, the first time `StowerTrialClock.state(now:)`
+    /// seeds the first-launch date. **Per-install.**
+    case trialStarted
+
+    /// The paywall / key-entry screen appeared because the trial ended (or
+    /// there was never a license).
     ///
-    /// **Per-occurrence** (fire on every `.needsLicense` commit, since a
-    /// Check Again can move through it again).
-    case licenseGateReached(context: StowerLicenseEntryContext)
+    /// Emitted when `onCommit` commits `.needsLicense(error)`. **Per-occurrence**
+    /// (fires on every `.needsLicense` commit, since a failed activation
+    /// re-commits it with an error).
+    ///
+    /// - Parameter error: The activation error carried by this paywall visit,
+    ///   or `nil` on the first (non-error) visit.
+    case paywallReached(error: StowerLicenseGateError?)
+
+    /// The user tapped Buy and the Lemon Squeezy checkout opened in the browser.
+    ///
+    /// Emitted from `openCheckout()`. **Per-occurrence.**
+    case checkoutOpened
+
+    /// A license key was successfully activated and persisted.
+    ///
+    /// Emitted from `StowerStartupModel.activate(key:)` on `.activated`, before
+    /// persisting. **Per-occurrence** (once per successful activation).
+    case activated
 
     /// FDA permission was just requested (the FDA onboarding screen appeared).
     ///
@@ -89,32 +107,12 @@ internal enum StowerAnalyticsEvent: Sendable {
     ///
     /// Used for the voluntary buy-anytime path (`feature: "buy"`, `surface:
     /// "trial_badge"` or `"menu"`) and for any future named features. Never the
-    /// forced license wall — that emits `licenseGateReached`. **Per-occurrence.**
+    /// forced paywall — that emits `paywallReached`. **Per-occurrence.**
     ///
     /// - Parameters:
     ///   - feature: A coarse feature token (e.g. `"buy"`).
     ///   - surface: The surface the user triggered it from.
     case featureUsed(feature: String, surface: String)
-
-    // MARK: — Licensing operational errors
-
-    /// A license check could not reach a verdict ("can't connect").
-    ///
-    /// Emitted from `StowerLicenseGate` on a genuine-unreachable or local-failure
-    /// resolution — first-run mint and returning-user check-in — never on a
-    /// reachable-but-rejected verdict (401/409). **Per-occurrence.**
-    ///
-    /// Both associated values are bounded enums mapped to stable, PII-safe tokens;
-    /// the URL, license key, license id, and fingerprint never appear.
-    ///
-    /// - Parameters:
-    ///   - reason: The coarse cause (transport / HTTP status / decode / bad URL /
-    ///     local-store / unauthorized).
-    ///   - endpoint: Which licensing call failed (`mintTrial` or `checkIn`).
-    case licenseUnreachable(
-        reason: StowerLicenseUnreachableReason,
-        endpoint: StowerLicenseEndpoint
-    )
 
     // MARK: — Signal mapping
 
@@ -124,13 +122,15 @@ internal enum StowerAnalyticsEvent: Sendable {
         case .appLaunched: return "app_launched"
         case .sessionEnded: return "session_ended"
         case .hardwareChecked: return "hardware_checked"
-        case .licenseGateReached: return "license_gate_reached"
+        case .trialStarted: return "trial_started"
+        case .paywallReached: return "paywall_reached"
+        case .checkoutOpened: return "checkout_opened"
+        case .activated: return "activated"
         case .fdaPermissionRequested: return "fda_permission_requested"
         case .fdaPermissionResolved: return "fda_permission_resolved"
         case .boardReached: return "board_reached"
         case .boardItemClicked: return "board_item_clicked"
         case .featureUsed: return "feature_used"
-        case .licenseUnreachable: return "license_unreachable"
         }
     }
 
@@ -140,7 +140,8 @@ internal enum StowerAnalyticsEvent: Sendable {
     /// phone/email strings appear here.
     internal var parameters: [String: String] {
         switch self {
-        case .appLaunched, .sessionEnded, .fdaPermissionRequested, .boardReached:
+        case .appLaunched, .sessionEnded, .fdaPermissionRequested, .boardReached, .trialStarted,
+            .checkoutOpened, .activated:
             return [:]
 
         case .hardwareChecked(let supported, let reason):
@@ -148,8 +149,10 @@ internal enum StowerAnalyticsEvent: Sendable {
             if let reason { params["reason"] = reason }
             return params
 
-        case .licenseGateReached(let context):
-            return ["context": Self.licenseContextToken(context)]
+        case .paywallReached(let error):
+            var params: [String: String] = [:]
+            if let error { params["error"] = Self.gateErrorToken(error) }
+            return params
 
         case .fdaPermissionResolved(let granted):
             return ["granted": granted ? "true" : "false"]
@@ -159,54 +162,14 @@ internal enum StowerAnalyticsEvent: Sendable {
 
         case .featureUsed(let feature, let surface):
             return ["feature": feature, "surface": surface]
-
-        case .licenseUnreachable(let reason, let endpoint):
-            return ["reason": Self.reasonToken(reason), "endpoint": endpoint.token]
         }
     }
 
-    /// Maps a `StowerLicenseEntryContext` to an anonymous token.
-    private static func licenseContextToken(_ context: StowerLicenseEntryContext) -> String {
-        switch context {
-        case .trialExpired: return "trial_expired"
-        case .upgradeRequired: return "upgrade_required"
-        case .connectOnce: return "connect_once"
+    /// Maps a `StowerLicenseGateError` to an anonymous token.
+    private static func gateErrorToken(_ error: StowerLicenseGateError) -> String {
+        switch error {
+        case .invalid: return "invalid"
         case .couldNotReach: return "could_not_reach"
-        }
-    }
-
-    /// Maps a `StowerLicenseUnreachableReason` to a coarse, bounded, PII-safe token.
-    ///
-    /// The HTTP-status case embeds only the integer status code, never a
-    /// URL/key/id/fingerprint.
-    private static func reasonToken(_ reason: StowerLicenseUnreachableReason) -> String {
-        switch reason {
-        case .transport: return "transport"
-        case .httpStatus(let code): return "http_\(code)"
-        case .decodeFailure: return "decode_failure"
-        case .badURL: return "bad_url"
-        case .localStoreFailure: return "local_store_failure"
-        case .machineFileUnauthorized: return "machine_file_unauthorized"
-        }
-    }
-}
-
-/// Which licensing call could not reach a verdict, for
-/// `StowerAnalyticsEvent.licenseUnreachable(reason:endpoint:)`.
-///
-/// A bounded enum mapped to a stable token — never a raw URL.
-internal enum StowerLicenseEndpoint: Sendable, Equatable {
-    /// The first-run trial-mint call (`…/license/mint-trial`).
-    case mintTrial
-
-    /// The returning-user check-in call (`…/license/check-in`).
-    case checkIn
-
-    /// The stable, PII-safe analytics token for this endpoint.
-    internal var token: String {
-        switch self {
-        case .mintTrial: return "mint_trial"
-        case .checkIn: return "check_in"
         }
     }
 }

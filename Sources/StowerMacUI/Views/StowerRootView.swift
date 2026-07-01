@@ -15,26 +15,31 @@ public struct StowerRootView: View {
     @State private var model: StowerStartupModel
     @State private var boardModel: StowerBoardViewModel
 
+    /// The typed text in the key-entry screen; a `@State` on the stable root so
+    /// it survives an in-flight activate and any error re-render.
+    @State private var licenseKey = ""
+
     /// Cached active-trial badge data, resolved when entering the board state.
     ///
-    /// Nil means "no active trial" (paid/perpetual); it is NOT cleared on banner
-    /// dismissal, so the gear-menu Buy path persists. Banner visibility is tracked
-    /// separately by `trialBannerDismissed`.
+    /// Nil means "no active trial" (licensed, or expired); it is NOT cleared on
+    /// banner dismissal, so the gear-menu Buy/Enter-key path persists.
     @State private var trialBadge: StowerTrialBadge?
 
-    /// Whether the user has dismissed the trial banner this session.
+    /// Whether the user has dismissed the (pre-F3) trial banner this session.
     ///
-    /// Seeded from the persisted dismissal flag on board entry. Hides the banner
-    /// only; `trialBadge` — and therefore the gear-menu Buy — is unaffected.
+    /// Seeded from the persisted dismissal flag on board entry. Only suppresses
+    /// the `.trialBadge` banner state — F2/F3 are never suppressed by this flag,
+    /// since they are higher-intent moments than the quiet status badge.
     @State private var trialBannerDismissed = false
 
-    /// Drives the one-time purchase-confirmation alert.
-    @State private var showPurchaseThanks = false
+    /// F2: set when the user taps Buy; cleared once a license is stored.
+    ///
+    /// Drives the "Finished your purchase? Enter the license key" banner on
+    /// return.
+    @State private var boughtThisSession = false
 
-    /// Guards the confirmation alert to once per session, so re-activations after a
-    /// purchase don't re-show it (a fresh paid launch never triggers it — there is
-    /// no trial→paid transition).
-    @State private var purchaseThanksShown = false
+    /// Drives the F1 purchase-confirmation alert.
+    @State private var showPurchaseThanks = false
 
     /// Whether the analytics disclosure card is currently showing.
     ///
@@ -50,16 +55,17 @@ public struct StowerRootView: View {
     private let consent = StowerDiagnosticsConsent()
 
     private let settings: StowerSystemSettingsOpener
+    private let analyticsReporter: any StowerAnalyticsReporting
 
     /// The dismissal seam for the trial badge.
     ///
-    /// Reads and writes the UserDefaults flag that hides the badge persistently
-    /// across launches. The production path uses `UserDefaults.standard`; tests
-    /// inject a fake.
+    /// Reads and writes the UserDefaults flag that hides the (pre-F3) badge
+    /// persistently across launches. The production path uses
+    /// `UserDefaults.standard`; tests inject a fake.
     private let badgeDismissal: any StowerTrialBadgeDismissing
 
     /// Builds the production root wired to the shared engine-backed composition and
-    /// the real Edge-Function-backed license gate.
+    /// the real Lemon-Squeezy-backed license gate.
     ///
     /// Throws only when an essential store can't be opened (a true disk-level draft
     /// store failure) — the same posture as any other essential-store startup fault.
@@ -86,7 +92,7 @@ public struct StowerRootView: View {
             dropper: composition.dropper,
             contacts: composition.contacts,
             analyticsReporter: composition.analyticsReporter,
-            licenseGate: StowerLicenseGate(reporter: composition.analyticsReporter),
+            licenseGate: StowerLemonSqueezyLicenseGate(),
             settings: StowerSystemSettingsOpener(),
             badgeDismissal: StowerUserDefaultsBadgeDismissal(),
             flusher: flusher
@@ -141,6 +147,7 @@ public struct StowerRootView: View {
         flusher?.onFlush { [weak boardModel] in await boardModel?.flushAll() }
         self.settings = settings
         self.badgeDismissal = badgeDismissal
+        self.analyticsReporter = analyticsReporter
     }
 
     /// The startup screen for the current state, cross-fading on change.
@@ -154,13 +161,14 @@ public struct StowerRootView: View {
 
     @ViewBuilder private var screen: some View {
         switch model.state {
-        case .checkingModel, .checkingLicense, .checkingMessages:
+        case .checkingModel, .checkingMessages:
             StowerCheckingView(state: model.state)
-        case .needsLicense(let context):
+        case .needsLicense(let error):
             StowerLicenseEntryView(
-                context: context,
-                onBuy: { openCheckout(licenseID: $0) },
-                onRetry: { model.checkAgain() }
+                key: $licenseKey,
+                error: error,
+                onActivate: { activate(key: $0) },
+                onBuy: { openCheckout() }
             )
         case .modelUnavailable(let reason):
             StowerModelUnavailableView(
@@ -177,8 +185,9 @@ public struct StowerRootView: View {
                 StowerBoardView(
                     model: boardModel,
                     trial: trialBadge,
-                    showsTrialBanner: !trialBannerDismissed,
-                    onBuy: { openCheckout(licenseID: $0) },
+                    bannerState: currentBannerState,
+                    onBuy: { openCheckout() },
+                    onEnterKey: { jumpToKeyEntry() },
                     onDismissTrial: {
                         badgeDismissal.dismiss()
                         trialBannerDismissed = true
@@ -204,24 +213,13 @@ public struct StowerRootView: View {
             .onDisappear { consentCardTask?.cancel() }
             .onReceive(Self.willResignActive) { _ in consentCardTask?.cancel() }
             // Returning to the app (e.g. back from the Lemon Squeezy checkout)
-            // re-checks the license so a completed purchase reflects instantly: the
-            // refreshed lease clears the trial badge, and an expired trial routes to
-            // the paywall — no full startup re-run, no "Loading Stower…" flash.
+            // re-checks the license so an elapsed trial reflects instantly — a
+            // pure local read (no network); activation itself only happens when
+            // the user pastes the key and taps Activate (JC3).
             .onReceive(Self.didBecomeActive) { _ in
                 Task {
-                    let wasTrial = trialBadge != nil
                     await model.refreshLicenseIfOnBoard()
                     trialBadge = model.trialBadge()
-                    // Trial badge cleared while still on the board ⇒ the re-check
-                    // picked up a completed purchase (paid licenses have no trial
-                    // expiry). Confirm it explicitly, exactly once per session.
-                    let purchaseDetected =
-                        wasTrial && trialBadge == nil && !purchaseThanksShown
-                        && model.state == .connectedPreparingBoard
-                    if purchaseDetected {
-                        purchaseThanksShown = true
-                        showPurchaseThanks = true
-                    }
                 }
                 // Re-arm the disclosure countdown for this foreground board session.
                 scheduleConsentCardIfNeeded()
@@ -234,6 +232,47 @@ public struct StowerRootView: View {
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
         }
+    }
+
+    /// The board's current bottom-banner state (F2/F3), recomputed on every
+    /// render from the cached trial badge, the F2 session flag, and whether the
+    /// pre-F3 badge has been dismissed.
+    ///
+    /// The board is reached only when licensed or on an active trial, so a nil
+    /// `trialBadge` here always means licensed.
+    private var currentBannerState: StowerBoardBannerState {
+        let resolved = StowerBoardBannerState.resolve(
+            hasStoredLicense: trialBadge == nil,
+            boughtThisSession: boughtThisSession,
+            trialBadge: trialBadge,
+            now: Date()
+        )
+        // The quiet trial badge alone (not F2/F3) honors the dismiss flag.
+        if case .trialBadge = resolved, trialBannerDismissed {
+            return .none
+        }
+        return resolved
+    }
+
+    /// Activates `key` via the model, then — on success — jumps straight to the
+    /// F1 confirmation alert (the model's `.activate` reruns startup into the
+    /// board).
+    private func activate(key: String) {
+        Task {
+            await model.activate(key: key)
+            await model.activeRun?.value
+            if model.state == .connectedPreparingBoard {
+                licenseKey = ""
+                boughtThisSession = false
+                showPurchaseThanks = true
+            }
+        }
+    }
+
+    /// Jumps to the key-entry screen from the board (gear menu / F2 banner,
+    /// JC5) without waiting for the trial to expire.
+    private func jumpToKeyEntry() {
+        model.showLicenseEntry()
     }
 
     /// Schedules the analytics consent card to appear after ~60 seconds of
@@ -255,12 +294,15 @@ public struct StowerRootView: View {
         }
     }
 
-    /// Opens the Lemon Squeezy checkout bound to `licenseID`.
+    /// Opens the static Lemon Squeezy checkout URL and sets the F2 session flag.
     ///
-    /// The purchase webhook then upgrades this exact device license. A no-op if the
-    /// URL won't build.
-    private func openCheckout(licenseID: String) {
-        guard let url = StowerLicenseCheckInClient.checkoutURL(licenseID: licenseID) else { return }
+    /// A return to the app with no license yet stored then shows the "Enter
+    /// license key" banner. A no-op if the configured URL won't build (fails
+    /// closed rather than opening a malformed URL).
+    private func openCheckout() {
+        guard let url = URL(string: StowerLicenseConfig.resolved.checkoutURL) else { return }
+        boughtThisSession = true
+        analyticsReporter.report(.checkoutOpened)
         NSWorkspace.shared.open(url)
     }
 
@@ -275,7 +317,7 @@ public struct StowerRootView: View {
     }
 
     /// Fires when the app returns to the foreground; drives the on-board license
-    /// re-check so a purchase completed in the browser reflects without a restart.
+    /// re-check so an elapsed trial reflects without a restart.
     private static let didBecomeActive = NotificationCenter.default.publisher(
         for: NSApplication.didBecomeActiveNotification
     )
@@ -286,14 +328,10 @@ public struct StowerRootView: View {
         for: NSApplication.willResignActiveNotification
     )
 
-    /// The Stower major a purchase unlocks — a placeholder string until real
-    /// version wiring lands (the Sparkle work after this merges); matches the
-    /// "Buy Stower v0" affordance the gear menu shows on an active trial.
-    private static let purchasedVersionLabel = "v0"
-    private static let purchaseThanksTitle = "Thank you for your purchase"
+    /// F1 — the post-activation confirmation alert copy.
+    private static let purchaseThanksTitle = "You're all set."
     private static let purchaseThanksMessage =
-        "You've purchased the license for Stower \(purchasedVersionLabel). "
-        + "Please check your email for the receipt."
+        "Thanks for buying Stower — your license is active on this Mac. Enjoy."
 
     /// The delay before showing the analytics consent card after the board appears.
     ///

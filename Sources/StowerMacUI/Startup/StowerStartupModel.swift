@@ -35,6 +35,9 @@ internal final class StowerStartupModel {
     /// Guards `board_reached` to one emission per launch (per-launch semantics).
     private var boardReachedThisLaunch = false
 
+    /// Guards `trial_started` to one emission per launch (per-launch semantics).
+    private var trialStartedThisLaunch = false
+
     /// Minimum time the checking state stays up, so a fast result doesn't flash.
     private static let minimumCheckingDisplay: Duration = .milliseconds(400)
 
@@ -43,9 +46,9 @@ internal final class StowerStartupModel {
     /// - Parameters:
     ///   - provider: The startup boundary (the real adapter in production, a fake
     ///     in tests).
-    ///   - licenseGate: The license seam (the real Edge-Function-backed
-    ///     `StowerLicenseGate` in production, a fake in tests). No default — a "has
-    ///     license" default would ship a paywall bypass.
+    ///   - licenseGate: The license seam (the real Lemon-Squeezy-backed
+    ///     `StowerLemonSqueezyLicenseGate` in production, a fake in tests). No
+    ///     default — a "has license" default would ship a paywall bypass.
     ///   - config: The debt-board knobs passed to every load.
     ///   - clock: Supplies `now`; injectable so tests are deterministic.
     ///   - sleep: The minimum-display delay; injectable so tests need no real
@@ -100,13 +103,37 @@ internal final class StowerStartupModel {
     /// Not used by the views.
     internal var activeRun: Task<Void, Never>? { inFlight }
 
-    /// The trial badge data decoded from the signed machine file, or `nil` when
-    /// there is no active trial or the machine file can't be read.
+    /// The trial badge data for the current local license state, or `nil` when
+    /// there is no active trial (licensed, or expired with no license).
     ///
-    /// Read-through to `licenseGate.trialBadge()`. Callers gate on this before
-    /// showing the badge; the dismissal flag is NOT wired here (I3).
+    /// Pure local read via `licenseGate.licenseState(now:)`. Callers gate on
+    /// this before showing the badge; the dismissal flag is NOT wired here.
     internal func trialBadge() -> StowerTrialBadge? {
-        licenseGate.trialBadge()
+        guard case .trial(let expiry) = licenseGate.licenseState(now: clock()) else { return nil }
+        return StowerTrialBadge(expiry: expiry)
+    }
+
+    /// Activates `key` against Lemon Squeezy under the generation guard (I4):
+    /// only the current-generation result may persist or commit a state.
+    ///
+    /// On `.activated`, persists the key, emits the `activated` funnel event,
+    /// and reruns the startup flow so the newly-stored license routes to the
+    /// board. On `.invalid` / `.couldNotReach`, commits `.needsLicense` carrying
+    /// the error so the entry screen can show it.
+    internal func activate(key: String) async {
+        let runGeneration = generation
+        let outcome = await licenseGate.activate(key: key)
+        guard generation == runGeneration else { return }
+        switch outcome {
+        case .activated(let instanceID):
+            licenseGate.persist(key: key, instanceID: instanceID)
+            reporter.report(.activated)
+            beginRun()
+        case .invalid:
+            commit(.needsLicense(.invalid), generation: runGeneration)
+        case .couldNotReach:
+            commit(.needsLicense(.couldNotReach), generation: runGeneration)
+        }
     }
 
     /// Routes a board-load failure back into the startup screen flow.
@@ -127,28 +154,35 @@ internal final class StowerStartupModel {
 
     /// Re-checks the license without disrupting the board — called when the app
     /// returns to the foreground (e.g. back from the Lemon Squeezy checkout), so a
-    /// just-completed purchase reflects instantly: the `/check-in` refreshes the
-    /// cached lease (clearing the trial badge once the license is paid) with no full
+    /// just-entered key or an elapsed trial reflects instantly with no full
     /// startup re-run and no "Loading Stower…" flash.
     ///
-    /// Acts only while on the board. A definitive `.trialExpired` / `.wrongVersion`
-    /// routes to the paywall; `.valid` and the transient states (`.couldNotReach` /
-    /// `.needsTrialOnline`) leave the board in place — a network blip must never
-    /// paywall a user who was already valid. The generation guard drops the result
-    /// if a fresh startup run (Check Again) began during the await.
+    /// Pure local read (no network) — activation itself is the only network call,
+    /// invoked separately via `activate(key:)` from the key-entry screen (JC3).
+    /// Acts only while on the board. `.licensed` and `.trial` leave the board in
+    /// place; only `.expired` routes to the paywall. The generation guard drops
+    /// the result if a fresh startup run (Check Again) began during the await.
     internal func refreshLicenseIfOnBoard() async {
         guard state == .connectedPreparingBoard else { return }
         let runGeneration = generation
-        let status = await licenseGate.currentStatus(now: clock())
+        let licenseState = licenseGate.licenseState(now: clock())
         guard generation == runGeneration, state == .connectedPreparingBoard else { return }
-        switch status {
-        case .valid, .couldNotReach, .needsTrialOnline:
-            break
-        case .trialExpired(let id):
-            commit(.needsLicense(.trialExpired(licenseID: id)), generation: runGeneration)
-        case .wrongVersion(let id):
-            commit(.needsLicense(.upgradeRequired(licenseID: id)), generation: runGeneration)
+        if case .expired = licenseState {
+            commit(.needsLicense(nil), generation: runGeneration)
         }
+    }
+
+    /// Jumps to the key-entry screen from the board (JC5): the gear menu's
+    /// "Enter license key…" item and the F2 banner both call this so a mid-trial
+    /// purchaser isn't forced to wait until expiry to activate.
+    ///
+    /// Cancels any in-flight run and bumps the generation, mirroring
+    /// `handleBoardFailure` — a late startup completion can't overwrite this.
+    internal func showLicenseEntry() {
+        inFlight?.cancel()
+        inFlight = nil
+        generation += 1
+        commit(.needsLicense(nil), generation: generation)
     }
 
     /// Cancels any in-flight run, bumps the generation, and starts a fresh run.
@@ -175,14 +209,14 @@ internal final class StowerStartupModel {
                 commit(.modelUnavailable(reason), generation: generation)
                 return
             }
-            // The license check inserts after availability, before the board probe.
-            // The spinner stays neutral ("Loading Stower…") — trial-vs-paid is unknown
-            // until the server replies, and a cleared lease can still be paid.
-            commit(.checkingLicense, generation: generation)
-            let status = await licenseGate.currentStatus(now: clock())
+            // The license check is a pure local read (no network) — licensed and
+            // trial both proceed straight into the board probe; only an expired
+            // trial with no license routes to the paywall.
+            let licenseState = licenseGate.licenseState(now: clock())
             guard generation == self.generation else { return }
+            emitTrialStartedIfNeeded(for: licenseState)
             let target = try await route(
-                licenseStatus: status,
+                licenseState: licenseState,
                 generation: generation,
                 wasAwaitingFDA: wasAwaitingFDA
             )
@@ -195,25 +229,20 @@ internal final class StowerStartupModel {
         }
     }
 
-    /// Maps a license status to the next state: `.valid` probes the board (the
-    /// post-license tail), every other status routes to its entry-screen context.
+    /// Maps a license state to the next state: `.licensed`/`.trial` both probe
+    /// the board (the trial badge is read separately by the view), `.expired`
+    /// routes to the paywall/key-entry screen.
     private func route(
-        licenseStatus: StowerLicenseStatus,
+        licenseState: StowerLicenseState,
         generation: Int,
         wasAwaitingFDA: Bool
     ) async throws -> StowerStartupState {
-        switch licenseStatus {
-        case .valid:
+        switch licenseState {
+        case .licensed, .trial:
             commit(.checkingMessages, generation: generation)
             return try await loadAndRoute(wasAwaitingFDA: wasAwaitingFDA)
-        case .trialExpired(let id):
-            return .needsLicense(.trialExpired(licenseID: id))
-        case .wrongVersion(let id):
-            return .needsLicense(.upgradeRequired(licenseID: id))
-        case .couldNotReach:
-            return .needsLicense(.couldNotReach)
-        case .needsTrialOnline:
-            return .needsLicense(.connectOnce)
+        case .expired:
+            return .needsLicense(nil)
         }
     }
 
@@ -278,12 +307,15 @@ internal final class StowerStartupModel {
         case .modelUnavailable(let reason):
             reporter.report(.hardwareChecked(supported: false, reason: "\(reason)"))
 
-        case .checkingLicense:
-            // Model was available (hardware check passed).
+        case .checkingMessages:
+            // First state reached once the model is available (hardware check
+            // passed) and the license read (licensed/trial) let the run proceed.
             reporter.report(.hardwareChecked(supported: true, reason: nil))
 
-        case .needsLicense(let context):
-            reporter.report(.licenseGateReached(context: context))
+        case .needsLicense(let error):
+            // Model was available; the license read is what routed here.
+            reporter.report(.hardwareChecked(supported: true, reason: nil))
+            reporter.report(.paywallReached(error: error))
 
         case .needsFullDiskAccess:
             reporter.report(.fdaPermissionRequested)
@@ -293,7 +325,7 @@ internal final class StowerStartupModel {
             resolveFDAIfNeeded()
             emitBoardReachedIfNeeded()
 
-        case .checkingModel, .checkingMessages, .needsFullDiskAccessStillMissing, .failed:
+        case .checkingModel, .needsFullDiskAccessStillMissing, .failed:
             break
         }
     }
@@ -314,5 +346,13 @@ internal final class StowerStartupModel {
         guard !boardReachedThisLaunch else { return }
         reporter.report(.boardReached)
         boardReachedThisLaunch = true
+    }
+
+    /// Emits `trial_started` at most once per launch, the first time this
+    /// launch's license read observes an active trial.
+    private func emitTrialStartedIfNeeded(for licenseState: StowerLicenseState) {
+        guard case .trial = licenseState, !trialStartedThisLaunch else { return }
+        reporter.report(.trialStarted)
+        trialStartedThisLaunch = true
     }
 }

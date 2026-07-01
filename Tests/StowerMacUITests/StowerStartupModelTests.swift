@@ -11,11 +11,11 @@ import Testing
 @Suite @MainActor internal struct StowerStartupModelTests {
     /// Builds a model over `provider` with the minimum-display delay disabled.
     ///
-    /// The license gate defaults to "has license" so the pre-license routing
+    /// The license gate defaults to "licensed" so the pre-license routing
     /// tests reach the board flow unchanged; the licensing tests pass their own.
     private func makeModel(
         provider: StowerFakeStartupProvider,
-        licenseGate: any StowerLicenseGating = StowerFakeLicenseGate(hasLease: true),
+        licenseGate: any StowerLicenseGating = StowerFakeLicenseGate(states: [.licensed]),
         config: StowerStartupDebtConfig = .appDefault,
         onCommit: (@MainActor @Sendable (StowerStartupState) -> Void)? = nil
     ) -> StowerStartupModel {

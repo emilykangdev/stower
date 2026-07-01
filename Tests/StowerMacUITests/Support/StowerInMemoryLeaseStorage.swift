@@ -2,7 +2,8 @@ import Foundation
 
 @testable import StowerMacUI
 
-/// An in-memory `StowerLeaseStorage` so the lease/gate tests touch neither the
+/// An in-memory `StowerLeaseStorage` so Diagnostics tests
+/// (`StowerDiagnosticsConsent`/`StowerDiagnosticsIdentity`) touch neither the
 /// Keychain nor disk.
 internal final class StowerInMemoryLeaseStorage: StowerLeaseStorage, @unchecked Sendable {
     private let lock = NSLock()

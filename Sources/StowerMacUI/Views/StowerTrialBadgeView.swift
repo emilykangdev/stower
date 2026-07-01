@@ -64,10 +64,7 @@ internal struct StowerTrialBadgeView: View {
 
 #Preview("Active trial") {
     StowerTrialBadgeView(
-        badge: StowerTrialBadge(
-            licenseID: "lic-1",
-            expiry: Date().addingTimeInterval(30 * 24 * 3600)
-        ),
+        badge: StowerTrialBadge(expiry: Date().addingTimeInterval(30 * 24 * 3600)),
         onDismiss: {}
     )
     .frame(width: 400)
