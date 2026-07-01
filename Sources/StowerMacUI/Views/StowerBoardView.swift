@@ -65,6 +65,14 @@ internal struct StowerBoardView: View {
     /// Whether the feedback sheet is presented.
     @State internal var showingFeedback = false
 
+    /// The current feedback form model, held as `@State` so board re-renders do not
+    /// recreate it and erase text the user has already typed.
+    ///
+    /// Created (fresh) when `showingFeedback` becomes `true`; set to `nil` on dismiss
+    /// so the next open starts with a clean slate. The sheet closure reads this value
+    /// — its `@Observable` mutations propagate to `StowerFeedbackView` normally.
+    @State private var feedbackFormModel: StowerFeedbackFormModel?
+
     /// Whether the board-level feedback success confirmation is visible.
     ///
     /// Set to `true` when the sheet's `onSuccess` fires; auto-clears after a
@@ -109,23 +117,31 @@ internal struct StowerBoardView: View {
                     + "Unmute anytime from Muted Senders in the toolbar."
             )
         }
+        .onChange(of: showingFeedback) { _, isPresented in
+            if isPresented {
+                feedbackFormModel = StowerFeedbackFormModel(
+                    licenseID: feedbackLicenseID,
+                    appVersion: feedbackAppVersion,
+                    onSubmit: onSendFeedback
+                )
+            } else {
+                feedbackFormModel = nil
+            }
+        }
         .sheet(isPresented: $showingFeedback) {
-            let formModel = StowerFeedbackFormModel(
-                licenseID: feedbackLicenseID,
-                appVersion: feedbackAppVersion,
-                onSubmit: onSendFeedback
-            )
-            StowerFeedbackView(
-                model: formModel,
-                onSuccess: {
-                    showsFeedbackConfirmation = true
-                    Task {
-                        try? await Task.sleep(for: Self.feedbackConfirmationDwell)
-                        showsFeedbackConfirmation = false
-                    }
-                },
-                isPresented: $showingFeedback
-            )
+            if let formModel = feedbackFormModel {
+                StowerFeedbackView(
+                    model: formModel,
+                    onSuccess: {
+                        showsFeedbackConfirmation = true
+                        Task {
+                            try? await Task.sleep(for: Self.feedbackConfirmationDwell)
+                            showsFeedbackConfirmation = false
+                        }
+                    },
+                    isPresented: $showingFeedback
+                )
+            }
         }
         .task { model.onAppear() }
         .onDisappear { model.cancel() }
