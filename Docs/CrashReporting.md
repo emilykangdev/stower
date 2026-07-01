@@ -60,9 +60,11 @@ launch"** (JC3); `close()` is defence-in-depth so crashes after a mid-session to
 are not collected.
 
 - Mid-session opt-out: `StowerDiagnostics.setEnabled(false)` → `StowerCrashReporting.stop()`.
-- License opt-out: `StowerDiagnostics.reconcileLicenseConsent(licenseOptOut:)` (called
-  on each license check-in) → `StowerCrashReporting.stop()` when the license record
-  carries `diagnostics_opt_out = true`. "Off wins" — this never auto-re-enables.
+- License opt-out: `StowerDiagnostics.reconcileLicenseConsent(licenseOptOut:)` →
+  `StowerCrashReporting.stop()` when called with `licenseOptOut = true`. "Off wins"
+  — this never auto-re-enables. As-built this hook has **no production caller**:
+  the deleted Keygen check-in that carried the license record's
+  `diagnostics_opt_out` was its driver (see `Docs/Analytics.md` §Consent).
 
 **Re-enable note:** `SentrySDK.start` is one-shot per process and cannot be re-called
 after `close()`. Re-enabling mid-session restores analytics but does NOT restart the

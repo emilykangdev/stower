@@ -6,6 +6,28 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-07-01: **Licensing rebuilt as client-only Lemon Squeezy activate-once + local 7-day trial — the entire Keygen/Supabase backend is deleted (branch `v0-prep`, PR #41).**
+  Deleted wholesale: `supabase/` (Edge Function + migrations), `Scripts/Keygen/`, and every Swift client
+  that talked to them (`StowerLicenseGate`, `StowerLicenseCheckInClient`, `StowerTrialMintClient`,
+  `StowerDeviceFingerprint`, `StowerLicenseLeaseStore`, machine-file/lease lifecycle). No Stower-operated
+  server exists. As-built seam (`Sources/StowerMacUI/Startup/`): `StowerLicenseGating` →
+  `StowerLemonSqueezyLicenseGate` composes `StowerLemonSqueezyClient` (the app's ONLY licensing network
+  call — `POST api.lemonsqueezy.com/v1/licenses/activate`, response `meta.store_id`/`meta.product_id`
+  checked against `StowerLicenseConfig` so another product's key can't unlock Stower), `StowerLicenseStore`
+  (plaintext single-key `UserDefaults` record: key + `instance.id`), and `StowerTrialClock` (7-day window
+  seeded from a `UserDefaults` first-launch date; `StowerTrialClock.trialDuration`). Activate once →
+  licensed forever offline: no `/validate`, no check-in, no revocation (contract I6). Money moments:
+  F1 "You're all set." alert on every successful activation path, F2 enter-key banner after checkout
+  (`StowerRootView.openCheckout()` sets `boughtThisSession`), F3 buy-nudge via `StowerBoardBannerState`;
+  key entry is `StowerLicenseEntryView` (paste-forgiving `normalize()`). Trial funnel analytics replaced
+  the Keygen-era events: `trial_started` / `paywall_reached` / `checkout_opened` / `activated`
+  (`licenseGateReached`/`licenseUnreachable` deleted). Precheck `6o` pins licensing egress to
+  `api.lemonsqueezy.com` and bans `supabase`/`keygen`/`/check-in`/`mint-trial` tokens in `Sources/`.
+  Docs rewritten from the as-built code: `Docs/licensing-contract.md` v2.0, `Docs/Lifecycle.md` v2.0,
+  `Docs/EnvironmentVariables.md`; `Docs/licensing.md` keeps its 30-day/per-major pricing philosophy with
+  "As-built (v0)" callouts (parked business decision, `tmp/OPEN_QUESTIONS.md` G4). **Still open (release
+  gate G1–G3):** `StowerLicenseConfig.production`/`.staging` ship placeholder `storeID`/`productID`/
+  `checkoutURL` that fail every activation closed until the real Lemon Squeezy store exists.
 - 2026-06-30: **Sentry crash reporting — crash-only, consent-gated, EU-region, PII-scrubbed (`Sources/StowerMacUI/CrashReporting/`, `Diagnostics/`).**
   New umbrella `StowerDiagnostics` facade (`public enum`) unifies crash + analytics behind one consent gate. `StowerCrashReporting` (the only `SentrySDK.start` site): all non-crash integrations disabled, EU DSN placeholder (OPS-GATED), `stop()` for mid-session opt-out. `StowerSentryScrubber`: drops non-crash events, rebuilds `exception.value` from content-free structured fields (A5), redacts `/Users/<name>/` in `frame.fileName`/`frame.package`/`debugMeta.codeFile`, backstop-drops hard-stop tokens. `StowerAnalyticsConsent` → **`StowerDiagnosticsConsent`** (keychain service strings unchanged). Precheck guards 6l (Sentry import allowlist 4 files), 6m (`options.debug` `#if DEBUG` only), 6n (no `\(` in assertion messages). 22 new Swift tests. Codex loop: 5 iterations, 4 P1/P2 fixed, 2 accepted (placeholder DSN OPS-GATED; re-enable-no-restart design constraint). **OPS-GATED before crash reports reach Sentry:** real EU DSN, dSYM upload, auth token, DPA, free-tier.
 - 2026-06-29: **Anonymous funnel analytics — TelemetryDeck-backed, default-on with one-click off (`Sources/StowerMacUI/Analytics/`).**
