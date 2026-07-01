@@ -115,8 +115,8 @@ internal struct StowerLicenseEntryView: View {
     private static let message =
         "Paste the license key from your Lemon Squeezy purchase email. Stower connects once to "
         + "verify your purchase, then works entirely offline."
-    private static var supportURL: URL? { URL(string: supportURLString) }
-    private static let supportURLString = "mailto:support@stower.app"
+    private static var supportURL: URL? { URL(string: "mailto:\(supportEmail)") }
+    private static let supportEmail = "emily@stower.app"
     private static let stripPrefixes = ["key:", "license key:", "license_key="]
     private static let fieldSpacing: CGFloat = 6
     private static let actionSpacing: CGFloat = 8
