@@ -86,7 +86,7 @@ public struct StowerRootView: View {
             dropper: composition.dropper,
             contacts: composition.contacts,
             analyticsReporter: composition.analyticsReporter,
-            licenseGate: StowerLicenseGate(),
+            licenseGate: StowerLicenseGate(reporter: composition.analyticsReporter),
             settings: StowerSystemSettingsOpener(),
             badgeDismissal: StowerUserDefaultsBadgeDismissal(),
             flusher: flusher

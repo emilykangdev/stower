@@ -119,6 +119,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD: ${{ steps.build.outputs.build }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
         run: |
           ARCHIVE_PATH="$RUNNER_TEMP/StowerMac.xcarchive"
           xcodebuild archive \
@@ -130,7 +131,8 @@ jobs:
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD" \
             CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="Developer ID Application"
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM="$NOTARY_TEAM_ID"
           echo "ARCHIVE_PATH=$ARCHIVE_PATH" >> "$GITHUB_ENV"
 
       - name: Export archive

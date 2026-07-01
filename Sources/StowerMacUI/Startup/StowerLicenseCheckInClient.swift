@@ -25,8 +25,9 @@ internal enum StowerCheckInResult: Sendable, Equatable {
     /// `409 fingerprint_mismatch` — the device changed (PAR-36 owns the real UX).
     case fingerprintMismatch
 
-    /// `503` / transport throw / undecodable — the server could not be reached.
-    case unreachable
+    /// Transport throw / any non-success HTTP status / undecodable body — the
+    /// server could not produce a verdict; carries the coarse PII-safe cause.
+    case unreachable(StowerLicenseUnreachableReason)
 }
 
 /// The online licensing seam `StowerLicenseGate` depends on: trial mint plus
@@ -112,7 +113,7 @@ internal struct StowerLicenseCheckInClient: StowerLicenseCheckInProviding {
                 StowerCheckInRequest(licenseID: licenseID, fingerprint: fingerprint)
             )
         else {
-            return .unreachable
+            return .unreachable(.badURL)
         }
         let headers = signer.sign(
             method: Self.postMethod,
@@ -128,7 +129,7 @@ internal struct StowerLicenseCheckInClient: StowerLicenseCheckInProviding {
                 checkInRequest(url: url, body: body, headers: headers)
             )
         } catch {
-            return .unreachable
+            return .unreachable(.transport)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         return Self.map(status: status, data: data)
@@ -196,11 +197,12 @@ internal struct StowerLicenseCheckInClient: StowerLicenseCheckInProviding {
             // Only the function's own `unknown_license` verdict may clear the lease
             // and re-mint (JC6). A bare 404 from a route/deploy miss has no such
             // body, so it must fall back as transient — never destroy a valid lease.
-            return body?.status == unknownLicenseVerb ? .unknownLicense : .unreachable
+            return body?.status == unknownLicenseVerb
+                ? .unknownLicense : .unreachable(.httpStatus(status))
         case fingerprintMismatchStatus:
             return .fingerprintMismatch
         default:
-            return .unreachable
+            return .unreachable(.httpStatus(status))
         }
     }
 
@@ -209,17 +211,17 @@ internal struct StowerLicenseCheckInClient: StowerLicenseCheckInProviding {
         switch body?.status {
         case okVerb:
             guard let machineFile = body?.machineFile, !machineFile.isEmpty else {
-                return .unreachable
+                return .unreachable(.decodeFailure)
             }
             return .ok(machineFile: machineFile)
         case expiredVerb:
-            guard let id = body?.licenseID, !id.isEmpty else { return .unreachable }
+            guard let id = body?.licenseID, !id.isEmpty else { return .unreachable(.decodeFailure) }
             return .trialExpired(licenseID: id)
         case wrongVersionVerb:
-            guard let id = body?.licenseID, !id.isEmpty else { return .unreachable }
+            guard let id = body?.licenseID, !id.isEmpty else { return .unreachable(.decodeFailure) }
             return .wrongVersion(licenseID: id)
         default:
-            return .unreachable
+            return .unreachable(.decodeFailure)
         }
     }
 

@@ -13,18 +13,29 @@ internal struct StowerLicenseGate: StowerLicenseGating {
     private let client: any StowerLicenseCheckInProviding
     private let leaseStore: StowerLicenseLeaseStore
     private let fingerprint: StowerKeychainFingerprint
+    private let reporter: any StowerAnalyticsReporting
 
-    /// Creates a gate from its three collaborators; injectable so tests pass a spy
-    /// client, an in-memory lease store keyed with a known signing key, and a
-    /// fixed fingerprint.
+    /// Creates a gate from its collaborators; injectable so tests pass a spy
+    /// client, an in-memory lease store keyed with a known signing key, a fixed
+    /// fingerprint, and a spy analytics reporter.
+    ///
+    /// - Parameters:
+    ///   - client: The online licensing seam (mint + check-in).
+    ///   - leaseStore: The signed-lease store.
+    ///   - fingerprint: The install fingerprint provider.
+    ///   - reporter: The analytics reporter that receives `licenseUnreachable`
+    ///     events on genuine-unreachable / local-failure resolutions; defaults to a
+    ///     no-op so existing call sites and tests need not supply one.
     internal init(
         client: any StowerLicenseCheckInProviding,
         leaseStore: StowerLicenseLeaseStore,
-        fingerprint: StowerKeychainFingerprint
+        fingerprint: StowerKeychainFingerprint,
+        reporter: any StowerAnalyticsReporting = StowerNoOpAnalyticsReporter()
     ) {
         self.client = client
         self.leaseStore = leaseStore
         self.fingerprint = fingerprint
+        self.reporter = reporter
     }
 
     /// Builds the production gate wired to the Edge Function, the Keychain lease
@@ -40,7 +51,11 @@ internal struct StowerLicenseGate: StowerLicenseGating {
     /// the lease (`--clear-lease-on-start`) and pin the fingerprint
     /// (`--fingerprint <value>`) before the gate runs; the whole seam is
     /// compile-stripped from Release.
-    internal init() {
+    ///
+    /// - Parameter reporter: The analytics reporter for `licenseUnreachable`
+    ///   events; pass the same instance the startup funnel uses. Defaults to a
+    ///   no-op so preview/test call sites need not supply one.
+    internal init(reporter: any StowerAnalyticsReporting = StowerNoOpAnalyticsReporter()) {
         let config = StowerLicenseConfig.resolved
         let leaseStore = StowerLicenseLeaseStore(publicKeyHex: config.keygenPublicKeyHex)
         let fingerprint: StowerKeychainFingerprint
@@ -71,7 +86,8 @@ internal struct StowerLicenseGate: StowerLicenseGating {
         self.init(
             client: StowerLicenseCheckInClient(functionBaseURL: config.functionBaseURL),
             leaseStore: leaseStore,
-            fingerprint: fingerprint
+            fingerprint: fingerprint,
+            reporter: reporter
         )
     }
 
@@ -127,22 +143,35 @@ internal struct StowerLicenseGate: StowerLicenseGating {
             // 401 (transient — re-sign next launch) and 409 (device changed; PAR-36
             // owns the real UX) both degrade to a transient retry in Plan B.
             return .couldNotReach
-        case .unreachable:
-            // Offline fallback: the cached signed lease authorizes this build UNLESS the
-            // trial has already ended. Because an online `.trialExpired` verdict no
-            // longer clears the lease, the offline expiry boundary (I14) is enforced
-            // HERE: the machine file's signed trial expiry is tamper-proof, so an expired
-            // trial routes to the paywall and cannot be re-granted access by simply going
-            // offline. A paid/perpetual license has a nil expiry and falls through.
-            if let trialExpiry = leaseStore.trialExpiry(
-                forMachineFile: lease.machineFile,
-                licenseID: lease.licenseID
-            ), trialExpiry <= now {
-                return .trialExpired(licenseID: lease.licenseID)
-            }
-            return authorizes(machineFile: lease.machineFile, now: now)
-                ? .valid : .couldNotReach
+        case .unreachable(let reason):
+            return offlineFallback(reason: reason, lease: lease, now: now)
         }
+    }
+
+    /// Resolves a check-in `.unreachable` against the cached signed lease.
+    ///
+    /// The cached signed lease authorizes this build UNLESS the trial has already
+    /// ended. Because an online `.trialExpired` verdict no longer clears the lease,
+    /// the offline expiry boundary (I14) is enforced HERE: the machine file's signed
+    /// trial expiry is tamper-proof, so an expired trial routes to the paywall and
+    /// cannot be re-granted access by simply going offline. A paid/perpetual license
+    /// has a nil expiry and falls through. When there is no usable offline authority
+    /// this is a genuine "can't connect" — the check-in's coarse cause is reported
+    /// (JC1) before degrading to a retry.
+    private func offlineFallback(
+        reason: StowerLicenseUnreachableReason,
+        lease: StowerLicenseLease,
+        now: Date
+    ) -> StowerLicenseStatus {
+        if let trialExpiry = leaseStore.trialExpiry(
+            forMachineFile: lease.machineFile,
+            licenseID: lease.licenseID
+        ), trialExpiry <= now {
+            return .trialExpired(licenseID: lease.licenseID)
+        }
+        if authorizes(machineFile: lease.machineFile, now: now) { return .valid }
+        reportUnreachable(reason: reason, endpoint: .checkIn)
+        return .couldNotReach
     }
 
     /// Stores a fresh check-in `.ok` file and returns `.valid`, or `.couldNotReach`.
@@ -155,14 +184,20 @@ internal struct StowerLicenseGate: StowerLicenseGating {
         lease: StowerLicenseLease,
         now: Date
     ) -> StowerLicenseStatus {
-        guard authorizes(machineFile: machineFile, now: now) else { return .couldNotReach }
+        guard authorizes(machineFile: machineFile, now: now) else {
+            reportUnreachable(reason: .machineFileUnauthorized, endpoint: .checkIn)
+            return .couldNotReach
+        }
         let refreshed = StowerLicenseLease(
             licenseKey: lease.licenseKey,
             licenseID: lease.licenseID,
             machineFile: machineFile,
             validatedAt: now
         )
-        guard leaseStore.save(refreshed) else { return .couldNotReach }
+        guard leaseStore.save(refreshed) else {
+            reportUnreachable(reason: .localStoreFailure, endpoint: .checkIn)
+            return .couldNotReach
+        }
         return .valid
     }
 
@@ -209,6 +244,7 @@ internal struct StowerLicenseGate: StowerLicenseGating {
             // Hold the minted file to the same bar as a check-in `.ok` — it must
             // verify, authorize this build, and be bound to this device — then store.
             guard authorizes(machineFile: machineFile, now: now) else {
+                reportUnreachable(reason: .machineFileUnauthorized, endpoint: .mintTrial)
                 return .couldNotReach
             }
             let lease = StowerLicenseLease(
@@ -217,12 +253,29 @@ internal struct StowerLicenseGate: StowerLicenseGating {
                 machineFile: machineFile,
                 validatedAt: now
             )
-            guard leaseStore.save(lease) else { return .couldNotReach }
+            guard leaseStore.save(lease) else {
+                reportUnreachable(reason: .localStoreFailure, endpoint: .mintTrial)
+                return .couldNotReach
+            }
             return .valid
         case .retryShortly:
             return .couldNotReach
-        case .unreachable:
+        case .unreachable(let reason):
+            reportUnreachable(reason: reason, endpoint: .mintTrial)
             return .needsTrialOnline
         }
+    }
+
+    /// Reports one `licenseUnreachable` analytics event for a genuine-unreachable
+    /// or local-failure resolution (JC1: never for 401/409 or a `.valid`).
+    ///
+    /// A no-op when analytics consent is off (the reporter is the no-op default or
+    /// a consent-gated live reporter). Carries only the bounded reason + endpoint
+    /// tokens — never the URL, license key, license id, or fingerprint.
+    private func reportUnreachable(
+        reason: StowerLicenseUnreachableReason,
+        endpoint: StowerLicenseEndpoint
+    ) {
+        reporter.report(.licenseUnreachable(reason: reason, endpoint: endpoint))
     }
 }

@@ -139,7 +139,7 @@ import Testing
                 file: try machineFile(expiry: futureExpiry, codes: ["STOWER_TRIAL"])
             )
         )
-        let client = SpyCheckInClient(checkIn: [.unreachable, .unreachable])
+        let client = SpyCheckInClient(checkIn: [.unreachable(.transport), .unreachable(.transport)])
         let gate = makeGate(client: client, store: store)
         // Before the file's expiry → offline-valid.
         #expect(await gate.currentStatus(now: now) == .valid)
@@ -159,14 +159,14 @@ import Testing
                 file: try machineFile(expiry: futureExpiry, codes: ["STOWER_LEGACY"])
             )
         )
-        let client = SpyCheckInClient(checkIn: [.unreachable])
+        let client = SpyCheckInClient(checkIn: [.unreachable(.transport)])
         let gate = makeGate(client: client, store: store)
         #expect(await gate.currentStatus(now: now) == .couldNotReach)
     }
 
     @Test("B-I8: no lease + mint unreachable is .needsTrialOnline")
     internal func firstRunOfflineNeedsTrialOnline() async {
-        let client = SpyCheckInClient(mint: [.unreachable])
+        let client = SpyCheckInClient(mint: [.unreachable(.transport)])
         let gate = makeGate(client: client, store: makeStore())
         #expect(await gate.currentStatus(now: now) == .needsTrialOnline)
     }
@@ -209,7 +209,7 @@ import Testing
                 file: try machineFile(expiry: futureExpiry, codes: ["STOWER_TRIAL"])
             )
         )
-        let client = SpyCheckInClient(mint: [.unreachable], checkIn: [.unknownLicense])
+        let client = SpyCheckInClient(mint: [.unreachable(.transport)], checkIn: [.unknownLicense])
         let gate = makeGate(client: client, store: store)
 
         #expect(await gate.currentStatus(now: now) == .needsTrialOnline)
