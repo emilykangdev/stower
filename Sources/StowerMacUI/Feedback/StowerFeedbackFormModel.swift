@@ -9,7 +9,12 @@ import Observation
 /// without SwiftUI or network access (I4/I5).
 @MainActor
 @Observable
-internal final class StowerFeedbackFormModel {
+internal final class StowerFeedbackFormModel: Identifiable {
+    /// A stable identity so the sheet can be driven by `.sheet(item:)` — the
+    /// sheet presents exactly when a model exists, so it can never render with a
+    /// nil model.
+    internal nonisolated let id = UUID()
+
     /// The user's feedback text.
     internal var text: String = ""
 

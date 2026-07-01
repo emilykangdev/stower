@@ -85,16 +85,18 @@ import Testing
     // MARK: - I2: licenseKey never in the payload
 
     @Test("I2: StowerFeedbackDraft has no licenseKey property")
-    internal func noLicenseKeyProperty() {
+    internal func noLicenseKeyProperty() throws {
         // Encode a draft and confirm the raw JSON contains no licenseKey substring.
+        // Encoding must succeed — a fallback to empty Data would let this guardrail
+        // pass vacuously, so `try` fails the test loudly if encoding ever breaks.
         let draft = StowerFeedbackDraft(
             text: "test",
             email: nil,
             licenseID: "lic-1",
             appVersion: "1.0"
         )
-        let data = (try? JSONEncoder().encode(draft)) ?? Data()
-        let json = String(data: data, encoding: .utf8) ?? ""
+        let data = try JSONEncoder().encode(draft)
+        let json = try #require(String(data: data, encoding: .utf8))
         #expect(!json.contains("licenseKey"))
     }
 

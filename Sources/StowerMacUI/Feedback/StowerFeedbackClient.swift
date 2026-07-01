@@ -6,7 +6,7 @@ import Foundation
 /// sheet can use for retryable error copy. Separate from
 /// `StowerLicenseUnreachableReason` to keep licensing semantics out of feedback
 /// error copy and analytics (JC6).
-internal enum StowerFeedbackFailure: Sendable, Equatable {
+internal enum StowerFeedbackFailure: Error, Sendable, Equatable {
     /// The `feedbackBaseURL` from config is not a valid `URL`.
     case badURL
 
@@ -104,8 +104,13 @@ internal struct StowerFeedbackClient: Sendable {
     /// cancelled the transport throws `URLError(.cancelled)`, which maps to
     /// `.failed(.transport)`.
     internal func send(draft: StowerFeedbackDraft) async -> StowerFeedbackResult {
-        guard let request = feedbackRequest(draft: draft) else {
-            return .failed(.badURL)
+        let request: URLRequest
+        do {
+            request = try feedbackRequest(draft: draft)
+        } catch let failure as StowerFeedbackFailure {
+            return .failed(failure)
+        } catch {
+            return .failed(.encodeFailure)
         }
         let response: URLResponse
         do {
@@ -117,14 +122,21 @@ internal struct StowerFeedbackClient: Sendable {
         return Self.successRange.contains(status) ? .sent : .failed(.httpStatus(status))
     }
 
-    /// Builds the JSON POST to `…/feedback`, or `nil` if the URL won't parse or
-    /// encoding fails.
-    private func feedbackRequest(draft: StowerFeedbackDraft) -> URLRequest? {
+    /// Builds the JSON POST to `…/feedback`.
+    ///
+    /// Throws `StowerFeedbackFailure.badURL` when `functionBaseURL` won't parse and
+    /// `.encodeFailure` when JSON encoding the draft fails — the two causes stay
+    /// distinct so `send(draft:)` reports the true reason rather than collapsing
+    /// both into `.badURL`.
+    private func feedbackRequest(draft: StowerFeedbackDraft) throws -> URLRequest {
         guard let url = URL(string: functionBaseURL + Self.feedbackPath) else {
-            return nil
+            throw StowerFeedbackFailure.badURL
         }
-        guard let body = try? JSONEncoder().encode(draft) else {
-            return nil
+        let body: Data
+        do {
+            body = try JSONEncoder().encode(draft)
+        } catch {
+            throw StowerFeedbackFailure.encodeFailure
         }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"

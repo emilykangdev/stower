@@ -15,8 +15,11 @@ internal struct StowerFeedbackView: View {
     /// the board-level success confirmation before the sheet dismisses.
     internal let onSuccess: () -> Void
 
-    /// The presentation binding owned by the board; setting it to `false` dismisses.
-    @Binding internal var isPresented: Bool
+    /// Dismisses the sheet by clearing the board's `feedbackFormModel`.
+    ///
+    /// Invoked on Cancel and after a successful send. The board drives
+    /// presentation via `.sheet(item:)`, so dismissal is "drop the model".
+    internal let onDismiss: () -> Void
 
     internal var body: some View {
         VStack(alignment: .leading, spacing: Self.sectionSpacing) {
@@ -29,11 +32,12 @@ internal struct StowerFeedbackView: View {
         }
         .padding(Self.contentPadding)
         .frame(minWidth: Self.minWidth, minHeight: Self.minHeight)
+        .interactiveDismissDisabled(model.isSending)
         .onAppear { textFocus = true }
         .onChange(of: model.didSend) { _, sent in
             if sent {
                 onSuccess()
-                isPresented = false
+                onDismiss()
             }
         }
     }
@@ -122,7 +126,7 @@ internal struct StowerFeedbackView: View {
         HStack {
             Spacer()
             Button("Cancel") {
-                isPresented = false
+                onDismiss()
             }
             .keyboardShortcut(.cancelAction)
             .disabled(model.isSending)

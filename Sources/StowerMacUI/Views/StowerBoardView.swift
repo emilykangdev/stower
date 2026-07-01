@@ -62,16 +62,20 @@ internal struct StowerBoardView: View {
     /// hides the banner (but keeps `trial` so the gear-menu Buy persists).
     internal let onDismissTrial: () -> Void
 
-    /// Whether the feedback sheet is presented.
-    @State internal var showingFeedback = false
-
-    /// The current feedback form model, held as `@State` so board re-renders do not
-    /// recreate it and erase text the user has already typed.
+    /// The current feedback form model, or `nil` when the sheet is closed.
     ///
-    /// Created (fresh) when `showingFeedback` becomes `true`; set to `nil` on dismiss
-    /// so the next open starts with a clean slate. The sheet closure reads this value
-    /// — its `@Observable` mutations propagate to `StowerFeedbackView` normally.
-    @State private var feedbackFormModel: StowerFeedbackFormModel?
+    /// Drives the sheet via `.sheet(item:)` — set (fresh) when the user picks
+    /// "Send Feedback…", cleared on dismiss. Because the sheet presents off this
+    /// value's presence, it can never render with a nil model (no blank first
+    /// frame). Held as `@State` so board re-renders don't recreate it and erase
+    /// text the user has already typed.
+    @State internal var feedbackFormModel: StowerFeedbackFormModel?
+
+    /// The in-flight task that clears `showsFeedbackConfirmation` after a dwell.
+    ///
+    /// Held so a second success cancels the prior timer — otherwise an older
+    /// timer could clear the confirmation early (overlapping-timer race).
+    @State private var feedbackConfirmationTask: Task<Void, Never>?
 
     /// Whether the board-level feedback success confirmation is visible.
     ///
@@ -117,31 +121,12 @@ internal struct StowerBoardView: View {
                     + "Unmute anytime from Muted Senders in the toolbar."
             )
         }
-        .onChange(of: showingFeedback) { _, isPresented in
-            if isPresented {
-                feedbackFormModel = StowerFeedbackFormModel(
-                    licenseID: feedbackLicenseID,
-                    appVersion: feedbackAppVersion,
-                    onSubmit: onSendFeedback
-                )
-            } else {
-                feedbackFormModel = nil
-            }
-        }
-        .sheet(isPresented: $showingFeedback) {
-            if let formModel = feedbackFormModel {
-                StowerFeedbackView(
-                    model: formModel,
-                    onSuccess: {
-                        showsFeedbackConfirmation = true
-                        Task {
-                            try? await Task.sleep(for: Self.feedbackConfirmationDwell)
-                            showsFeedbackConfirmation = false
-                        }
-                    },
-                    isPresented: $showingFeedback
-                )
-            }
+        .sheet(item: $feedbackFormModel) { formModel in
+            StowerFeedbackView(
+                model: formModel,
+                onSuccess: { showFeedbackConfirmation() },
+                onDismiss: { feedbackFormModel = nil }
+            )
         }
         .task { model.onAppear() }
         .onDisappear { model.cancel() }
@@ -303,12 +288,29 @@ internal struct StowerBoardView: View {
         .accessibilityLabel("Refresh board")
     }
 
+    /// Shows the feedback success confirmation for a short dwell, then clears it.
+    ///
+    /// Cancels any prior dwell task first so overlapping successes can't let an
+    /// older timer clear the confirmation early.
+    private func showFeedbackConfirmation() {
+        feedbackConfirmationTask?.cancel()
+        showsFeedbackConfirmation = true
+        feedbackConfirmationTask = Task {
+            try? await Task.sleep(for: Self.feedbackConfirmationDwell)
+            guard !Task.isCancelled else { return }
+            showsFeedbackConfirmation = false
+        }
+    }
+
     /// The brief bottom-edge confirmation shown after a successful feedback send.
     ///
     /// Reuses the same bottom-edge anchoring as `undoBarOverlay` — a calm capsule
     /// that appears for a short dwell then fades. No undo action (fire-and-forget).
+    /// Suppressed while `model.undoBar` is active so the inert confirmation never
+    /// stacks over (and blocks) the recoverable Undo button, which shares this
+    /// bottom alignment and padding.
     @ViewBuilder internal var feedbackConfirmationOverlay: some View {
-        if showsFeedbackConfirmation {
+        if showsFeedbackConfirmation, model.undoBar == nil {
             Text("Thanks for the feedback! Emily reads every one.")
                 .font(.callout)
                 .padding(.horizontal, Self.confirmationHPadding)

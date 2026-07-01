@@ -48,7 +48,11 @@ extension StowerBoardView {
             }
             Section {
                 Button("Send Feedback\u{2026}") {
-                    showingFeedback = true
+                    feedbackFormModel = StowerFeedbackFormModel(
+                        licenseID: feedbackLicenseID,
+                        appVersion: feedbackAppVersion,
+                        onSubmit: onSendFeedback
+                    )
                 }
             }
         } label: {
