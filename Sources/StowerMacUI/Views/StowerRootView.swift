@@ -48,6 +48,12 @@ public struct StowerRootView: View {
     @State private var showConsentCard = false
     @State private var consentCardTask: Task<Void, Never>?
 
+    /// Sleeps until the active trial's `expiry`, then re-checks the license so
+    /// a continuously-foregrounded session (never backgrounded/foregrounded
+    /// again) still routes to the paywall the moment the 7-day trial elapses,
+    /// instead of only on the next `didBecomeActive`.
+    @State private var trialExpiryTask: Task<Void, Never>?
+
     /// The consent state accessor shared by the disclosure card and the settings toggle.
     ///
     /// A single instance covers both surfaces so they never desync (the Keychain record
@@ -168,7 +174,8 @@ public struct StowerRootView: View {
                 key: $licenseKey,
                 error: error,
                 onActivate: { activate(key: $0) },
-                onBuy: { openCheckout() }
+                onBuy: { openCheckout() },
+                isActivating: model.isActivating
             )
         case .modelUnavailable(let reason):
             StowerModelUnavailableView(
@@ -207,10 +214,15 @@ public struct StowerRootView: View {
                 trialBadge = model.trialBadge()
                 trialBannerDismissed = badgeDismissal.isDismissed
                 scheduleConsentCardIfNeeded()
+                scheduleTrialExpiryRecheckIfNeeded()
             }
             // Leaving the board (or the app backgrounding) cancels the disclosure
-            // countdown so it only accrues foreground board time (JC7).
-            .onDisappear { consentCardTask?.cancel() }
+            // countdown so it only accrues foreground board time (JC7), and the
+            // trial-expiry timer (re-armed on the next appear/foreground instead).
+            .onDisappear {
+                consentCardTask?.cancel()
+                trialExpiryTask?.cancel()
+            }
             .onReceive(Self.willResignActive) { _ in consentCardTask?.cancel() }
             // Returning to the app (e.g. back from the Lemon Squeezy checkout)
             // re-checks the license so an elapsed trial reflects instantly — a
@@ -220,6 +232,7 @@ public struct StowerRootView: View {
                 Task {
                     await model.refreshLicenseIfOnBoard()
                     trialBadge = model.trialBadge()
+                    scheduleTrialExpiryRecheckIfNeeded()
                 }
                 // Re-arm the disclosure countdown for this foreground board session.
                 scheduleConsentCardIfNeeded()
@@ -291,6 +304,24 @@ public struct StowerRootView: View {
             guard !Task.isCancelled, !consent.hasShownDisclosure else { return }
             consent.markDisclosureShown()
             withAnimation { showConsentCard = true }
+        }
+    }
+
+    /// Sleeps until `trialBadge.expiry`, then re-checks the license so the
+    /// board routes to the paywall the moment the trial elapses even if the
+    /// app stays foregrounded the whole time (no intervening `didBecomeActive`).
+    ///
+    /// A no-op when licensed (`trialBadge == nil`) or already past expiry —
+    /// the next foreground/appear re-check handles that case. Re-armed on
+    /// every appear/foreground so the sleep duration is always fresh.
+    private func scheduleTrialExpiryRecheckIfNeeded() {
+        trialExpiryTask?.cancel()
+        guard let expiry = trialBadge?.expiry, expiry > Date() else { return }
+        trialExpiryTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(expiry.timeIntervalSinceNow))
+            guard !Task.isCancelled else { return }
+            await model.refreshLicenseIfOnBoard()
+            trialBadge = model.trialBadge()
         }
     }
 

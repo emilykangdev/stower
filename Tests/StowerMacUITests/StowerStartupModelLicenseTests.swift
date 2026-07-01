@@ -216,4 +216,32 @@ import Testing
 
         #expect(gate.persistCalls.isEmpty)
     }
+
+    @Test("a concurrent activate(key:) call while one is in flight is a no-op")
+    internal func concurrentActivateIsNoOp() async {
+        let gate = StowerFakeLicenseGate(
+            states: [.expired],
+            activationResult: .activated(instanceID: "inst-1"),
+            blocksActivation: true
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        model.start()
+        await model.activeRun?.value
+        #expect(model.isActivating == false)
+
+        let first = Task { await model.activate(key: "KEY") }
+        while gate.activationCallCountValue < 1 {
+            await Task.yield()
+        }
+        #expect(model.isActivating)
+
+        // A second call while the first is still blocked inside licenseGate.activate
+        // must return immediately without invoking the gate a second time.
+        await model.activate(key: "KEY")
+        #expect(gate.activationCallCountValue == 1)
+
+        gate.releaseActivation()
+        await first.value
+        #expect(model.isActivating == false)
+    }
 }

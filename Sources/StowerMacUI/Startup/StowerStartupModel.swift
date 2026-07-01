@@ -38,6 +38,15 @@ internal final class StowerStartupModel {
     /// Guards `trial_started` to one emission per launch (per-launch semantics).
     private var trialStartedThisLaunch = false
 
+    /// `true` while an `activate(key:)` call is in flight.
+    ///
+    /// Guards against a duplicate `/activate` network call from a rapid
+    /// double-submit (double-click, or Return then clicking Activate) — Lemon
+    /// Squeezy's `activation_limit` is a finite, server-enforced resource, so
+    /// two concurrent calls for one real purchase must not both consume a
+    /// slot. Exposed so the key-entry view can disable Activate while true.
+    internal private(set) var isActivating = false
+
     /// Minimum time the checking state stays up, so a fast result doesn't flash.
     private static let minimumCheckingDisplay: Duration = .milliseconds(400)
 
@@ -116,11 +125,18 @@ internal final class StowerStartupModel {
     /// Activates `key` against Lemon Squeezy under the generation guard (I4):
     /// only the current-generation result may persist or commit a state.
     ///
+    /// A no-op while a prior call is still in flight (`isActivating`) — a
+    /// rapid double-submit must never fire two concurrent `/activate` calls
+    /// against Lemon Squeezy's finite `activation_limit`.
+    ///
     /// On `.activated`, persists the key, emits the `activated` funnel event,
     /// and reruns the startup flow so the newly-stored license routes to the
     /// board. On `.invalid` / `.couldNotReach`, commits `.needsLicense` carrying
     /// the error so the entry screen can show it.
     internal func activate(key: String) async {
+        guard !isActivating else { return }
+        isActivating = true
+        defer { isActivating = false }
         let runGeneration = generation
         let outcome = await licenseGate.activate(key: key)
         guard generation == runGeneration else { return }
