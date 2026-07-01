@@ -27,21 +27,24 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     /// match this before the key is accepted (I1).
     internal let productID: Int
 
-    /// Production defaults.
+    /// Production defaults — all real (supplied 2026-07-01).
     ///
-    /// The live `store_id` and `product_id` are confirmed (supplied
-    /// 2026-07-01: `store_id` via `GET /v1/stores` with a live-mode API key;
-    /// `product_id` confirmed live, not test-mode). The checkout URL stays a
-    /// fail-closed placeholder until Emily supplies the live buyable link
-    /// (OQ3). A placeholder `""`/`0` fails every activation closed; this is
-    /// a release gate, not a bug (Known gotcha #2).
+    /// `store_id` via `GET /v1/stores` with a live-mode API key;
+    /// `product_id` confirmed live, not test-mode; the checkout URL is the
+    /// live buy link (OQ1/OQ3 resolved). OQ3 was initially resolved with a
+    /// checkout link that turned out to be the test-mode one (mislabeled at
+    /// the source) — corrected once Emily supplied both links side by side.
     internal static let production = StowerLicenseConfig(
-        checkoutURL: "",
+        checkoutURL: "https://emilykangdev.lemonsqueezy.com"
+            + "/checkout/buy/6cb4069d-ad6c-4d0a-a305-eb9632d35158",
         storeID: 349_917,
         productID: 1_150_776
     )
 
-    /// Staging defaults — all real (supplied 2026-07-01).
+    /// Staging defaults — all real, supplied 2026-07-01.
+    ///
+    /// Corrected after the two checkout links were confirmed side by side
+    /// against production's.
     ///
     /// `store_id` is shared with `production`: Lemon Squeezy's "test mode" is
     /// a toggle on one store, not a separate store — only products/discounts
@@ -50,7 +53,7 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     /// its live counterpart (`production.productID`).
     internal static let staging = StowerLicenseConfig(
         checkoutURL: "https://emilykangdev.lemonsqueezy.com"
-            + "/checkout/buy/6cb4069d-ad6c-4d0a-a305-eb9632d35158",
+            + "/checkout/buy/f12eccd6-d0be-4c99-bf61-3e76140c1ae5",
         storeID: 349_917,
         productID: 1_189_590
     )
