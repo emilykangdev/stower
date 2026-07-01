@@ -295,7 +295,7 @@ internal struct StowerBoardView: View {
     private func showFeedbackConfirmation() {
         feedbackConfirmationTask?.cancel()
         showsFeedbackConfirmation = true
-        feedbackConfirmationTask = Task {
+        feedbackConfirmationTask = Task { @MainActor in
             try? await Task.sleep(for: Self.feedbackConfirmationDwell)
             guard !Task.isCancelled else { return }
             showsFeedbackConfirmation = false

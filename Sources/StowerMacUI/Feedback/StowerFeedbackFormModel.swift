@@ -43,9 +43,12 @@ internal final class StowerFeedbackFormModel: Identifiable {
     /// Whether the Send button should be enabled.
     ///
     /// False when the text is blank/whitespace-only, when the text exceeds the
-    /// soft cap, or when a send is already in flight.
+    /// soft cap, when a send is already in flight, or once a send has succeeded
+    /// (`didSend`) — the latter closes the brief window between `.sent` clearing
+    /// `isSending` and the sheet dismissing, so a second tap/Return can't re-POST
+    /// the same feedback.
     internal var canSend: Bool {
-        !text.trimmed.isEmpty && text.count <= Self.maxTextLength && !isSending
+        !text.trimmed.isEmpty && text.count <= Self.maxTextLength && !isSending && !didSend
     }
 
     private let onSubmit: (StowerFeedbackDraft) async -> StowerFeedbackResult

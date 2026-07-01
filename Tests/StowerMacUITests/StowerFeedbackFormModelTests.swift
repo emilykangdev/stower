@@ -94,6 +94,27 @@ import Testing
         #expect(!model.isSending)
     }
 
+    @Test("I5: canSend is false after a successful send (no duplicate POST)")
+    internal func canSendFalseAfterSuccess() async {
+        let model = makeModel { _ in .sent }
+        model.text = "Loving the app!"
+        await model.send()
+        #expect(model.didSend)
+        #expect(!model.canSend)
+    }
+
+    @Test("I5: a second send() after success fires no second request")
+    internal func secondSendAfterSuccessIsNoOp() async {
+        var submitCount = 0
+        let model = makeModel { _ in
+            submitCount += 1; return .sent
+        }
+        model.text = "Loving the app!"
+        await model.send()
+        await model.send()
+        #expect(submitCount == 1)
+    }
+
     @Test("I5: isSending becomes false regardless of outcome")
     internal func isSendingClearedOnCompletion() async {
         let model = makeModel { _ in .failed(.httpStatus(500)) }
