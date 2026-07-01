@@ -24,11 +24,11 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     /// The Lemon Squeezy product checkout URL the Buy action opens.
     internal let checkoutBaseURL: String
 
-    /// The Supabase Edge Function base for feedback submissions.
+    /// The Supabase Edge Function base URL for feedback submissions (no trailing slash,
+    /// no path segment — `StowerFeedbackClient` appends `/feedback`).
     ///
-    /// The feedback client POSTs to this URL (no `/`-suffix; the path is appended
-    /// by `StowerFeedbackClient`). Deployed `--no-verify-jwt` so the app sends no
-    /// auth header, matching the license function's pattern (A1).
+    /// Deployed `--no-verify-jwt` so the app sends no auth header, matching the
+    /// license function's pattern (A1).
     internal let feedbackBaseURL: String
 
     /// Production defaults — the Keygen key is already real (same account as
@@ -38,7 +38,7 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
         functionBaseURL: "https://stower-license.supabase.co/functions/v1/license",
         keygenPublicKeyHex: accountPublicKeyHex,
         checkoutBaseURL: "https://stower.lemonsqueezy.com/checkout",
-        feedbackBaseURL: "https://stower-license.supabase.co/functions/v1/feedback"
+        feedbackBaseURL: "https://stower-license.supabase.co/functions/v1"
     )
 
     /// Staging defaults — the live test deployment a `DEBUG` build points at.
@@ -48,7 +48,7 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
         checkoutBaseURL:
             "https://emilykangdev.lemonsqueezy.com/checkout/buy/"
             + "4b930b6d-727b-4f93-9f9a-b4b8b738ab46",
-        feedbackBaseURL: "https://qxsrnsxvsgofaeblbmmv.supabase.co/functions/v1/feedback"
+        feedbackBaseURL: "https://qxsrnsxvsgofaeblbmmv.supabase.co/functions/v1"
     )
 
     /// The compiled default for this build configuration.

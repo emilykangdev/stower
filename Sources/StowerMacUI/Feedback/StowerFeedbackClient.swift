@@ -86,8 +86,8 @@ internal struct StowerFeedbackClient: Sendable {
     /// Creates a feedback client.
     ///
     /// - Parameters:
-    ///   - functionBaseURL: The Supabase function base URL (no trailing slash);
-    ///     the `/feedback` path is appended by `send(draft:)`.
+    ///   - functionBaseURL: The Supabase function base URL (e.g. `…/functions/v1`,
+    ///     no trailing slash); `send(draft:)` appends `/feedback`.
     ///   - transport: The request runner; defaults to `URLSession.shared`.
     internal init(
         functionBaseURL: String,
@@ -107,10 +107,9 @@ internal struct StowerFeedbackClient: Sendable {
         guard let request = feedbackRequest(draft: draft) else {
             return .failed(.badURL)
         }
-        let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await transport(request)
+            (_, response) = try await transport(request)
         } catch {
             return .failed(.transport)
         }

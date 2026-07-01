@@ -10,7 +10,7 @@ import Testing
         functionBaseURL: "https://compiled.example/license",
         keygenPublicKeyHex: "aa",
         checkoutBaseURL: "https://compiled.example/checkout",
-        feedbackBaseURL: "https://compiled.example/feedback"
+        feedbackBaseURL: "https://compiled.example/functions/v1"
     )
 
     @Test("an empty environment falls back to every compiled field")
@@ -88,17 +88,17 @@ import Testing
     @Test("I7: STOWER_FEEDBACK_BASE_URL overrides the feedback URL in a debug build")
     internal func feedbackURLOverriddenInDebug() {
         let resolved = StowerLicenseConfig.effectiveConfig(
-            environment: ["STOWER_FEEDBACK_BASE_URL": "https://override.example/feedback"],
+            environment: ["STOWER_FEEDBACK_BASE_URL": "https://override.example/functions/v1"],
             compiled: compiled,
             allowOverrides: true
         )
-        #expect(resolved.feedbackBaseURL == "https://override.example/feedback")
+        #expect(resolved.feedbackBaseURL == "https://override.example/functions/v1")
     }
 
     @Test("I7: STOWER_FEEDBACK_BASE_URL is ignored in a release build")
     internal func feedbackURLIgnoredInRelease() {
         let resolved = StowerLicenseConfig.effectiveConfig(
-            environment: ["STOWER_FEEDBACK_BASE_URL": "https://attacker.example/feedback"],
+            environment: ["STOWER_FEEDBACK_BASE_URL": "https://attacker.example/functions/v1"],
             compiled: compiled,
             allowOverrides: false
         )

@@ -6,7 +6,7 @@ import Testing
 /// I1–I3: the feedback client's JSON encoding key-set, secret-absence, and
 /// HTTP-status classification — all via a stub transport; no network required.
 @Suite internal struct StowerFeedbackClientTests {
-    private let baseURL = "https://example.invalid/functions/v1/feedback"
+    private let baseURL = "https://example.invalid/functions/v1"
 
     // MARK: - Transport helpers
 
