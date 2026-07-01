@@ -10,7 +10,7 @@ jobs:
     # dev. Verified against GitHub runner-images manifests (2026-06-28).
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Select the latest stable Xcode on the macos-26 runner. This pins a full
       # Swift 6.x toolchain with Swift Testing bundled — swift-actions/setup-swift
       # does not publish exact patch releases like 6.3.1, so we use the runner's
@@ -97,7 +97,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
