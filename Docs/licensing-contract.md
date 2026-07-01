@@ -327,12 +327,16 @@ The board's one bottom-banner slot is a 4-state machine
 
 **Analytics funnel** — `Sources/StowerMacUI/Analytics/StowerAnalyticsEvent.swift`
 
-- `trialStarted` — fires once per launch, the first time this launch's
-  license read observes `.trial` (per-install seeding, latched per-launch).
-- `paywallReached(error:)` — fires on every `.needsLicense` commit
-  (per-occurrence, including repeated failed activation attempts).
+- `trialStarted` — fires once per install: the single launch whose license
+  read seeds the trial clock (`isFirstTrialObservation(now:)`), with the
+  per-launch `trialStartedThisLaunch` latch kept as defense-in-depth.
+- `paywallReached(error:)` — fires on the forced-paywall `.needsLicense`
+  commits: startup's expired-trial routing and the on-board expiry re-check
+  (`refreshLicenseIfOnBoard()`). The voluntary jump (`showLicenseEntry()`)
+  and failed-activation error re-commits pass `emitsFunnelEvent: false` and
+  do not fire it.
 - `checkoutOpened` — fires from `openCheckout()`.
-- `activated` — fires on a successful `activate(key:)` outcome, **before**
+- `activated` — fires on a successful `activate(key:)` outcome, **after**
   `persist(key:instanceID:)` is called.
 - The old Keygen-era `licenseGateReached` / `licenseUnreachable` events and
   `StowerLicenseEndpoint` type no longer exist.

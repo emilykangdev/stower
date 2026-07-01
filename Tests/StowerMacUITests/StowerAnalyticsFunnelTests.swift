@@ -154,82 +154,9 @@ import Testing
         )
     }
 
-    // MARK: — License / trial funnel (PA3)
-
-    @Test("paywall_reached fires when startup commits needsLicense")
-    internal func paywallReachedFires() async throws {
-        let provider = StowerFakeStartupProvider()
-        let licenseGate = StowerFakeLicenseGate(states: [.expired])
-        let spy = StowerInMemoryAnalyticsReporter()
-        let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
-        model.start()
-        let run = try #require(model.activeRun)
-        await run.value
-
-        let names = spy.recorded().map(\.signalName)
-        #expect(names.contains("paywall_reached"))
-    }
-
-    @Test("trial_started fires once per launch when an active trial is observed")
-    internal func trialStartedFiresOncePerLaunch() async throws {
-        let expiry = Date(timeIntervalSince1970: 1_800_000_000)
-        let provider = StowerFakeStartupProvider(loadBehaviors: [.success, .success])
-        let licenseGate = StowerFakeLicenseGate(
-            states: [.trial(expiry: expiry), .trial(expiry: expiry)]
-        )
-        let spy = StowerInMemoryAnalyticsReporter()
-        let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
-        model.start()
-        let run1 = try #require(model.activeRun)
-        await run1.value
-        model.checkAgain()
-        let run2 = try #require(model.activeRun)
-        await run2.value
-
-        let trialStartedCount = spy.recorded().filter { $0.signalName == "trial_started" }.count
-        #expect(trialStartedCount == 1, "trial_started must fire at most once per launch")
-    }
-
-    @Test("trial_started does NOT fire on a relaunch that merely observes an already-seeded trial")
-    internal func trialStartedDoesNotFireOnRelaunch() async throws {
-        let expiry = Date(timeIntervalSince1970: 1_800_000_000)
-        let provider = StowerFakeStartupProvider()
-        // A fresh model instance simulates a relaunch: the trial clock was
-        // already seeded on a prior launch (isFirstTrialObservation: false),
-        // even though this launch's license read still observes .trial.
-        let licenseGate = StowerFakeLicenseGate(
-            states: [.trial(expiry: expiry)],
-            firstTrialObservationResults: [false]
-        )
-        let spy = StowerInMemoryAnalyticsReporter()
-        let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
-        model.start()
-        let run = try #require(model.activeRun)
-        await run.value
-
-        let trialStartedCount = spy.recorded().filter { $0.signalName == "trial_started" }.count
-        #expect(trialStartedCount == 0, "trial_started must not fire on a relaunch")
-    }
-
-    @Test("activated fires on a successful activation")
-    internal func activatedFiresOnSuccess() async throws {
-        let provider = StowerFakeStartupProvider()
-        let licenseGate = StowerFakeLicenseGate(
-            states: [.expired, .licensed],
-            activationResult: .activated(instanceID: "inst-1")
-        )
-        let spy = StowerInMemoryAnalyticsReporter()
-        let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
-        model.start()
-        let run = try #require(model.activeRun)
-        await run.value
-
-        await model.activate(key: "KEY")
-        await model.activeRun?.value
-
-        let names = spy.recorded().map(\.signalName)
-        #expect(names.contains("activated"))
-    }
+    // The license/trial funnel (PA3) tests live in
+    // `StowerAnalyticsFunnelLicenseTests` — split to keep each suite within
+    // the type-body length budget.
 
     // MARK: — Board failure routing
 

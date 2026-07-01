@@ -222,6 +222,13 @@ internal final class StowerStartupModel {
     /// Acts only while on the board. `.licensed` and `.trial` leave the board in
     /// place; only `.expired` routes to the paywall. The generation guard drops
     /// the result if a fresh startup run (Check Again) began during the await.
+    ///
+    /// The `.needsLicense` commit keeps the default `emitsFunnelEvent: true` on
+    /// purpose — a mid-session expiry is a genuine forced paywall arrival, so
+    /// `paywall_reached` fires exactly once (routing off the board makes every
+    /// later re-check a no-op), and `hardware_checked` cannot re-fire because
+    /// `hardwareCheckedThisRun` is still latched from the run that reached the
+    /// board.
     internal func refreshLicenseIfOnBoard() async {
         guard state == .connectedPreparingBoard else { return }
         let runGeneration = generation
@@ -359,9 +366,14 @@ internal final class StowerStartupModel {
     /// A stale completion can't overwrite a newer run's result. Also emits funnel
     /// analytics events via the reporter on each committed state (Eng F1), unless
     /// `emitsFunnelEvent` is `false` — used by the voluntary key-entry jump
-    /// (`showLicenseEntry()`), a failed re-activation attempt, and the on-board
-    /// expiry re-check, none of which are the startup-flow's own paywall/hardware
-    /// funnel visit and must not re-emit `hardware_checked`/`paywall_reached`.
+    /// (`showLicenseEntry()`) and a failed re-activation attempt, neither of
+    /// which is a genuine forced paywall arrival, so they must not re-emit
+    /// `hardware_checked`/`paywall_reached`. The on-board expiry re-check
+    /// (`refreshLicenseIfOnBoard()`) deliberately keeps the default `true`: a
+    /// trial expiring out from under the board IS a forced paywall arrival, so
+    /// `paywall_reached` fires exactly once there (`hardware_checked` stays
+    /// latched by `hardwareCheckedThisRun`, set by the run that reached the
+    /// board).
     ///
     /// `emitFunnelEvent(for:)` and its helpers live in
     /// `StowerStartupModelAnalytics.swift` (the same split-across-files posture as

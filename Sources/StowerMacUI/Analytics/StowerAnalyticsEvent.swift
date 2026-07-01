@@ -46,12 +46,15 @@ internal enum StowerAnalyticsEvent: Sendable {
     /// The paywall / key-entry screen appeared because the trial ended (or
     /// there was never a license).
     ///
-    /// Emitted when `onCommit` commits `.needsLicense(error)`. **Per-occurrence**
-    /// (fires on every `.needsLicense` commit, since a failed activation
-    /// re-commits it with an error).
+    /// Emitted on the forced-paywall `.needsLicense` commits: startup's
+    /// expired-trial routing and the on-board expiry re-check
+    /// (`refreshLicenseIfOnBoard()`). **Per-occurrence.** The voluntary
+    /// key-entry jump (`showLicenseEntry()`) and a failed activation's error
+    /// re-commit pass `emitsFunnelEvent: false` and do not fire it.
     ///
-    /// - Parameter error: The activation error carried by this paywall visit,
-    ///   or `nil` on the first (non-error) visit.
+    /// - Parameter error: The activation error carried by this paywall visit —
+    ///   always `nil` as-built (failed-activation re-commits are funnel-silent);
+    ///   retained for forward compatibility.
     case paywallReached(error: StowerLicenseGateError?)
 
     /// The user tapped Buy and the Lemon Squeezy checkout opened in the browser.
