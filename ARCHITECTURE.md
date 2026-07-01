@@ -138,12 +138,13 @@ stateDiagram-v2
 ```
 
 The **license gate** sits between model-availability and the board load: once the
-model is available, `runStartup` does a pure-local `licenseGate.hasStoredLicense()`
-read (no network, no spinner). A stored license routes straight to
-`checkingMessages`; otherwise the entry screen (`needsLicense`) is shown, and only a
-user-submitted Activate runs `checkingLicense` (the `licenseGate.activate(key:)`
-round-trip — the as-built gate is `StowerLemonSqueezyLicenseGate`), which on success
-joins the same `continueAfterLicense` tail. The launch path never calls `/activate`.
+model is available, `runStartup` commits `checkingLicense` and awaits
+`licenseGate.currentStatus(now:)` — the wired gate is `StowerLicenseGate`, which
+mints on first run or runs a JC5-signed `/check-in` when a lease exists, with a
+signed offline fallback. A `.valid` status routes straight to `checkingMessages`;
+every other status routes to the entry screen (`needsLicense`) with its context.
+`licenseGate.hasLease()` is the pure-local Keychain check (no network); there is no
+pasted-key `activate` path anymore.
 
 Every transition runs under a **generation token**: `beginRun()` bumps a counter,
 and `commit` writes `state` only if the completing run is still the current

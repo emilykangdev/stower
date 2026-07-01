@@ -11,7 +11,7 @@
 > the version-pinned contract (§1–§8) — and may change without a contract version
 > bump. Plans still sign against the §1–§8 contract version only.
 
-**Version:** 1.20 · **Last updated:** 2026-06-30 · **Canonical home:** this file.
+**Version:** 1.21 · **Last updated:** 2026-07-01 · **Canonical home:** this file.
 
 When the contract changes: edit here, bump the version, record the change in
 §Changelog. Plans reference this file by version number.
@@ -22,10 +22,8 @@ When the contract changes: edit here, bump the version, record the change in
 Plan A ✓ (done, superseded) → bootstrap plan (Keygen structures script)
   → Plan 2 (local Keygen CE harness)
   → Plan Beta ✓ (Edge Function licensing brain: mint + check-in + webhook)
-  → Plan B (gate + entitlement check + LS deletion)
-  → PAR-36 Slice A (fail-hard fingerprint + unidentifiable-Mac UX)
-  → PAR-36 Slice B (self-service migration)
-  → prod ops (real Keygen account + public key)
+  → Plan B ✓ (gate + entitlement check + LS deletion)
+  → prod ops (real Edge Function URL + real buyable checkout URL)
   → enable paid sales
 ```
 
@@ -36,9 +34,9 @@ licenses with their major. Plan 2 is the regression net. Plan Beta is the
 LS webhook handling, the once-per-major +7d extension, Keygen admin calls). The
 **Railway** plan was cancelled/superseded — Supabase is now brain + state store.
 Plan B is the facade rewrite that makes the gate enforce entitlements and consume
-the Edge Function. PAR-36 lands after Plan B (both slices need the gate to route
-through) and before paid sales (protects identity integrity + makes
-`maxMachines: 1` humane). Prod ops wires the real account; then sales open.
+the Edge Function — now landed. The remaining pre-sales step is prod ops: wire the
+real Edge Function base URL and the real buyable Lemon Squeezy checkout URL (G10);
+then sales open.
 
 Each slice lands on its own branch in order. Plan B starts from `main` only
 after the bootstrap script branch, Plan 2, and Plan Beta have landed, so
@@ -213,32 +211,34 @@ The CI integration test pins all runtimes to the same string.
 ## 5. The facade contract — seam shapes
 
 This is the boundary consumers depend on. **Stable at the seam; free to churn
-behind it.** Two states are documented below: what exists in code today
-(as-built) and what the redesign requires (intended). The gap is the work.
+behind it.** The Edge-Function-backed Keygen redesign (§5b) is now **as-built**:
+Plan B landed (see §Changelog 1.19), so §5b's seam spec is the live contract. §5a
+below documents that as-built shape; the §5c gap is now closed except for the G10
+prod-ops URLs.
 
 ### 5a. As-built (what exists in code today)
 
-The wired Swift gate is still **Lemon Squeezy**, not Keygen
-(`StowerLemonSqueezyLicenseGate()` at `StowerRootView.swift:38`). The
-Edge-Function licensing brain (`supabase/functions/license/`) is **built and
-landed** (Plan Beta), but the Swift seams that consume it (`StowerTrialMintClient`,
-the Keygen-backed gate) are **unwired** — Plan B rewires them.
+The wired Swift gate is **`StowerLicenseGate`** (`StowerRootView.swift:89`,
+`StowerLicenseGate(reporter:)`). The Edge-Function licensing brain
+(`supabase/functions/license/`) is **built and landed** (Plan Beta), and the Swift
+seams that consume it (`StowerLicenseCheckInClient`, the Keygen-backed
+`StowerLicenseGate`) are now **wired** (Plan B).
 
 **The startup license seam** — `Sources/StowerMacUI/Startup/StowerLicenseGating.swift`
 
 ```swift
 internal protocol StowerLicenseGating: Sendable {
-    func hasStoredLicense() -> Bool
-    func activate(key: String) async -> StowerLicenseActivation
-    func persistLicense(key: String, instanceID: String)
+    func hasLease() -> Bool
+    func currentStatus(now: Date) async -> StowerLicenseStatus
+    func trialBadge() -> StowerTrialBadge?
 }
 ```
 
-- `StowerLicenseActivation`: `.activated(instanceID:)` | `.invalid` | `.couldNotReach`
-- `StowerLicenseGateError`: `.invalid` | `.couldNotReach`
-- Wired conformer: `StowerLemonSqueezyLicenseGate` (`StowerRootView.swift:38`)
-- Consumed by: `StowerStartupModel` (`:157,200,204` — calls `hasStoredLicense`,
-  `activate`, `persistLicense`)
+- `StowerLicenseStatus`: `.valid` | `.trialExpired(licenseID:)` | `.wrongVersion(licenseID:)` | `.couldNotReach` | `.needsTrialOnline`
+- `StowerLicenseEntryContext`: `.trialExpired(licenseID:)` | `.upgradeRequired(licenseID:)` | `.connectOnce` | `.couldNotReach`
+- Wired conformer: `StowerLicenseGate` (`StowerRootView.swift:89`)
+- Consumed by: `StowerStartupModel` (calls `hasLease`, `currentStatus(now:)`,
+  `trialBadge`)
 
 The Swift `StowerKeygenClient` (machine activate/checkout/validate) has been
 **DELETED** — that surface now lives server-side in the Edge Function's
@@ -257,7 +257,10 @@ internal struct StowerLicenseLease: Sendable, Equatable, Codable {
 }
 ```
 
-- **No entitlement codes in the lease yet** (Plan B adds them — §5b).
+- **The lease carries no entitlement codes by design** — entitlements live inside
+  the Ed25519-signed machine-file `enc` payload and are decoded via
+  `StowerLicenseLeaseStore.offlineAuthority(...)` into `StowerOfflineAuthority`
+  (which holds `entitlementCodes`), never on the lease.
 - Stored in the macOS **Keychain** as a generic-password item (`StowerKeychainItem`,
   service `com.stower.license.lease`, account `machine-file`). See "On-device
   storage & threat model" below.
@@ -268,11 +271,14 @@ internal struct StowerLicenseLease: Sendable, Equatable, Codable {
 - Verifies the machine-file's Ed25519 signature on every `load()` (I6); the
   signed payload is `"machine/" + enc`.
 
-**Device fingerprint** — `Sources/StowerMacUI/Startup/StowerDeviceFingerprint.swift`
+**Device fingerprint** — `Sources/StowerMacUI/Startup/StowerKeychainFingerprint.swift`
 
-- SHA-256 of `IOPlatformUUID`, **with a Keychain-cached fallback** when IOKit
-  returns none (`keychainFallbackUUID`, `:79-90`).
-- The redesign (PAR-36) **reverses this**: fail hard, delete the fallback. **Not done.**
+- SHA-256 of a random, app-scoped install UUID stored in the login Keychain
+  (service `com.stower.license.fingerprint`, account `install-uuid`). No
+  `IOPlatformUUID` read, no hardware fallback anywhere.
+- It never identifies the machine and is user-resettable (regenerating the
+  Keychain install UUID) — an app-scoped, non-correlating install identity, not a
+  hardware binding.
 
 **Trial mint client** — `Sources/StowerMacUI/Startup/StowerTrialMintClient.swift`
 
@@ -282,10 +288,10 @@ internal struct StowerTrialMintClient: Sendable {
 }
 ```
 
-- `StowerTrialMint`: `.minted(key:licenseID:)` | `.retryShortly` | `.unreachable`
-- Still decodes the wire field `key` (Plan B rewires it to the renamed
-  `licenseKey` + the new `machineFile`/`machineID` fields the Edge Function now
-  returns — §5b). **Unwired** today (no startup integration).
+- `StowerTrialMint`: `.minted(licenseKey:licenseID:machineFile:)` | `.retryShortly` | `.unreachable(StowerLicenseUnreachableReason)`
+- Decodes the renamed wire field `licenseKey` (was `key`) plus the signed
+  `machineFile`. Composed into `StowerLicenseCheckInClient` (Plan B) as its mint
+  base — wired into the production `StowerLicenseGate`.
 
 **Supabase Edge Function** — `supabase/functions/license/` (the licensing brain;
 landed via Plan Beta). `Deno.serve` routes (`index.ts`):
@@ -337,7 +343,7 @@ wired in `index.ts`). Request: `POST /check-in` with body
 | 200 | `expired` | `licenseID` | `.trialExpired(licenseID:)` |
 | 401 | `bad_signature` | — (non-secret diagnostic logged) | `.couldNotReach` |
 | 404 | `unknown_license` | — | clear stale lease, then enter the shared mint flow (JC6); only a post-clear mint transport failure maps to `.needsTrialOnline` |
-| 409 | `fingerprint_mismatch` | `licenseID` | device changed (PAR-36) |
+| 409 | `fingerprint_mismatch` | `licenseID` | device changed — transient retry; migration out of scope (support email) |
 | 503 | `retry_shortly` / `unreachable` | — | `.couldNotReach` |
 
 Check-in **never returns `keygen_license_key`**. On the `ok` path it returns a
@@ -387,7 +393,9 @@ gains nothing: the forged blob fails the signature check and `load()` returns
 it lives only in the Edge Function env.
 
 **Trial dedupe (one trial per device).** The dedupe key is the device
-fingerprint (`device_trials.fingerprint` PK = `SHA-256(IOPlatformUUID)`, §5a).
+fingerprint (`device_trials.fingerprint` PK); the client sends `SHA-256` of its
+random app-scoped Keychain install UUID (§5a `StowerKeychainFingerprint`), and the
+server stores whatever the client sends.
 `mintTrial` is **idempotent on the fingerprint**: a device that already has a row
 gets its *existing* license back — same `licenseID`/`licenseKey`, same
 server-side trial clock — never a fresh trial. So the JC6 `unknown_license`
@@ -395,19 +403,19 @@ self-heal (clear the local lease + re-mint) **cannot reset the trial**: it retur
 the device's existing — possibly already `trialExpired` — license, which the next
 `/check-in` re-verdicts to the paywall. A *forged* lease never reaches re-mint at
 all (it fails the `load()` Ed25519 check, I6). The guarantee is therefore **per
-device, not per human**, and v0 deliberately accepts the residual reset vectors
-(a different Mac, a spoofed `IOPlatformUUID`, or the Keychain fingerprint fallback
-at `:266`) rather than hardening them pre-launch — closing them is **PAR-36**
-(G6), sequenced before paid sales. The specific reset procedures are kept out of
-this repo on purpose.
+device, not per human**. Under the Keychain-only identity model the reset vector
+is simply resetting/regenerating the app-scoped Keychain install UUID (or using a
+different Mac), and v0 deliberately accepts this rather than hardening it
+pre-launch — no hardware fingerprint exists to bind, so there is no fallback to
+close. The specific reset procedures are kept out of this repo on purpose.
 
-### 5b. Intended (the Edge-Function-backed Keygen redesign)
+### 5b. As-built (the Edge-Function-backed Keygen redesign)
 
-The facade the plans describe. The **startup license seam + check-in client +
-gate** below are now **built by Plan B** (`StowerLicenseGating` /
+This seam is now **as-built** — the **startup license seam + check-in client +
+gate** below were **built by Plan B** (`StowerLicenseGating` /
 `StowerCheckInSignature` / `StowerLicenseCheckInClient` / `StowerLicenseGate`, see
-§Changelog 1.19); the **fingerprint reversal** (PAR-36) and **real Keygen public
-key** (G10) remain future.
+§Changelog 1.19). The only remaining future is G10 prod ops: the real Edge
+Function base URL and the real buyable Lemon Squeezy checkout URL.
 
 **Rewritten startup license seam** (Plan B):
 
@@ -415,6 +423,7 @@ key** (G10) remain future.
 internal protocol StowerLicenseGating: Sendable {
     func hasLease() -> Bool                    // pure-local Keychain read (replaces hasStoredLicense)
     func currentStatus(now: Date) async -> StowerLicenseStatus  // NEW
+    func trialBadge() -> StowerTrialBadge?     // pure-local; decoded from the signed machine file
 }
 ```
 
@@ -425,7 +434,7 @@ internal protocol StowerLicenseGating: Sendable {
 - `StowerCheckingLicenseReason`: `.startingTrial` | `.revalidating`
 - New conformer: an Edge-Function-backed `StowerLicenseGate` (composes the Plan-A
   local seams and talks to the Edge Function for online licensing)
-- Delete: `StowerLemonSqueezyLicenseGate`, `StowerLicenseStore`, `StowerLemonSqueezyClient`
+- Deleted (done, Plan B): `StowerLemonSqueezyLicenseGate`, `StowerLicenseStore`, `StowerLemonSqueezyClient`
 - Delete the manual key activation UI/seam for Plan B. The landed Edge Function
   has no app-facing route that can turn an arbitrary pasted key into
   `{licenseID, licenseKey, machineFile}`, and the Mac app must not call Keygen
@@ -434,7 +443,7 @@ internal protocol StowerLicenseGating: Sendable {
 
 **Check-in client** (§C):
 
-- `StowerLicenseCheckInClient` (Plan B; built on the unwired `StowerTrialMintClient`
+- `StowerLicenseCheckInClient` (Plan B; built on the `StowerTrialMintClient`
   base) is the only online licensing client used by the Mac app. It calls the
   Edge Function for trial mint, reachable-launch `/check-in` (JC5-signed), and
   Re-check after purchase. It may also expose a pure local Lemon Squeezy checkout
@@ -493,10 +502,12 @@ signed file only until that file's `meta.expiry`.
    paid entitlement. If the TTL has expired → blocked, show the connect screen.
    No grace. No "use the license expiry instead of the TTL."
 
-**Fingerprint reversal** (PAR-36):
+**Device identity**:
 
-- `StowerDeviceFingerprint` fails hard when `IOPlatformUUID` is absent; the
-  Keychain fallback is deleted.
+- Identity is the Keychain-only `StowerKeychainFingerprint` (SHA-256 of a random
+  app-scoped Keychain install UUID — no hardware binding, no fail-hard needed).
+  The old `PAR-36` fingerprint reversal was **cancelled as obsolete** (it assumed
+  a hardware `IOPlatformUUID` fingerprint that no longer exists).
 
 **Purchase webhook extension** (Edge Function `/ls-webhook` — built server-side):
 
@@ -563,16 +574,16 @@ signed file only until that file's `meta.expiry`.
 
 | # | What | Status | Owned by |
 |---|------|--------|----------|
-| G1 | Facade rewrite (`StowerLicenseGating` → Edge-Function-backed Keygen shape) | not started | Plan B |
-| G2 | Edge-Function-backed `StowerLicenseGate` (new conformer + §C entitlement check) | not started | Plan B |
-| G3 | `StowerLicenseCheckInClient` returns gate status + signed machine file from the Edge Function | not started | Plan B (§C) |
-| G4 | `StowerLicenseLease` carries entitlements | not started | Plan B (§C) |
-| G5 | The new gate implements the machine-file lifecycle in §5b | not started | Plan B (§C) |
-| G6 | Fingerprint fallback deleted (PAR-36) | not started | PAR-36 ticket (not Plan B — Plan B's Non-goals exclude it; must land before selling paid licenses) |
-| G7 | Delete `StowerLemonSqueezyLicenseGate` + `StowerLicenseStore` | not started | Plan B |
+| G1 | Facade rewrite (`StowerLicenseGating` → Edge-Function-backed Keygen shape) | **done** | Plan B |
+| G2 | Edge-Function-backed `StowerLicenseGate` (new conformer + §C entitlement check) | **done** | Plan B |
+| G3 | `StowerLicenseCheckInClient` returns gate status + signed machine file from the Edge Function | **done** | Plan B (§C) |
+| G4 | Offline launches enforce entitlements from the signed machine-file | **done** (via the signed machine-file `enc`/`StowerOfflineAuthority`, not lease fields) | Plan B (§C) |
+| G5 | The new gate implements the machine-file lifecycle in §5b | **done** | Plan B (§C) |
+| G6 | Fingerprint fallback deleted (PAR-36) | **cancelled/obsolete** (PAR-36 cancelled; identity is Keychain-only `StowerKeychainFingerprint`, no fallback exists) | — |
+| G7 | Delete `StowerLemonSqueezyLicenseGate` + `StowerLicenseStore` | **done** | Plan B |
 | G8 | Webhook attaches `STOWER_V0` (§B) | **done** | Plan Beta (Edge Function `/ls-webhook`) |
 | G9 | Bootstrap script creates structures (§A) | not started | Bootstrap plan |
-| G10 | `keygenPublicKeyHex` replaced with real key | not started | Prod ops |
+| G10 | Real Edge Function base URL + real buyable Lemon Squeezy checkout URL (`keygenPublicKeyHex` already the real account key, §5a) | not started | Prod ops |
 | G11 | Local Keygen CE harness (regression net) | not started | Plan 2 |
 | G12 | Edge Function licensing brain (runtime `/check-in` + server +7d on new major + `/health`) | **done** | Plan Beta |
 | G13 | `trial_extension_grants` Supabase state + idempotent once-per-major cap | **done** | Plan Beta |
@@ -650,6 +661,7 @@ vaporware. Plans must not violate these.
 | 1.18 | 2026-06-26 | Removed the unsupported manual key activation fallback from the intended Plan B seam. The app-facing Edge Function routes are `/mint-trial`, `/check-in`, `/ls-webhook`, and `/health`; none can turn an arbitrary pasted key into a persisted signed lease, and the Mac app must not call Keygen directly. Plan B therefore deletes the old Lemon Squeezy activation UI/seam and keeps purchase recovery to Buy + explicit Re-check. Also corrected the `/check-in` status table for `unknown_license`: a stored-lease 404 clears the stale lease and re-enters the shared mint flow (JC6), rather than mapping directly to `.needsTrialOnline`. |
 | 1.19 | 2026-06-26 | **Plan B landed — the Swift gate is wired to the Edge Function.** The §5b startup seam is now as-built: `StowerLicenseGating` is `hasLease()` + `currentStatus(now:)` (the old `activate`/`persistLicense`/manual-key path is deleted); new `StowerCheckInSignature` reproduces the JC5 parity vector (`fixtures/jc5-signature-vector.json`) byte-for-byte; new `StowerLicenseCheckInClient` (built on `StowerTrialMintClient`) does mint + JC5-signed `/check-in` (mapping the §5 status table) + a pure LS checkout-URL builder carrying `checkout[custom][license_id]`; new `StowerLicenseGate` composes the check-in client + `StowerLicenseLeaseStore` + `StowerDeviceFingerprint` (mint-on-first-run, reachable check-in stores the fresh signed file, offline fallback bounded by `meta.expiry` (I14) + the signed `STOWER_TRIAL`/`STOWER_V0` OR (I5), JC6 `unknown_license` self-heal). `StowerTrialMintClient` now decodes `licenseKey`/`machineFile`; `StowerLicenseLeaseStore` gained `offlineAuthority(now:)` decoding the signed `enc` payload. `StowerStartupState` cases keep their names with new payloads (`needsLicense(StowerLicenseEntryContext)`, `checkingLicense(StowerCheckingLicenseReason)`); `StowerRootView` builds `StowerLicenseGate()`. Deleted: `StowerLemonSqueezyClient`, `StowerLemonSqueezyLicenseGate`, `StowerLicenseStore`/`StowerStoredLicense` + their tests. Remaining future (all G10/prod ops): the real `keygenPublicKeyHex`, the Edge Function base URL, and the Lemon Squeezy product/variant checkout URL (the placeholder `…/checkout` does not resolve to a buyable product — Buy completes only once these are real; zero paid users until then), plus the PAR-36 fingerprint reversal. Grounded in the new Swift sources + `fixtures/jc5-signature-vector.json`. |
 | 1.20 | 2026-06-30 | **Docs-structure only — consolidated the licensing doc set from 4 files to 2.** Folded `licensing-test-coverage.md` → §9 and `license-smoke.md` → §10 into this file (their internal section numbers became §9.1–§9.3 and §10.1–§10.7; cross-refs renumbered). `licensing.md` (customer-facing terms) stays separate by audience. No contract/invariant/seam/model change — plans signed against ≤1.19 remain valid. Repointed the two external inbound refs: `EnvironmentVariables.md` (was `licensing-test-coverage.md` → now `licensing-contract.md` §9) and `StowerLicenseDebugArguments.swift` (was `Docs/license-smoke.md` → now `Docs/licensing-contract.md` §10). |
+| 1.21 | 2026-07-01 | **Doc sync: Plan B is as-built; PAR-36 cancelled.** Collapsed the §5 as-built(LemonSqueezy)/intended(Keygen)/gap framing now that Plan B landed — the wired gate is `StowerLicenseGate` (`StowerRootView.swift:89`), the current `StowerLicenseGating` is `hasLease()`/`currentStatus(now:)`/`trialBadge()`, and `StowerLemonSqueezyLicenseGate`/`StowerLemonSqueezyClient`/`StowerLicenseStore`/`StowerKeygenClient` are deleted. Device identity is the Keychain-only `StowerKeychainFingerprint` (SHA-256 of a random app-scoped Keychain install UUID; no `IOPlatformUUID`, no hardware fallback). **PAR-36 cancelled as obsolete** — both slices rested on the removed IOPlatformUUID-hardware-fingerprint + direct-`StowerKeygenClient` premises; the live paid-downgrade residual is tracked in PAR-43. §5c gap table G1–G5/G7 marked done (Plan B), G6 cancelled. Remaining pre-sales work is G10 prod ops (real Edge Function URL + real buyable checkout URL). Grounded in `StowerLicenseGate.swift`, `StowerLicenseGating.swift`, `StowerLicenseLeaseStore.swift`, `StowerKeychainFingerprint.swift`, `StowerRootView.swift`. |
 
 ---
 

@@ -22,7 +22,9 @@ internal enum StowerCheckInResult: Sendable, Equatable {
     /// `401 bad_signature` — treated as transient; the next launch retries.
     case badSignature
 
-    /// `409 fingerprint_mismatch` — the device changed (PAR-36 owns the real UX).
+    /// `409 fingerprint_mismatch` — the device changed (the Keychain install UUID
+    /// no longer matches the lease's). Treated as a transient retry; self-service
+    /// machine migration is out of scope (long-tail escape hatch is a support email).
     case fingerprintMismatch
 
     /// Transport throw / any non-success HTTP status / undecodable body — the

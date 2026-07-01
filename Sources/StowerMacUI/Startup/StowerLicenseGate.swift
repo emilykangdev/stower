@@ -140,8 +140,11 @@ internal struct StowerLicenseGate: StowerLicenseGating {
             leaseStore.clear()
             return await mintFlow(now: now)
         case .badSignature, .fingerprintMismatch:
-            // 401 (transient — re-sign next launch) and 409 (device changed; PAR-36
-            // owns the real UX) both degrade to a transient retry in Plan B.
+            // 401 (transient — re-sign next launch) and 409 (device changed — the
+            // Keychain install UUID no longer matches the lease's) both degrade to a
+            // transient retry. Under the Keychain-only identity model a 409 is rare
+            // (a reset/moved Keychain), and self-service machine migration is out of
+            // scope: the long-tail escape hatch is a support email, not client UX.
             return .couldNotReach
         case .unreachable(let reason):
             return offlineFallback(reason: reason, lease: lease, now: now)

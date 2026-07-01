@@ -1,6 +1,6 @@
 # Stower — License Lifecycle & Runtime Topology
 
-> **What this doc is.** The **intended** runtime shape of Stower's licensing: who
+> **What this doc is.** The runtime shape of Stower's licensing: who
 > talks to whom, who is allowed to reason, and how a license moves through its life
 > (trial → paid → offline). Customer-facing terms live in [`licensing.md`](./licensing.md);
 > the seam-by-seam engineering contract lives in
@@ -8,17 +8,15 @@
 > lifecycle** view that sits above both, and is consistent with the contract
 > (≥ v1.12) — it does not introduce a different model, it draws the picture.
 >
-> **⚠️ This is the target design, not a reflection of the current codebase.** The
-> Edge Function side (`/mint-trial`, `/check-in`, `/ls-webhook`, `/health`) is built
-> (Plan Beta), but **the Mac app is not yet wired to it.** Today's shipping gate is
-> `StowerLemonSqueezyLicenseGate`, and the as-built purchase flow is **buy → Lemon
-> Squeezy emails a license key → paste it into `StowerLicenseEntryView` → the app
-> calls Lemon Squeezy `/v1/licenses/activate` directly** — no Edge Function, no
-> webhook, no `/check-in` in today's purchase loop. The webhook + `/check-in` flow
-> drawn below is **Plan B work, not live.** The contract's §5a (as-built) vs §5b
-> (intended) split is the source of truth for what exists today.
+> **This lifecycle is now as-built.** Plan B landed and wired the Mac app to the
+> Edge Function (`/mint-trial`, `/check-in`, `/ls-webhook`, `/health`, built via
+> Plan Beta). The wired gate is `StowerLicenseGate` (`StowerRootView.swift:89`),
+> which mints on first run or runs a JC5-signed `/check-in`, with a signed offline
+> fallback. The webhook + `/check-in` flow drawn below is live. The only remaining
+> pre-sales work is G10 prod ops: the real Edge Function base URL and the real
+> buyable Lemon Squeezy checkout URL.
 
-**Version:** 1.2 · **Last updated:** 2026-06-26 · **Status:** **Intended design (not as-built).** Brain = Supabase Edge Function (`supabase/functions/license/`); its `mint-trial` / `check-in` / `ls-webhook` / `health` routes are implemented (Plan Beta landed). The Swift gate rewire that points the app at them is Plan B and **not yet built** — today's wired gate is `StowerLemonSqueezyLicenseGate` (key-by-email + paste).
+**Version:** 1.3 · **Last updated:** 2026-07-01 · **Status:** **As-built (Plan B landed).** Brain = Supabase Edge Function (`supabase/functions/license/`); its `mint-trial` / `check-in` / `ls-webhook` / `health` routes are implemented (Plan Beta), and the Swift app is wired to them — the wired gate is `StowerLicenseGate` (mint-on-first-run + JC5-signed `/check-in` + signed offline fallback).
 
 ---
 
@@ -203,19 +201,16 @@ prescribes. (An earlier draft of this doc routed the brain and webhook through a
 Railway service; **Railway was considered and superseded** — there is no separate
 Railway compute.)
 
-The drift that remains is **code, not topology** — i.e. this whole doc is the
-intended design (see the banner at the top), and the Mac-app half is not built yet:
+Topology and code now agree — Plan B wired the Mac-app half:
 
-- **Swift gate rewire (Plan B)** is what makes the app talk to the Edge Function's
-  `/check-in` as the reachable-launch authority and verify the cached signed
-  machine-file offline. Until it lands, the as-built Swift gate has not yet been
-  pointed at the new `/check-in` route.
-- **As-built purchase is key-by-email, not webhook + Re-check.** Today the user buys
-  on Lemon Squeezy, receives a license key by email, and pastes it into
-  `StowerLicenseEntryView`; the app calls Lemon Squeezy `/v1/licenses/activate`
-  directly (`StowerLemonSqueezyLicenseGate`). The §4/§5 webhook + `/check-in`
-  purchase flow is the Plan B target. The Edge Function `/ls-webhook` exists; the
-  app does not yet rely on it. (Contract §5a as-built vs §5b intended is canonical.)
+- **Swift gate (`StowerLicenseGate`, Plan B)** talks to the Edge Function's
+  `/check-in` as the reachable-launch authority and verifies the cached signed
+  machine-file offline. It is wired (`StowerRootView.swift:89`).
+- **Purchase is webhook + Re-check.** The user buys on Lemon Squeezy; completion is
+  signalled by the Edge Function `/ls-webhook` (not a pasted key), and the app
+  re-checks via `/check-in` to pick up the upgraded license — there is no direct
+  `/v1/licenses/activate` call anymore. (Contract §5a/§5b, now as-built, is
+  canonical.)
 
 `licensing.md` (customer-facing) now names the Edge Function and its routes
 (`/mint-trial`, `/check-in`, `/ls-webhook`) and handler functions in its technical
