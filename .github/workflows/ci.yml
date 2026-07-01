@@ -58,7 +58,7 @@ jobs:
       # -clonedSourcePackagesDirPath below pins the clone location to this cached dir,
       # so an unchanged resolution skips the network re-resolve on every CI run.
       - name: Cache StowerMac SwiftPM dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/stowermac-spm
           key: stowermac-spm-${{ runner.os }}-${{ hashFiles('StowerMac/StowerMac.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
