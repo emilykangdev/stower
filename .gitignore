@@ -48,3 +48,6 @@ supabase/.temp/
 # dotenvx private keys — committing these defeats the encryption. Matches
 # `.env.keys` in any directory (supabase/, Scripts/Keygen/remote-testing/, root).
 .env.keys
+
+# git worktrees (agent + plan workspaces)
+worktrees/
