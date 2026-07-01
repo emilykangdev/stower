@@ -38,10 +38,12 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
         productID: 0
     )
 
-    /// Staging defaults — same placeholders as production until a test-mode
-    /// store/product/key is supplied (OQ2/OQ4).
+    /// Staging defaults — the test-mode checkout link is real (supplied
+    /// 2026-07-01); the ids stay fail-closed placeholders until the test-mode
+    /// `/activate` spike reads them from `meta` (OQ2/OQ4).
     internal static let staging = StowerLicenseConfig(
-        checkoutURL: "",
+        checkoutURL: "https://emilykangdev.lemonsqueezy.com"
+            + "/checkout/buy/6cb4069d-ad6c-4d0a-a305-eb9632d35158",
         storeID: 0,
         productID: 0
     )
