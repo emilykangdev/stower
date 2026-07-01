@@ -25,7 +25,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        # actions/checkout v5 (SHA-pinned per supply-chain hardening). v5 runs on
+        # Node 24; the prior v4 pin targeted deprecated Node 20.
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           fetch-depth: 0
 
