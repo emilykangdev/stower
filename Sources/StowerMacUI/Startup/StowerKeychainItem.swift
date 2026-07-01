@@ -4,9 +4,9 @@ import Security
 /// A generic-blob persistence seam: read/write/delete of one opaque blob.
 ///
 /// Production is `StowerKeychainItem`; tests inject an in-memory fake so they
-/// touch neither the Keychain nor disk. Extracted from the deleted Keygen
-/// lease store — this is now the production storage for Diagnostics
-/// (`StowerDiagnosticsConsent`, `StowerDiagnosticsIdentity`), not licensing.
+/// touch neither the Keychain nor disk. This is the production storage for
+/// Diagnostics (`StowerDiagnosticsConsent`, `StowerDiagnosticsIdentity`), not
+/// licensing.
 internal protocol StowerLeaseStorage: Sendable {
     /// Reads the stored blob, or `nil` when absent.
     func readData() -> Data?

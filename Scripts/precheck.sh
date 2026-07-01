@@ -78,23 +78,6 @@ else
     swift test ${SKIP_ARGS[@]+"${SKIP_ARGS[@]}"}
 fi
 
-# Step 4c — Deno unit tests for the licensing code (hermetic: fake fetch, no
-# network/disk/env). Two homes: the license Edge Function (mint/webhook
-# idempotency, signature, replay) in supabase/functions/license/index.test.ts, and
-# the Keygen bootstrap script (exact-attribute drift checks) in
-# Scripts/Keygen/bootstrap-keygen.test.ts. The real-CE integration tier
-# (Scripts/Keygen/integration) needs the Docker harness and runs only in CI.
-# FAILS if Deno is absent (not a skip): these guard the payment/license path, so
-# "Deno missing" must break the gate loudly, never silently drop coverage.
-if ! command -v deno >/dev/null 2>&1; then
-    echo "ERROR: deno not installed — the license Edge Function tests cannot run" >&2
-    echo "       and the payment/license invariants would ship unverified. Install:" >&2
-    echo "       https://docs.deno.com/runtime/getting_started/installation/ (or: brew install deno)" >&2
-    exit 1
-fi
-( cd supabase/functions/license && deno test )
-( cd Scripts/Keygen && deno test )
-
 # Step 5 — module boundary checks.
 # Match only real Swift import declarations (anchored to line start, optional
 # @testable), and only in *.swift files — so a README, comment, or string that
@@ -211,18 +194,13 @@ if grep -RInE --include="*.swift" '(^|[^A-Za-z0-9_])(print|NSLog|os_log)[[:space
     exit 1
 fi
 
-# 6h — The DEBUG launch-arg seam is NEVER compiled into a Release archive: the
-#      StowerLicenseDebugArguments type is DECLARED inside #if DEBUG, and
-#      StowerLicenseGate REFERENCES it only inside #if DEBUG. A Release reference to
-#      this #if DEBUG-only lease-wipe / fingerprint-pin lever would ship it to
-#      customers (I-H5). Region-aware: a line-oriented grep cannot express "outside a
-#      #if DEBUG region", so awk tracks #if DEBUG/#else/#endif nesting. The
-#      `swift build -c release` in CI is the authoritative gate (an out-of-#if-DEBUG
-#      reference is a hard compile error); this is the fast local canary.
+# debug_region_violation — shared helper (used by 6m below). $1 = file,
+# $2 = ERE pattern. Exits non-zero (printing FILE:LINE) when a line matching
+# $2 appears OUTSIDE every enclosing release-excluding #if DEBUG region.
+# Region-aware: a line-oriented grep cannot express "outside a #if DEBUG
+# region", so awk tracks #if DEBUG/#else/#endif nesting. Pure-comment lines
+# (// …) are ignored — a doc mention is not a compile reference.
 debug_region_violation() {
-    # $1 = file, $2 = ERE pattern. Exits non-zero (printing FILE:LINE) when a line
-    # matching $2 appears OUTSIDE every enclosing release-excluding #if DEBUG region.
-    # Pure-comment lines (// …) are ignored — a doc mention is not a compile reference.
     awk -v pat="$2" '
         /^[[:space:]]*#if[[:space:]]+DEBUG([[:space:]]|$)/ { depth++; dbg[depth]=1; act[depth]=1; excl++; next }
         /^[[:space:]]*#if([[:space:]]|$)/                  { depth++; dbg[depth]=0; act[depth]=0; next }
@@ -233,41 +211,13 @@ debug_region_violation() {
         END { exit (bad ? 1 : 0) }
     ' "$1"
 }
-if ! debug_region_violation \
-    Sources/StowerMacUI/Startup/StowerLicenseDebugArguments.swift \
-    'struct[[:space:]]+StowerLicenseDebugArguments' \
-    || ! debug_region_violation \
-    Sources/StowerMacUI/Startup/StowerLicenseGate.swift \
-    'StowerLicenseDebugArguments'; then
-    echo "ERROR: the StowerLicenseDebugArguments seam must be #if DEBUG-only — its type must be declared inside #if DEBUG and referenced (in StowerLicenseGate) only inside #if DEBUG, or a lease-wipe/fingerprint-pin lever ships to customers (I-H5)" >&2
-    exit 1
-fi
-
-# 6i — The /health non-default-trial-duration canary is actually WIRED, not just
-#      the helper unit-tested: index.ts's /health handler must call
-#      trialDurationHealthFields( so a TRIAL_DURATION_SECONDS leak onto prod is loud
-#      (I-H10). Must-be-PRESENT polarity: a no-match fails. Block-scoped to the
-#      `path.endsWith("/health")` branch (awk, not grep): a plain grep would pass if
-#      the call drifted into another handler while /health was left unwired, so awk
-#      tracks `{`/`}` depth from the /health `if` and asserts the call is INSIDE it.
-if ! awk '
-        /path\.endsWith\("\/health"\)/ && /{/ { inblock=1; depth=0 }
-        inblock {
-            depth += gsub(/{/, "{") - gsub(/}/, "}")
-            if ($0 ~ /trialDurationHealthFields\(/) found=1
-            if (depth<=0) inblock=0
-        }
-        END { exit (found ? 0 : 1) }
-    ' supabase/functions/license/index.ts 2>/dev/null; then
-    echo "ERROR: index.ts's GET /health handler must call trialDurationHealthFields( inside the path.endsWith(\"/health\") branch — the non-default trial-duration canary is unwired (I-H10)" >&2
-    exit 1
-fi
 
 # 6j — DEBUG is NEVER defined in a Release build configuration of StowerMac.xcodeproj:
 #      a DEBUG in the Xcode Release config would compile every #if DEBUG lever
-#      (lease-wipe, fingerprint pin) INTO the shipped archive — and neither the SPM
-#      `swift build -c release` (different build system) nor the 6h source guard would
-#      catch it (I-H11). Block-scoped: walk each XCBuildConfiguration, remember its
+#      (the --clear-license / --reset-trial debug launch-arg seam) INTO the
+#      shipped archive — and the SPM `swift build -c release` (a different
+#      build system) would not catch it (I-H11). Block-scoped: walk each
+#      XCBuildConfiguration, remember its
 #      SWIFT_ACTIVE_COMPILATION_CONDITIONS, fail if a `name = Release;` block carries
 #      DEBUG. Dependency-free awk (no plutil/jq/python). SWIFT_ACTIVE_COMPILATION_
 #      CONDITIONS can be a parenthesized multiline list, so the value's DEBUG may sit
@@ -328,7 +278,7 @@ fi
 
 # 6m — options.debug must ONLY appear inside a #if DEBUG region in
 #      StowerCrashReporting.swift. An unguarded options.debug in a Release archive
-#      ships debug logging. Reuses the debug_region_violation awk helper from 6h.
+#      ships debug logging. Reuses the shared debug_region_violation awk helper.
 if ! debug_region_violation \
     Sources/StowerMacUI/CrashReporting/StowerCrashReporting.swift \
     'options[[:space:]]*\.[[:space:]]*debug'; then
@@ -370,5 +320,28 @@ if grep -RInE --include="*.swift" \
     Sources/ 2>/dev/null; then
     echo "ERROR: no string interpolation (\() in Thread.name assignments in" >&2
     echo "       Sources/ — user data in thread names can reach crash-reason strings (6n)." >&2
+    exit 1
+fi
+
+# 6o — I5: the app's only license-path network egress is api.lemonsqueezy.com;
+#      no residual Keygen/edge-function/Supabase host or path may sneak back in
+#      (the whole backend — supabase/, Scripts/Keygen/ — is deleted by design,
+#      not dormant). Two polarities in one guard:
+#        must-be-ABSENT: a Keygen/edge-function/Supabase token anywhere in
+#        Sources/ (a match fails).
+#        must-be-PRESENT: api.lemonsqueezy.com must still appear somewhere in
+#        Sources/ (a no-match fails) — proves the guard itself hasn't silently
+#        stopped covering the real client file.
+if grep -RInE --include="*.swift" -i \
+    'supabase|keygen|/check-in|mint-trial|mint_trial' \
+    Sources/ 2>/dev/null; then
+    echo "ERROR: a residual Keygen/edge-function/Supabase reference was found in Sources/ —" >&2
+    echo "       the entire backend was deleted (JC4); no dormant reference may remain (I5)." >&2
+    exit 1
+fi
+if ! grep -RIlE --include="*.swift" -q 'api\.lemonsqueezy\.com' Sources/ 2>/dev/null; then
+    echo "ERROR: api.lemonsqueezy.com must appear in Sources/ — it is the app's only" >&2
+    echo "       license-path network egress (I5); this guard would otherwise pass" >&2
+    echo "       vacuously if the activate client's host literal ever moved/vanished." >&2
     exit 1
 fi
