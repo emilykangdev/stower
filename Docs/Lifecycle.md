@@ -66,7 +66,8 @@ These are firm (Emily, 2026-06-25). A plan or commit that contradicts one is wro
 
 ```mermaid
 flowchart LR
-    App["Mac app (Stower)"] -->|online licensing only| EF["Edge Function<br/>(supabase/functions/license)"]
+    App["Mac app (Stower)"] -->|online: license<br/>mint / check-in| EF["Edge Function<br/>(supabase/functions/license)"]
+    App -->|in-app feedback POST<br/>…/functions/v1/feedback| EF
     App -.->|offline: verify signed<br/>machine-file locally| MF[("Keygen-signed<br/>machine file (on disk)")]
     EF -->|validate / activate /<br/>checkout machine-file /<br/>attach entitlement<br/>(admin token in EF env)| Keygen
     EF -->|read / write trial + purchase state| PG[("Supabase Postgres<br/>(state store)")]
@@ -79,13 +80,16 @@ flowchart LR
     class PG store;
 ```
 
-Read the arrows: every online arrow from the app points at the **Edge Function** —
-the app's single online edge. The Edge Function is the only thing that fans out to
-Keygen, Supabase Postgres, and GitHub releases, and the only thing the Lemon
-Squeezy `…/ls-webhook` hits. Supabase Postgres has **no inbound arrow except from
-the Edge Function**, and the Keygen admin token lives only in the Edge Function —
-never in the app binary. That's the "the Edge Function is the brain; the app talks
-only to it" invariant made visual.
+Read the arrows: every online arrow from the app points at the Supabase Edge
+Function deployment — the app's single online edge. That deployment now hosts two
+routes the app calls: the `…/functions/v1/license` route (mint/check-in) and the
+`…/functions/v1/feedback` route (the in-app Send Feedback sheet's POST, via
+`StowerFeedbackClient` — see `Docs/Feedback.md`). The Edge Function is the only
+thing that fans out to Keygen, Supabase Postgres, and GitHub releases, and the only
+thing the Lemon Squeezy `…/ls-webhook` hits. Supabase Postgres has **no inbound
+arrow except from the Edge Function**, and the Keygen admin token lives only in the
+Edge Function — never in the app binary. That's the "the Edge Function is the brain;
+the app talks only to it" invariant made visual.
 
 ---
 

@@ -681,9 +681,11 @@ stay human.
   menu → "Buy Stower v0" → test-mode checkout → webhook upgrade. See §10.6.
 - **The launch-arg flow only works via the Xcode scheme / `open --args`** — a
   Finder/Dock double-click drops the args. See §10.1.
-- **The badge view-visibility matrix** (board overlay × gear-menu enable/disable ×
-  dismissal) — verified by eye; this repo forbids ViewInspector/XCUITest, so it is
-  not on the automated tier.
+- **The badge view-visibility matrix** (board overlay × gear-menu trial-item
+  presence × dismissal) — verified by eye; this repo forbids ViewInspector/XCUITest,
+  so it is not on the automated tier. Note the gear itself is now **always enabled**
+  (it always contains "Send Feedback…"); only the trial label + "Buy Stower v0"
+  items are trial-gated (`StowerBoardView.licenseMenu`).
 
 ### 9.2 What IS automated
 

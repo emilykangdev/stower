@@ -81,9 +81,9 @@ A clean way to keep the two sets apart is dotenvx multi-environment files
 
 ## 3. App-side config (not env vars — one `StowerLicenseConfig`, public values)
 
-The Mac app doesn't read OS env vars for licensing; the three values it needs live
+The Mac app doesn't read OS env vars for licensing; the four values it needs live
 in one place: **`StowerLicenseConfig`** (`Sources/StowerMacUI/Startup/StowerLicenseConfig.swift`).
-All three are **public** — the vendor-split invariant (§3 of `licensing-contract.md`):
+All four are **public** — the vendor-split invariant (§3 of `licensing-contract.md`):
 every secret (the Keygen admin `KEYGEN_TOKEN`, `SUPABASE_SERVICE_ROLE_KEY`,
 `LS_WEBHOOK_SECRET` — all in §1 above) lives **only** in the Edge Function env and
 **never ships in the binary**. The app holds only public values.
@@ -100,8 +100,9 @@ a **Release** build pins the compiled `production` config and **ignores** `STOWE
 | 1 | Edge Function base URL | `functionBaseURL` (override `STOWER_FUNCTION_URL`) | the public endpoint the app mints/checks-in against | yes — `staging` = the test Supabase ref; `production` = placeholder until prod ops |
 | 2 | Keygen account **public** key (hex) | `keygenPublicKeyHex` (override `STOWER_KEYGEN_PUBLIC_KEY`) | the Ed25519 **public** key that verifies a signed machine file **offline** (`load()`/`offlineAuthority`, I6). Public — NOT the admin `KEYGEN_TOKEN` | **same** — account-level keypair, so staging + production share it (one Keygen account); differs only if prod moves to its own account |
 | 3 | Lemon Squeezy **checkout URL** | `checkoutBaseURL` (override `STOWER_CHECKOUT_URL`) | the public product/variant Buy link; the app appends `checkout[custom][license_id]=<licenseID>` | yes (test vs live product/variant) |
+| 4 | Feedback Edge Function base URL | `feedbackBaseURL` (override `STOWER_FEEDBACK_BASE_URL`) | the Supabase `…/functions/v1` base (no trailing slash); `StowerFeedbackClient` appends `/feedback` to POST the in-app Send Feedback sheet's draft. Deployed `--no-verify-jwt`, so the app sends no auth header | yes — `staging` = the test Supabase ref; `production` shares the license function's ref (`…/functions/v1`) |
 
-`production` is the prod-ops checklist (G10): fill its three fields before paid
+`production` is the prod-ops checklist (G10): fill its four fields before paid
 sales. `/health` does not cover them (they're app-side). Until `production` is set,
 a Release first run can't reach the function and lands on `.connectOnce`.
 
