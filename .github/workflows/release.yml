@@ -221,13 +221,14 @@ jobs:
 
       - name: Notarize
         id: notarize
-        # Notarization submits to Apple's notary service, which requires the
-        # Apple Developer Program License Agreement for the team to be current.
-        # A branch dry-run (workflow_dispatch) can't control that account state,
-        # so notarize/staple/Gatekeeper run only on a real tag-push release. The
-        # pre-notarize gates above (hardened runtime, Sparkle signature,
-        # Info.plist) still run on every dry-run.
-        if: github.event_name == 'push'
+        # Notarization runs on BOTH dry-run and real release. Apple has no "dry
+        # run": notarytool either notarizes a build or it doesn't, and doing so
+        # is NOT a publish action (no Release, no appcast) — it just proves the
+        # build is notarizable, which is exactly what a dry-run must catch before
+        # a real tag. Only the publish steps below gate on `push`. If this 403s
+        # with "a required agreement is missing or has expired", accept the
+        # pending Apple Developer Program License Agreement at developer.apple.com;
+        # a real release would fail identically, so a red dry-run is correct signal.
         env:
           NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
           NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
@@ -263,19 +264,16 @@ jobs:
             --team-id "$NOTARY_TEAM_ID" || true
 
       - name: Staple
-        if: github.event_name == 'push'
         run: |
           xcrun stapler staple "$APP_PATH"
           echo "Staple: DONE"
 
       - name: Re-zip stapled app (single artifact)
-        if: github.event_name == 'push'
         run: |
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
           echo "Stapled zip: $ZIP_PATH"
 
       - name: Post-notarize gate — Gatekeeper + stapler validate
-        if: github.event_name == 'push'
         run: |
           spctl -a -vvv "$APP_PATH" 2>&1
           if ! spctl -a -vvv "$APP_PATH" 2>&1 | grep -q "accepted"; then
@@ -296,9 +294,9 @@ jobs:
       - name: Stop here for dry-run (workflow_dispatch)
         if: github.event_name == 'workflow_dispatch'
         run: |
-          echo "Dry-run complete: signed (un-notarized, un-stapled) artifact at $ZIP_PATH"
-          echo "Validated: archive, export, hardened runtime, Sparkle signature, Info.plist gates."
-          echo "Skipped (real releases only): notarize, staple, Gatekeeper validate, publish."
+          echo "Dry-run complete: notarized + stapled artifact at $ZIP_PATH"
+          echo "Validated: archive, export, signing gates, notarize, staple, Gatekeeper."
+          echo "Skipped (real releases only): GitHub Release + appcast publish."
           exit 0
 
       - name: Create GitHub Release

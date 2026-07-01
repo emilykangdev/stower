@@ -142,15 +142,16 @@ git push origin messages-v0.1.0
 
 # 2. Dry-run before the first real tag (workflow_dispatch):
 #    GitHub Actions → Release → Run workflow → enter version "0.1.0-dry"
-#    A dry-run validates archive, export, and the pre-notarize gates (hardened
-#    runtime, Sparkle signature, Info.plist) and produces a signed but
-#    un-notarized zip. Notarize/staple/Gatekeeper-validate run ONLY on a real
-#    tag-push release — they submit to Apple's notary service, which requires the
-#    team's Apple Developer Program License Agreement to be current, and a branch
-#    dry-run cannot control that account state. If notarization 403s with
-#    "a required agreement is missing or has expired", accept the pending
-#    agreement at developer.apple.com (or App Store Connect → Agreements) before
-#    tagging a real release.
+#    A dry-run runs the FULL signing path — archive, export, signing gates,
+#    notarize, staple, and the Gatekeeper/spctl gate — and stops before the
+#    publish steps (no GitHub Release, no appcast). Apple has no "dry-run"
+#    notarization: notarytool notarizes the build for real, which is the point —
+#    it catches a "ships fine but can't notarize" failure before a real tag. The
+#    notarized+stapled zip is simply discarded. If notarization 403s with "a
+#    required agreement is missing or has expired", accept the pending Apple
+#    Developer Program License Agreement at developer.apple.com (or App Store
+#    Connect → Agreements) — a real release would fail identically, so a red
+#    dry-run is correct signal, not a workflow bug.
 ```
 
 ## Manual update-transition dogfood (mandatory before promoting to users)
@@ -201,4 +202,4 @@ Sparkle cannot downgrade. The rollback path is always forward:
 | Appcast item count never decreases | item count assertion post-amend |
 | Temp keychain deleted on job exit | `if: always()` cleanup step |
 | Dry-run does NOT create a GitHub Release | publish steps gate on `github.event_name == 'push'` |
-| Dry-run does NOT notarize/staple (needs live Apple account) | notarize/staple/Gatekeeper steps gate on `github.event_name == 'push'` |
+| Dry-run DOES notarize + staple (validation, no publish) | notarize/staple/Gatekeeper run on both events; only publish gates on `push` |
