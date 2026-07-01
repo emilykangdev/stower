@@ -27,29 +27,32 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     /// match this before the key is accepted (I1).
     internal let productID: Int
 
-    /// Production defaults — the live `store_id` is confirmed (supplied
-    /// 2026-07-01, via `GET /v1/stores` with a live-mode API key); the
-    /// product id and checkout URL stay fail-closed placeholders until
-    /// Emily confirms the LIVE (not test-mode) product id (OQ1/OQ3) — a
-    /// dashboard id read while Test mode was on can be the test object's id,
-    /// which differs from its live counterpart.
+    /// Production defaults.
     ///
-    /// A placeholder `0` fails every activation closed; this is a release
-    /// gate, not a bug (Known gotcha #2).
+    /// The live `store_id` and `product_id` are confirmed (supplied
+    /// 2026-07-01: `store_id` via `GET /v1/stores` with a live-mode API key;
+    /// `product_id` confirmed live, not test-mode). The checkout URL stays a
+    /// fail-closed placeholder until Emily supplies the live buyable link
+    /// (OQ3). A placeholder `""`/`0` fails every activation closed; this is
+    /// a release gate, not a bug (Known gotcha #2).
     internal static let production = StowerLicenseConfig(
         checkoutURL: "",
         storeID: 349_917,
-        productID: 0
+        productID: 1_150_776
     )
 
-    /// Staging defaults — the test-mode checkout link is real (supplied
-    /// 2026-07-01); the ids stay fail-closed placeholders until the test-mode
-    /// `/activate` spike reads them from `meta` (OQ2/OQ4).
+    /// Staging defaults — all real (supplied 2026-07-01).
+    ///
+    /// `store_id` is shared with `production`: Lemon Squeezy's "test mode" is
+    /// a toggle on one store, not a separate store — only products/discounts
+    /// get distinct ids via "Copy to Live Mode" (LS docs, confirmed via
+    /// context7). `product_id` is this product's test-mode id, distinct from
+    /// its live counterpart (`production.productID`).
     internal static let staging = StowerLicenseConfig(
         checkoutURL: "https://emilykangdev.lemonsqueezy.com"
             + "/checkout/buy/6cb4069d-ad6c-4d0a-a305-eb9632d35158",
-        storeID: 0,
-        productID: 0
+        storeID: 349_917,
+        productID: 1_189_590
     )
 
     /// The compiled default for this build configuration.
