@@ -1,2 +1,16 @@
 <?xml version="1.0"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel></channel></rss>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel>    <item>
+      <title>Stower 0.1.0</title>
+      <pubDate>Thu, 02 Jul 2026 04:37:33 +0000</pubDate>
+      <sparkle:releaseNotesLink>https://updates.stower.app/messages/notes/0.1.0.html</sparkle:releaseNotesLink>
+      <sparkle:version>1</sparkle:version>
+      <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+      <sparkle:phasedRolloutInterval>86400</sparkle:phasedRolloutInterval>
+      <enclosure
+        url="https://github.com/emilykangdev/stower/releases/download/messages-v0.1.0/StowerMac-0.1.0.zip"
+        length="7677008"
+        type="application/octet-stream"
+        sparkle:edSignature="gAXP/8ikz1MjF3zXILNhLuazUZ3Y9Oz47pgLnW5L7OG/fr7NIkNPKZORztx1y/tiIDea93sdAqo35qd+I08hDw=="
+      />
+    </item>
+  </channel></rss>
