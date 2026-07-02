@@ -49,7 +49,7 @@ import Testing
 
     @Test internal func freshStorageDefaultsEnabled() {
         let storage = StowerInMemoryLeaseStorage()
-        let consent = StowerDiagnosticsConsent(storage: storage)
+        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         // Default-on for a fresh install.
         #expect(consent.isEnabled == true)
     }

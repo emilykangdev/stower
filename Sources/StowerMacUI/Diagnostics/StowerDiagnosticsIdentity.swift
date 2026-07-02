@@ -107,8 +107,12 @@ internal struct StowerDiagnosticsIdentity: Sendable {
     /// used before the `UserDefaults` move was removed. Coordinates are
     /// unchanged from the original analytics types
     /// (`StowerDiagnosticsLegacyKeychainKeys`) so an upgrading install's
-    /// existing item is found.
-    private static func readLegacyKeychainRecord() -> Data? {
+    /// existing item is found. `internal` (not `private`): `StowerDiagnosticsConsent`
+    /// shares this same read for its own migration — `StowerDiagnostics.initialize()`
+    /// checks `consent.isEnabled` before `identity.clientUser()` ever runs, so a
+    /// migration that only lived here would let that check default a previously
+    /// opted-out upgrading user back to enabled for the launch that migrates.
+    internal static func readLegacyKeychainRecord() -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: StowerDiagnosticsLegacyKeychainKeys.service,

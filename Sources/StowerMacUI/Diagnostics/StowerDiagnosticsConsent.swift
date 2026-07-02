@@ -59,21 +59,30 @@ internal enum StowerDiagnosticsKillLatch {
 /// the launch path raised a password dialog before the first window drew.
 internal struct StowerDiagnosticsConsent: Sendable {
     private let storage: any StowerLeaseStorage
+    private let legacyKeychainRead: @Sendable () -> Data?
 
     /// The `UserDefaults` key for the first-run disclosure card shown-flag.
     internal static let shownDefaultsKey = "com.stower.analytics.shown"
 
     /// Creates the consent accessor.
     ///
-    /// - Parameter storage: The persistence seam (same store as
-    ///   `StowerDiagnosticsIdentity`). Defaults to the real `UserDefaults`-backed
-    ///   store; inject an in-memory fake for tests.
+    /// - Parameters:
+    ///   - storage: The persistence seam (same store as
+    ///     `StowerDiagnosticsIdentity`). Defaults to the real `UserDefaults`-backed
+    ///     store; inject an in-memory fake for tests.
+    ///   - legacyKeychainRead: Reads an upgrading install's pre-migration
+    ///     opt-out. Defaults to the same real Keychain read
+    ///     `StowerDiagnosticsIdentity` uses; inject a fake for tests so they
+    ///     never touch the Keychain.
     internal init(
         storage: any StowerLeaseStorage = StowerUserDefaultsItem(
             key: StowerDiagnosticsStorageLocation.defaultsKey
-        )
+        ),
+        legacyKeychainRead: @escaping @Sendable () -> Data? =
+            StowerDiagnosticsIdentity.readLegacyKeychainRecord
     ) {
         self.storage = storage
+        self.legacyKeychainRead = legacyKeychainRead
     }
 
     // MARK: — Enabled / disabled
@@ -147,8 +156,25 @@ internal struct StowerDiagnosticsConsent: Sendable {
     // MARK: — Private helpers
 
     private func readRecord() -> DiagnosticsInstallRecord? {
-        guard let data = storage.readData() else { return nil }
+        guard let data = storage.readData() else { return migrateFromLegacyKeychain() }
         return try? JSONDecoder().decode(DiagnosticsInstallRecord.self, from: data)
+    }
+
+    /// One-time migration for an install predating the `UserDefaults` move.
+    ///
+    /// Its opt-out lives in the legacy Keychain item, not yet migrated. Mirrors
+    /// `StowerDiagnosticsIdentity`'s own migration, deliberately independent —
+    /// see the `legacyKeychainRead` parameter doc. Once this (or Identity's)
+    /// migration writes the record into `storage`, every later `readRecord()`
+    /// this launch finds it there and never reaches the Keychain again.
+    private func migrateFromLegacyKeychain() -> DiagnosticsInstallRecord? {
+        guard
+            let data = legacyKeychainRead(),
+            let record = try? JSONDecoder().decode(DiagnosticsInstallRecord.self, from: data),
+            UUID(uuidString: record.id) != nil
+        else { return nil }
+        storage.write(data)
+        return record
     }
 
     @discardableResult

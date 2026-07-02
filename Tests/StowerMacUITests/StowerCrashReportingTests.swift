@@ -20,12 +20,12 @@ import Testing
     /// so no real crash handler installs during tests.
     @Test internal func disabledConsent_startSDKNotCalled() {
         let storage = StowerInMemoryLeaseStorage()
-        let consent = StowerDiagnosticsConsent(storage: storage)
+        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         consent.setEnabled(false)
 
         var startSDKCalled = false
         StowerCrashReporting.start(
-            consent: StowerDiagnosticsConsent(storage: storage),
+            consent: StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil }),
             startSDK: { _ in startSDKCalled = true }
         )
 
@@ -38,7 +38,7 @@ import Testing
         // Fresh storage = default-on.
         var startSDKCallCount = 0
         StowerCrashReporting.start(
-            consent: StowerDiagnosticsConsent(storage: storage),
+            consent: StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil }),
             startSDK: { _ in startSDKCallCount += 1 }
         )
 
@@ -66,7 +66,7 @@ import Testing
         var capturedOptions: Options?
 
         StowerCrashReporting.start(
-            consent: StowerDiagnosticsConsent(storage: storage),
+            consent: StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil }),
             startSDK: { configure in
                 let options = Options()
                 configure(options)
