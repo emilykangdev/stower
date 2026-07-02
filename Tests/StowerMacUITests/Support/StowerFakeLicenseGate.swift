@@ -12,10 +12,11 @@ import Foundation
 internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Sendable {
     private let lock = NSLock()
     private let states: [StowerLicenseState]
-    private let activationResult: StowerLicenseActivation
+    private let activationResults: [StowerLicenseActivation]
     private let blocksActivation: Bool
     private let firstTrialObservationResults: [Bool]
     private var stateIndex = 0
+    private var activationIndex = 0
     private var firstTrialObservationIndex = 0
     private var recordedNows: [Date] = []
     private var persistedCalls: [(key: String, instanceID: String)] = []
@@ -29,9 +30,14 @@ internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Send
     ///   - states: The scripted `licenseState` results, reusing the last once
     ///     spent. Defaults to a single `.licensed` so the pre-license routing
     ///     tests reach the board unchanged.
-    ///   - activationResult: What `activate(key:)` returns. Defaults to
-    ///     `.couldNotReach` (tests that need `.activated`/`.invalid` set it
-    ///     explicitly).
+    ///   - activationResult: What `activate(key:)` returns on every call.
+    ///     Defaults to `.couldNotReach` (tests that need `.activated`/`.invalid`
+    ///     set it explicitly). Ignored when `activationResults` is non-empty.
+    ///   - activationResults: A scripted SEQUENCE of `activate(key:)` results,
+    ///     reusing the last once spent — for a retry test that must see one
+    ///     outcome then a different one (e.g. `[.invalid, .activated(...)]`:
+    ///     a rejected key, then a good key on the next attempt). When empty
+    ///     (the default), every call returns `activationResult`.
     ///   - blocksActivation: When `true`, `activate(key:)` blocks until the
     ///     test calls `releaseActivation()` — for the in-flight race test:
     ///     the caller drives a `cancel()` while activation is still pending,
@@ -44,11 +50,12 @@ internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Send
     internal init(
         states: [StowerLicenseState] = [.licensed],
         activationResult: StowerLicenseActivation = .couldNotReach,
+        activationResults: [StowerLicenseActivation] = [],
         blocksActivation: Bool = false,
         firstTrialObservationResults: [Bool] = [true]
     ) {
         self.states = states
-        self.activationResult = activationResult
+        self.activationResults = activationResults.isEmpty ? [activationResult] : activationResults
         self.blocksActivation = blocksActivation
         self.firstTrialObservationResults = firstTrialObservationResults
     }
@@ -98,7 +105,11 @@ internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Send
         if blocksActivation {
             await waitForRelease()
         }
-        return activationResult
+        return lock.withLock {
+            let index = min(activationIndex, activationResults.count - 1)
+            activationIndex += 1
+            return activationResults[index]
+        }
     }
 
     internal func persist(key: String, instanceID: String) {

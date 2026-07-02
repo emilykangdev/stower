@@ -277,4 +277,30 @@ import Testing
         #expect(firstActivated)
         #expect(model.isActivating == false)
     }
+
+    /// S4: a rejected key leaves the user on the paywall with the `.invalid`
+    /// error, and a corrected key on the very next attempt activates — the
+    /// paywall is retryable, not a dead end.
+    @Test("S4: an invalid key stays on the paywall and a retry with a good key activates")
+    internal func invalidKeyIsRejectedThenRetrySucceeds() async {
+        let gate = StowerFakeLicenseGate(
+            states: [.expired, .licensed],
+            activationResults: [.invalid, .activated(instanceID: "inst-1")]
+        )
+        let model = makeModel(provider: StowerFakeStartupProvider(), licenseGate: gate)
+        model.start()
+        await model.activeRun?.value
+        #expect(model.state == .needsLicense(nil))
+
+        let firstActivated = await model.activate(key: "WRONG-KEY")
+        #expect(!firstActivated)
+        #expect(model.state == .needsLicense(.invalid))
+        #expect(gate.persistCalls.isEmpty)  // a rejected key never persists
+
+        let retryActivated = await model.activate(key: "GOOD-KEY")
+        await model.activeRun?.value
+        #expect(retryActivated)
+        #expect(gate.persistCalls.map(\.key) == ["GOOD-KEY"])
+        #expect(model.state == .connectedPreparingBoard)
+    }
 }
