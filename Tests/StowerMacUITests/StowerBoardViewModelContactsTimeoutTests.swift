@@ -160,6 +160,47 @@ import Testing
             "a cancelled outcome must not sync authorization and hide the banner without reloading"
         )
     }
+
+    @Test("one real grant delivered to two waiters (timeout + retry) reloads only once")
+    internal func duplicateDeliveryReloadsOnlyOnce() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [oneRowBoard()]
+        let gate = StowerLateGrantGate()
+        // The one real request() call every tap joins — never resumes until
+        // the test signals it, so both taps below race their own instant
+        // timeout first and become waiters on this single in-flight call.
+        let access = StowerContactsAccess(
+            status: { .notDetermined },
+            request: { await gate.waitForGrant() },
+            sleep: { _ in }
+        )
+        let model = makeViewModel(spy, contacts: access, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+        let loadCountBeforeGrant = spy.loadCallCount
+
+        model.resolveContactsAccess()  // tap 1 — times out, becomes waiter 1
+        await model.contactsTaskHandle?.value
+        #expect(model.contactsBannerActionTitle == "Try Again")
+
+        model.resolveContactsAccess()  // "Try Again" tap — joins the same in-flight
+        // request, also times out on its own instant sleep, becomes waiter 2.
+        await model.contactsTaskHandle?.value
+        #expect(model.contactsBannerActionTitle == "Try Again")
+
+        // The one real request() finally answers — StowerContactsInFlightRequest
+        // delivers this single grant to BOTH waiters.
+        await gate.grant(true)
+        for _ in 0..<50 where spy.loadCallCount == loadCountBeforeGrant {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(
+            spy.loadCallCount == loadCountBeforeGrant + 1,
+            "one real grant delivered to multiple waiters must reload exactly once, not per waiter"
+        )
+    }
 }
 
 /// Holds `request()` suspended until the test calls `grant`, so a real OS

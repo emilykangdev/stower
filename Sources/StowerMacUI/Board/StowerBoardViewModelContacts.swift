@@ -57,6 +57,7 @@ extension StowerBoardViewModel {
         case .notDetermined:
             guard !isRequestingContacts else { return }
             isRequestingContacts = true
+            contactsOutcomeApplied = false
             contactsTask = Task { [weak self] in
                 guard let self else { return }
                 defer { isRequestingContacts = false }
@@ -99,8 +100,20 @@ extension StowerBoardViewModel {
     /// skip entirely: `onAppear`/`onAppBecameActive` already re-sync
     /// authorization (and reload if it changed) the next time the board
     /// becomes relevant again.
+    ///
+    /// Applies at most once per attempt (`contactsOutcomeApplied`, reset when
+    /// a fresh `.notDetermined` tap starts): `StowerContactsInFlightRequest`
+    /// can deliver the same real grant to more than one waiter — a "Try
+    /// Again" tap that joins the in-flight request, plus the original
+    /// timed-out tap's `onLateResult` — so without this guard both callbacks
+    /// would independently call `load()` for one grant. Not gated on
+    /// `contactsAuthorization` actually changing: a test double (or a
+    /// same-instant real read) can legitimately report the same status
+    /// before and after, so authorization equality isn't a reliable signal
+    /// for "already handled."
     private func applyContactsOutcome(_ granted: Bool) {
-        guard contactsTask?.isCancelled != true else { return }
+        guard contactsTask?.isCancelled != true, !contactsOutcomeApplied else { return }
+        contactsOutcomeApplied = true
         contactsRequestTimedOut = false
         syncContactsAuthorization()
         guard granted else { return }
