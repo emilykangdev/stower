@@ -14,36 +14,35 @@ import SwiftUI
 /// draining-bar undo, a batch Select mode, a `Muted Senders…` toolbar popover, and a
 /// conditional zero-state line — every surface gated to stay calm at rest.
 ///
-/// When `trial` is non-nil the board shows a gear menu "Buy Stower v0" item, and —
-/// while `showsTrialBanner` is true — a quiet, dismissible "Free trial · ends
-/// <date>" status banner. The banner is dismissible; the gear menu Buy is not (it
-/// is the permanent license home, so the buy path survives a banner dismissal).
-/// Both are absent for paid users (`trial == nil`).
+/// When on an active trial the board shows a gear menu "Buy Stower" item, and
+/// the bottom-banner slot renders the current `StowerBoardBannerState`
+/// (trial badge / F3 buy-nudge / F2 enter-key). Both are absent for a
+/// licensed user (`trial == nil`).
 internal struct StowerBoardView: View {
     @Bindable internal var model: StowerBoardViewModel
 
-    /// The active trial badge data, or `nil` on a paid license or no trial.
+    /// The active trial badge data, or `nil` on a licensed or expired-trial
+    /// device.
     ///
-    /// Independent of banner dismissal: it powers the permanent gear-menu Buy path,
-    /// so it stays non-nil for an active trial even after the user dismisses the
-    /// banner. Banner visibility is governed separately by `showsTrialBanner`.
+    /// Powers the permanent gear-menu Buy path independent of banner
+    /// dismissal/state.
     internal let trial: StowerTrialBadge?
 
-    /// Whether the dismissible top banner is shown.
-    ///
-    /// `StowerRootView` sets this false once the user dismisses the banner (and on a
-    /// relaunch where the dismissal flag is set); the gear-menu Buy is unaffected.
-    internal let showsTrialBanner: Bool
+    /// The current bottom-banner state (F2/F3, §What → "Money-moment states").
+    internal let bannerState: StowerBoardBannerState
 
-    /// Opens the Lemon Squeezy checkout for the given `licenseID`.
+    /// Opens the Lemon Squeezy checkout in the browser.
     ///
-    /// The only payment path in the board. Called exclusively from the gear menu item.
-    internal let onBuy: (String) -> Void
+    /// Called from the gear menu's Buy item and the F3 banner's Buy button.
+    internal let onBuy: () -> Void
 
-    /// Persists the banner dismissal.
+    /// Jumps to the key-entry screen (the gear menu's "Enter license key…" item,
+    /// JC5, and the F2 banner's action).
+    internal let onEnterKey: () -> Void
+
+    /// Persists the trial-badge dismissal flag.
     ///
-    /// Called when the user taps the banner's dismiss control; `StowerRootView` then
-    /// hides the banner (but keeps `trial` so the gear-menu Buy persists).
+    /// Called when the user taps the (pre-F3) trial badge's dismiss control.
     internal let onDismissTrial: () -> Void
 
     /// The row hovered right now, so only its trailing dismiss control is revealed
@@ -169,18 +168,19 @@ internal struct StowerBoardView: View {
         }
     }
 
-    /// The quiet trial status banner, inset into the top of the content area so it
+    /// The one bottom-banner slot, inset into the top of the content area so it
     /// reserves its own space above the Contacts banner and tab picker rather than
     /// floating over (and intercepting) them.
     ///
-    /// Shown only while `showsTrialBanner` is true and `trial` is non-nil; otherwise
-    /// it is an empty view that reserves no space. The dismiss control writes through
-    /// `onDismissTrial`; `StowerRootView` then hides the banner while keeping `trial`
-    /// so the gear-menu Buy persists.
-    @ViewBuilder internal var trialBadgeOverlay: some View {
-        if showsTrialBanner, let badge = trial {
-            StowerTrialBadgeView(badge: badge, onDismiss: onDismissTrial)
-        }
+    /// Renders whichever `StowerBoardBannerState` the root computed this render
+    /// (trial badge / F3 buy-nudge / F2 enter-key / none) — never more than one.
+    internal var trialBadgeOverlay: some View {
+        StowerBoardBannerView(
+            state: bannerState,
+            onBuy: onBuy,
+            onEnterKey: onEnterKey,
+            onDismissTrial: onDismissTrial
+        )
     }
 
     @ViewBuilder private var composerOverlay: some View {

@@ -37,6 +37,11 @@ struct StowerMacApp: App {
             StowerRootContainer(flusher: appDelegate.flusher, undoManager: undoManager)
         }
         .commands {
+            // Stower is a single-board app over one local data set: remove
+            // File > New Window (⌘N) so a user can't spawn a second board
+            // window. macOS already prevents launching a second *process* of an
+            // app; this closes the in-app multi-window path.
+            CommandGroup(replacing: .newItem) {}
             // ⌘Z / ⌘⇧Z (A4/B1 spike — resolved WITHOUT an AppKit responder bridge in the
             // board; the only AppKit here is forwarding the action the standard Edit-menu
             // item already uses). We replace `.undoRedo` so ⌘Z can reach the board's undo,

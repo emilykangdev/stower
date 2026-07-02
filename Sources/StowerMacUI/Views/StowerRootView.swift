@@ -12,54 +12,79 @@ import SwiftUI
 /// screens, hands off to the board at `.connectedPreparingBoard`, and reruns the
 /// flow on Check Again.
 public struct StowerRootView: View {
-    @State private var model: StowerStartupModel
+    @State internal var model: StowerStartupModel
     @State private var boardModel: StowerBoardViewModel
+
+    /// The typed text in the key-entry screen; a `@State` on the stable root so
+    /// it survives an in-flight activate and any error re-render.
+    @State internal var licenseKey = ""
 
     /// Cached active-trial badge data, resolved when entering the board state.
     ///
-    /// Nil means "no active trial" (paid/perpetual); it is NOT cleared on banner
-    /// dismissal, so the gear-menu Buy path persists. Banner visibility is tracked
-    /// separately by `trialBannerDismissed`.
-    @State private var trialBadge: StowerTrialBadge?
-
-    /// Whether the user has dismissed the trial banner this session.
+    /// Nil means "no active trial" (licensed, or expired); it is NOT cleared on
+    /// banner dismissal, so the gear-menu Buy/Enter-key path persists.
     ///
-    /// Seeded from the persisted dismissal flag on board entry. Hides the banner
-    /// only; `trialBadge` — and therefore the gear-menu Buy — is unaffected.
-    @State private var trialBannerDismissed = false
+    /// `internal` (not `private`) — along with the other licensing/trial/banner
+    /// `@State` below — so `StowerRootViewLicensing.swift`'s extension methods
+    /// can read/write them; a stored property can't live in an extension.
+    @State internal var trialBadge: StowerTrialBadge?
 
-    /// Drives the one-time purchase-confirmation alert.
-    @State private var showPurchaseThanks = false
+    /// Whether the user has dismissed the (pre-F3) trial banner this session.
+    ///
+    /// Seeded from the persisted dismissal flag on board entry. Only suppresses
+    /// the `.trialBadge` banner state — F2/F3 are never suppressed by this flag,
+    /// since they are higher-intent moments than the quiet status badge.
+    @State internal var trialBannerDismissed = false
 
-    /// Guards the confirmation alert to once per session, so re-activations after a
-    /// purchase don't re-show it (a fresh paid launch never triggers it — there is
-    /// no trial→paid transition).
-    @State private var purchaseThanksShown = false
+    /// F2: set when the user taps Buy; cleared once a license is stored.
+    ///
+    /// Drives the "Finished your purchase? Enter the license key" banner on
+    /// return.
+    @State internal var boughtThisSession = false
+
+    /// Drives the F1 purchase-confirmation alert.
+    @State internal var showPurchaseThanks = false
 
     /// Whether the analytics disclosure card is currently showing.
     ///
     /// Set to `true` after ~60 seconds of foreground board time, once, if the
     /// card has never been shown. Cleared when the user makes a choice.
-    @State private var showConsentCard = false
-    @State private var consentCardTask: Task<Void, Never>?
+    @State internal var showConsentCard = false
+    @State internal var consentCardTask: Task<Void, Never>?
+
+    /// Sleeps until the active trial's `expiry`, then re-checks the license so
+    /// a continuously-foregrounded session (never backgrounded/foregrounded
+    /// again) still routes to the paywall the moment the 7-day trial elapses,
+    /// instead of only on the next `didBecomeActive`.
+    @State internal var trialExpiryTask: Task<Void, Never>?
+
+    /// Forces a `body` re-render at the F3 threshold.
+    ///
+    /// Bumped when `scheduleTrialExpiryRecheckIfNeeded`'s F3-threshold timer
+    /// fires, so `currentBannerState` re-renders at `expiry - 1 day` even
+    /// though `trialBadge` itself hasn't changed — the value is never read
+    /// for its own sake, only to force the diff.
+    @State internal var bannerRecomputeTick = Date()
 
     /// The consent state accessor shared by the disclosure card and the settings toggle.
     ///
     /// A single instance covers both surfaces so they never desync (the Keychain record
-    /// is the underlying source of truth — shared across all readers).
-    private let consent = StowerDiagnosticsConsent()
+    /// is the underlying source of truth — shared across all readers). `internal` so
+    /// `StowerRootViewLicensing.swift`'s `scheduleConsentCardIfNeeded()` can read it.
+    internal let consent = StowerDiagnosticsConsent()
 
-    private let settings: StowerSystemSettingsOpener
+    internal let settings: StowerSystemSettingsOpener
+    internal let analyticsReporter: any StowerAnalyticsReporting
 
     /// The dismissal seam for the trial badge.
     ///
-    /// Reads and writes the UserDefaults flag that hides the badge persistently
-    /// across launches. The production path uses `UserDefaults.standard`; tests
-    /// inject a fake.
-    private let badgeDismissal: any StowerTrialBadgeDismissing
+    /// Reads and writes the UserDefaults flag that hides the (pre-F3) badge
+    /// persistently across launches. The production path uses
+    /// `UserDefaults.standard`; tests inject a fake.
+    internal let badgeDismissal: any StowerTrialBadgeDismissing
 
     /// Builds the production root wired to the shared engine-backed composition and
-    /// the real Edge-Function-backed license gate.
+    /// the real Lemon-Squeezy-backed license gate.
     ///
     /// Throws only when an essential store can't be opened (a true disk-level draft
     /// store failure) — the same posture as any other essential-store startup fault.
@@ -86,7 +111,7 @@ public struct StowerRootView: View {
             dropper: composition.dropper,
             contacts: composition.contacts,
             analyticsReporter: composition.analyticsReporter,
-            licenseGate: StowerLicenseGate(reporter: composition.analyticsReporter),
+            licenseGate: StowerLemonSqueezyLicenseGate(),
             settings: StowerSystemSettingsOpener(),
             badgeDismissal: StowerUserDefaultsBadgeDismissal(),
             flusher: flusher
@@ -141,6 +166,7 @@ public struct StowerRootView: View {
         flusher?.onFlush { [weak boardModel] in await boardModel?.flushAll() }
         self.settings = settings
         self.badgeDismissal = badgeDismissal
+        self.analyticsReporter = analyticsReporter
     }
 
     /// The startup screen for the current state, cross-fading on change.
@@ -150,17 +176,29 @@ public struct StowerRootView: View {
             .animation(.easeInOut(duration: Self.crossFade), value: model.state)
             .task { model.start() }
             .onDisappear { model.cancel() }
+            // F1 lives at the root, not inside the board case: a successful
+            // activation's startup rerun can stop short of the board (FDA
+            // onboarding, model unavailable), and the confirmation must present
+            // over whichever screen the rerun lands on.
+            .alert(Self.purchaseThanksTitle, isPresented: $showPurchaseThanks) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(Self.purchaseThanksMessage)
+            }
     }
 
     @ViewBuilder private var screen: some View {
         switch model.state {
-        case .checkingModel, .checkingLicense, .checkingMessages:
+        case .checkingModel, .checkingMessages:
             StowerCheckingView(state: model.state)
-        case .needsLicense(let context):
+        case .needsLicense(let error):
             StowerLicenseEntryView(
-                context: context,
-                onBuy: { openCheckout(licenseID: $0) },
-                onRetry: { model.checkAgain() }
+                key: $licenseKey,
+                error: error,
+                onActivate: { activate(key: $0) },
+                onBuy: { openCheckout() },
+                onBack: model.licenseEntryIsDismissible ? { model.dismissLicenseEntry() } : nil,
+                isActivating: model.isActivating
             )
         case .modelUnavailable(let reason):
             StowerModelUnavailableView(
@@ -177,8 +215,9 @@ public struct StowerRootView: View {
                 StowerBoardView(
                     model: boardModel,
                     trial: trialBadge,
-                    showsTrialBanner: !trialBannerDismissed,
-                    onBuy: { openCheckout(licenseID: $0) },
+                    bannerState: currentBannerState,
+                    onBuy: { openCheckout() },
+                    onEnterKey: { jumpToKeyEntry() },
                     onDismissTrial: {
                         badgeDismissal.dismiss()
                         trialBannerDismissed = true
@@ -198,70 +237,35 @@ public struct StowerRootView: View {
                 trialBadge = model.trialBadge()
                 trialBannerDismissed = badgeDismissal.isDismissed
                 scheduleConsentCardIfNeeded()
+                scheduleTrialExpiryRecheckIfNeeded()
             }
             // Leaving the board (or the app backgrounding) cancels the disclosure
-            // countdown so it only accrues foreground board time (JC7).
-            .onDisappear { consentCardTask?.cancel() }
-            .onReceive(Self.willResignActive) { _ in consentCardTask?.cancel() }
+            // countdown so it only accrues foreground board time (JC7), and the
+            // trial-expiry timer (re-armed on the next appear/foreground instead).
+            .onDisappear {
+                consentCardTask?.cancel()
+                trialExpiryTask?.cancel()
+            }
+            .onReceive(Self.willResignActive) { _ in
+                consentCardTask?.cancel()
+                trialExpiryTask?.cancel()
+            }
             // Returning to the app (e.g. back from the Lemon Squeezy checkout)
-            // re-checks the license so a completed purchase reflects instantly: the
-            // refreshed lease clears the trial badge, and an expired trial routes to
-            // the paywall — no full startup re-run, no "Loading Stower…" flash.
+            // re-checks the license so an elapsed trial reflects instantly — a
+            // pure local read (no network); activation itself only happens when
+            // the user pastes the key and taps Activate (JC3).
             .onReceive(Self.didBecomeActive) { _ in
                 Task {
-                    let wasTrial = trialBadge != nil
                     await model.refreshLicenseIfOnBoard()
                     trialBadge = model.trialBadge()
-                    // Trial badge cleared while still on the board ⇒ the re-check
-                    // picked up a completed purchase (paid licenses have no trial
-                    // expiry). Confirm it explicitly, exactly once per session.
-                    let purchaseDetected =
-                        wasTrial && trialBadge == nil && !purchaseThanksShown
-                        && model.state == .connectedPreparingBoard
-                    if purchaseDetected {
-                        purchaseThanksShown = true
-                        showPurchaseThanks = true
-                    }
+                    scheduleTrialExpiryRecheckIfNeeded()
                 }
                 // Re-arm the disclosure countdown for this foreground board session.
                 scheduleConsentCardIfNeeded()
             }
-            .alert(Self.purchaseThanksTitle, isPresented: $showPurchaseThanks) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(Self.purchaseThanksMessage)
-            }
         case .failed(let failure):
             StowerFailureView(failure: failure, onRetry: { model.checkAgain() })
         }
-    }
-
-    /// Schedules the analytics consent card to appear after ~60 seconds of
-    /// foreground board time, shown at most once ever (JC7).
-    ///
-    /// The countdown is cancelled when the app backgrounds or the board screen
-    /// leaves the hierarchy, and rescheduled on return — so the card honors
-    /// *foreground board* time, never firing while backgrounded or off-board.
-    /// The shown-flag is stored in `UserDefaults` by `StowerDiagnosticsConsent` so
-    /// the card never reappears after the user has made a choice.
-    private func scheduleConsentCardIfNeeded() {
-        guard !consent.hasShownDisclosure else { return }
-        consentCardTask?.cancel()
-        consentCardTask = Task { @MainActor in
-            try? await Task.sleep(for: Self.consentCardDelay)
-            guard !Task.isCancelled, !consent.hasShownDisclosure else { return }
-            consent.markDisclosureShown()
-            withAnimation { showConsentCard = true }
-        }
-    }
-
-    /// Opens the Lemon Squeezy checkout bound to `licenseID`.
-    ///
-    /// The purchase webhook then upgrades this exact device license. A no-op if the
-    /// URL won't build.
-    private func openCheckout(licenseID: String) {
-        guard let url = StowerLicenseCheckInClient.checkoutURL(licenseID: licenseID) else { return }
-        NSWorkspace.shared.open(url)
     }
 
     private func fdaView(path: String, stillMissing: Bool) -> some View {
@@ -275,7 +279,7 @@ public struct StowerRootView: View {
     }
 
     /// Fires when the app returns to the foreground; drives the on-board license
-    /// re-check so a purchase completed in the browser reflects without a restart.
+    /// re-check so an elapsed trial reflects without a restart.
     private static let didBecomeActive = NotificationCenter.default.publisher(
         for: NSApplication.didBecomeActiveNotification
     )
@@ -286,20 +290,10 @@ public struct StowerRootView: View {
         for: NSApplication.willResignActiveNotification
     )
 
-    /// The Stower major a purchase unlocks — a placeholder string until real
-    /// version wiring lands (the Sparkle work after this merges); matches the
-    /// "Buy Stower v0" affordance the gear menu shows on an active trial.
-    private static let purchasedVersionLabel = "v0"
-    private static let purchaseThanksTitle = "Thank you for your purchase"
+    /// F1 — the post-activation confirmation alert copy.
+    private static let purchaseThanksTitle = "You're all set."
     private static let purchaseThanksMessage =
-        "You've purchased the license for Stower \(purchasedVersionLabel). "
-        + "Please check your email for the receipt."
-
-    /// The delay before showing the analytics consent card after the board appears.
-    ///
-    /// ~60 seconds of foreground board time (JC7 — after the user has seen value,
-    /// not at startup or at the FDA permission cliff).
-    private static let consentCardDelay: Duration = .seconds(60)
+        "Thanks for buying Stower — your license is active on this Mac. Enjoy."
 
     private static let minWidth: CGFloat = 520
     private static let minHeight: CGFloat = 360

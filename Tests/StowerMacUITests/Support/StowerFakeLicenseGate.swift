@@ -2,65 +2,122 @@ import Foundation
 
 @testable import StowerMacUI
 
-/// What the fake returns for a given `currentStatus` call.
-internal enum StowerFakeStatusBehavior: Sendable {
-    /// Returns the status immediately.
-    case status(StowerLicenseStatus)
-
-    /// Blocks until the test calls `release()`, then returns the status — for the
-    /// in-flight tests: the run keeps running while the test drives a `cancel()`,
-    /// proving the generation guard drops the late commit without racing on real
-    /// cancellation timing.
-    case blockUntilReleased(StowerLicenseStatus)
-}
-
 /// A Tests-only `StowerLicenseGating` double.
 ///
-/// A locked `@unchecked Sendable` class (the seam's `hasLease` is synchronous, so
-/// an `actor` can't conform). Records the `currentStatus` calls and the `now` it
-/// was passed so a test can assert the gate is never asked before availability
-/// (B-I11) and that the model routes each status to the right state.
+/// A locked `@unchecked Sendable` class (the seam's `licenseState` is
+/// synchronous, so an `actor` can't conform). Records the `licenseState` calls
+/// and the `now` each was passed, plus every `persist` call, so a test can
+/// assert the gate is never asked before availability and that the model
+/// routes each state to the right screen.
 internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Sendable {
     private let lock = NSLock()
-    private let lease: Bool
-    private let behaviors: [StowerFakeStatusBehavior]
-    private let badge: StowerTrialBadge?
-    private var behaviorIndex = 0
+    private let states: [StowerLicenseState]
+    private let activationResults: [StowerLicenseActivation]
+    private let blocksActivation: Bool
+    private let firstTrialObservationResults: [Bool]
+    private var stateIndex = 0
+    private var activationIndex = 0
+    private var firstTrialObservationIndex = 0
     private var recordedNows: [Date] = []
+    private var persistedCalls: [(key: String, instanceID: String)] = []
     private var released = false
     private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var activationCallCount = 0
 
     /// Creates the fake.
     ///
     /// - Parameters:
-    ///   - hasLease: The `hasLease()` answer.
-    ///   - statuses: The scripted `currentStatus` behaviors, reusing the last once
-    ///     spent. Defaults to a single `.valid` so the pre-license routing tests
-    ///     reach the board unchanged.
-    ///   - trialBadge: The value returned by `trialBadge()`. Defaults to `nil`
-    ///     (paid / no active trial) so existing tests are unaffected.
+    ///   - states: The scripted `licenseState` results, reusing the last once
+    ///     spent. Defaults to a single `.licensed` so the pre-license routing
+    ///     tests reach the board unchanged.
+    ///   - activationResult: What `activate(key:)` returns on every call.
+    ///     Defaults to `.couldNotReach` (tests that need `.activated`/`.invalid`
+    ///     set it explicitly). Ignored when `activationResults` is non-empty.
+    ///   - activationResults: A scripted SEQUENCE of `activate(key:)` results,
+    ///     reusing the last once spent — for a retry test that must see one
+    ///     outcome then a different one (e.g. `[.invalid, .activated(...)]`:
+    ///     a rejected key, then a good key on the next attempt). When empty
+    ///     (the default), every call returns `activationResult`.
+    ///   - blocksActivation: When `true`, `activate(key:)` blocks until the
+    ///     test calls `releaseActivation()` — for the in-flight race test:
+    ///     the caller drives a `cancel()` while activation is still pending,
+    ///     proving the generation guard drops the late persist.
+    ///   - firstTrialObservationResults: The scripted `isFirstTrialObservation`
+    ///     results, reusing the last once spent. Defaults to always `true` so
+    ///     existing per-launch-latch tests (`trialStartedThisLaunch`) see
+    ///     unchanged behavior; a test asserting the cross-launch "seeded once
+    ///     ever" semantics scripts `[true, false]` explicitly.
     internal init(
-        hasLease: Bool = false,
-        statuses: [StowerFakeStatusBehavior] = [.status(.valid)],
-        trialBadge: StowerTrialBadge? = nil
+        states: [StowerLicenseState] = [.licensed],
+        activationResult: StowerLicenseActivation = .couldNotReach,
+        activationResults: [StowerLicenseActivation] = [],
+        blocksActivation: Bool = false,
+        firstTrialObservationResults: [Bool] = [true]
     ) {
-        self.lease = hasLease
-        self.behaviors = statuses
-        self.badge = trialBadge
+        self.states = states
+        self.activationResults = activationResults.isEmpty ? [activationResult] : activationResults
+        self.blocksActivation = blocksActivation
+        self.firstTrialObservationResults = firstTrialObservationResults
     }
 
-    /// How many times `currentStatus` was invoked.
-    internal var statusCallCount: Int {
+    /// How many times `licenseState` was invoked.
+    internal var stateCallCount: Int {
         lock.withLock { recordedNows.count }
     }
 
-    /// The `now` values passed to each `currentStatus` call, in order.
+    /// The `now` values passed to each `licenseState` call, in order.
     internal var recordedNowValues: [Date] {
         lock.withLock { recordedNows }
     }
 
-    /// Unblocks a `.blockUntilReleased` status.
-    internal func release() {
+    /// Every `persist(key:instanceID:)` call recorded, in order.
+    internal var persistCalls: [(key: String, instanceID: String)] {
+        lock.withLock { persistedCalls }
+    }
+
+    internal func isFirstTrialObservation(now: Date) -> Bool {
+        lock.withLock {
+            guard !firstTrialObservationResults.isEmpty else { return true }
+            let index = min(firstTrialObservationIndex, firstTrialObservationResults.count - 1)
+            firstTrialObservationIndex += 1
+            return firstTrialObservationResults[index]
+        }
+    }
+
+    internal func licenseState(now: Date) -> StowerLicenseState {
+        lock.withLock {
+            recordedNows.append(now)
+            guard !states.isEmpty else { return .expired }
+            let index = min(stateIndex, states.count - 1)
+            stateIndex += 1
+            return states[index]
+        }
+    }
+
+    /// How many times `activate` was invoked — lets a race test wait until the
+    /// blocked call has actually started before driving a `cancel()`.
+    internal var activationCallCountValue: Int {
+        lock.withLock { activationCallCount }
+    }
+
+    internal func activate(key: String) async -> StowerLicenseActivation {
+        lock.withLock { activationCallCount += 1 }
+        if blocksActivation {
+            await waitForRelease()
+        }
+        return lock.withLock {
+            let index = min(activationIndex, activationResults.count - 1)
+            activationIndex += 1
+            return activationResults[index]
+        }
+    }
+
+    internal func persist(key: String, instanceID: String) {
+        lock.withLock { persistedCalls.append((key: key, instanceID: instanceID)) }
+    }
+
+    /// Unblocks a pending `blocksActivation` activate call.
+    internal func releaseActivation() {
         let continuation: CheckedContinuation<Void, Never>? = lock.withLock {
             released = true
             let pending = releaseContinuation
@@ -68,31 +125,6 @@ internal final class StowerFakeLicenseGate: StowerLicenseGating, @unchecked Send
             return pending
         }
         continuation?.resume()
-    }
-
-    internal func hasLease() -> Bool {
-        lock.withLock { lease }
-    }
-
-    internal func trialBadge() -> StowerTrialBadge? {
-        lock.withLock { badge }
-    }
-
-    internal func currentStatus(now: Date) async -> StowerLicenseStatus {
-        let behavior: StowerFakeStatusBehavior = lock.withLock {
-            recordedNows.append(now)
-            guard !behaviors.isEmpty else { return .status(.couldNotReach) }
-            let index = min(behaviorIndex, behaviors.count - 1)
-            behaviorIndex += 1
-            return behaviors[index]
-        }
-        switch behavior {
-        case .status(let status):
-            return status
-        case .blockUntilReleased(let status):
-            await waitForRelease()
-            return status
-        }
     }
 
     private func waitForRelease() async {

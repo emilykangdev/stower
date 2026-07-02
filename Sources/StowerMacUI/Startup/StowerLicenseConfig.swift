@@ -1,45 +1,61 @@
 import Foundation
 
-/// The app-side licensing endpoints + keys, resolved once at launch.
+/// The app-side Lemon Squeezy identity, resolved once at launch.
 ///
-/// All three values are PUBLIC (the Edge Function URL, the Keygen account's
-/// Ed25519 *public* key, the Lemon Squeezy checkout URL) — no secret ships in the
-/// binary (the vendor-split invariant). So the compiled defaults are safe to ship.
+/// All fields are PUBLIC (a store id, a product id, a checkout URL — no
+/// secret ships in the binary). `/v1/licenses/activate` itself needs no API
+/// key, so nothing here is a trust anchor to protect; `storeID`/`productID`
+/// are load-bearing only in that a placeholder `0` fails every activation
+/// closed (see `StowerLemonSqueezyClient`), not because they are secret.
 ///
 /// Resolution layers, in order: the compiled default (`staging` in a `DEBUG`
 /// build, `production` otherwise), then a per-field `STOWER_*` `ProcessInfo`
 /// override applied **in DEBUG only**. A Release build pins the compiled
 /// `production` config and ignores `STOWER_*` (`effectiveConfig` passes
 /// `allowOverrides: false`), so a launch-environment variable cannot swap the
-/// pinned Keygen trust anchor; a DEBUG dev/test/CI run can point a build at any
-/// deployment via the env vars without recompiling.
+/// configured store/product identity; a DEBUG dev/test/CI run can point a
+/// build at any store/product via the env vars without recompiling.
 internal struct StowerLicenseConfig: Sendable, Equatable {
-    /// The Supabase Edge Function base; `/mint-trial` and `/check-in` are appended.
-    internal let functionBaseURL: String
+    /// The Lemon Squeezy checkout URL the Buy action opens.
+    internal let checkoutURL: String
 
-    /// The Keygen account's Ed25519 public key (hex) for offline machine-file
-    /// verification (I6).
-    internal let keygenPublicKeyHex: String
+    /// Stower's Lemon Squeezy `store_id`; an `/activate` response must match
+    /// this before the key is accepted (I1).
+    internal let storeID: Int
 
-    /// The Lemon Squeezy product checkout URL the Buy action opens.
-    internal let checkoutBaseURL: String
+    /// Stower's Lemon Squeezy `product_id`; an `/activate` response must
+    /// match this before the key is accepted (I1).
+    internal let productID: Int
 
-    /// Production defaults — the Keygen key is already real (same account as
-    /// staging, account-level keypair); the Edge Function URL + LS checkout URL stay
-    /// placeholders until a prod environment is stood up (G10).
+    /// Production defaults — all real (supplied 2026-07-01).
+    ///
+    /// `store_id` via `GET /v1/stores` with a live-mode API key;
+    /// `product_id` confirmed live, not test-mode; the checkout URL is the
+    /// live buy link (OQ1/OQ3 resolved). OQ3 was initially resolved with a
+    /// checkout link that turned out to be the test-mode one (mislabeled at
+    /// the source) — corrected once Emily supplied both links side by side.
     internal static let production = StowerLicenseConfig(
-        functionBaseURL: "https://stower-license.supabase.co/functions/v1/license",
-        keygenPublicKeyHex: accountPublicKeyHex,
-        checkoutBaseURL: "https://stower.lemonsqueezy.com/checkout"
+        checkoutURL: "https://emilykangdev.lemonsqueezy.com"
+            + "/checkout/buy/6cb4069d-ad6c-4d0a-a305-eb9632d35158",
+        storeID: 349_917,
+        productID: 1_150_776
     )
 
-    /// Staging defaults — the live test deployment a `DEBUG` build points at.
+    /// Staging defaults — all real, supplied 2026-07-01.
+    ///
+    /// Corrected after the two checkout links were confirmed side by side
+    /// against production's.
+    ///
+    /// `store_id` is shared with `production`: Lemon Squeezy's "test mode" is
+    /// a toggle on one store, not a separate store — only products/discounts
+    /// get distinct ids via "Copy to Live Mode" (LS docs, confirmed via
+    /// context7). `product_id` is this product's test-mode id, distinct from
+    /// its live counterpart (`production.productID`).
     internal static let staging = StowerLicenseConfig(
-        functionBaseURL: "https://qxsrnsxvsgofaeblbmmv.supabase.co/functions/v1/license",
-        keygenPublicKeyHex: accountPublicKeyHex,
-        checkoutBaseURL:
-            "https://emilykangdev.lemonsqueezy.com/checkout/buy/"
-            + "4b930b6d-727b-4f93-9f9a-b4b8b738ab46"
+        checkoutURL: "https://emilykangdev.lemonsqueezy.com"
+            + "/checkout/buy/f12eccd6-d0be-4c99-bf61-3e76140c1ae5",
+        storeID: 349_917,
+        productID: 1_189_590
     )
 
     /// The compiled default for this build configuration.
@@ -55,19 +71,24 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     ///
     /// Pure (the environment is injected) so the override/fallback logic is unit
     /// tested without mutating `ProcessInfo`. An unset or empty value falls back to
-    /// the compiled field.
+    /// the compiled field. `storeID`/`productID` overrides that fail to parse as
+    /// `Int` fall back to the compiled value rather than crash.
     internal static func resolve(
         environment: [String: String],
         compiled: StowerLicenseConfig
     ) -> StowerLicenseConfig {
-        func override(_ key: String, _ fallback: String) -> String {
+        func stringOverride(_ key: String, _ fallback: String) -> String {
             guard let value = environment[key], !value.isEmpty else { return fallback }
             return value
         }
+        func intOverride(_ key: String, _ fallback: Int) -> Int {
+            guard let value = environment[key], let parsed = Int(value) else { return fallback }
+            return parsed
+        }
         return StowerLicenseConfig(
-            functionBaseURL: override(functionURLEnvKey, compiled.functionBaseURL),
-            keygenPublicKeyHex: override(keygenPublicKeyEnvKey, compiled.keygenPublicKeyHex),
-            checkoutBaseURL: override(checkoutURLEnvKey, compiled.checkoutBaseURL)
+            checkoutURL: stringOverride(checkoutURLEnvKey, compiled.checkoutURL),
+            storeID: intOverride(storeIDEnvKey, compiled.storeID),
+            productID: intOverride(productIDEnvKey, compiled.productID)
         )
     }
 
@@ -76,8 +97,8 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
     ///
     /// Pure (environment + flag injected) so both branches are unit tested. Release
     /// passes `allowOverrides: false` so a launch-environment variable cannot swap
-    /// the pinned Keygen public key (the offline trust anchor) or endpoints and make
-    /// the app accept forged machine files; overrides are a DEBUG dev/CI affordance.
+    /// the configured store/product identity; overrides are a DEBUG dev/CI
+    /// affordance.
     internal static func effectiveConfig(
         environment: [String: String],
         compiled: StowerLicenseConfig,
@@ -102,16 +123,8 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
         )
     }()
 
-    /// The Stower Keygen account's Ed25519 public key (hex), used to verify signed
-    /// machine files offline (I6).
-    ///
-    /// Account-level, so staging and production (same account) share it — replace
-    /// only if production ever moves to its own account.
-    private static let accountPublicKeyHex =
-        "dbc3a1ff8e028cdee0e2156eddf123628e8ede2efc9332516c39e7488627c433"
-
-    /// `ProcessInfo` override keys (dev/test/CI point a build at any deployment).
-    private static let functionURLEnvKey = "STOWER_FUNCTION_URL"
-    private static let keygenPublicKeyEnvKey = "STOWER_KEYGEN_PUBLIC_KEY"
+    /// `ProcessInfo` override keys (dev/test/CI point a build at any store/product).
     private static let checkoutURLEnvKey = "STOWER_CHECKOUT_URL"
+    private static let storeIDEnvKey = "STOWER_STORE_ID"
+    private static let productIDEnvKey = "STOWER_PRODUCT_ID"
 }

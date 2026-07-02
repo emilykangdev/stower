@@ -23,33 +23,34 @@ extension StowerBoardView {
         }
         ToolbarItem(placement: .primaryAction) { presetPicker }
         ToolbarItem(placement: .primaryAction) { refreshButton }
-        // The permanent license home: always mounted so the Buy path is
-        // discoverable even after the badge is dismissed. Shows the trial end
-        // date + a "Buy Stower v0" action only while on an active trial.
+        // The permanent license home: always mounted so the Buy + Enter-key
+        // paths are discoverable even after the banner is dismissed/changed.
+        // Shows the trial end date + both actions only while on an active
+        // trial (JC5).
         ToolbarItem(placement: .primaryAction) { licenseMenu }
     }
 
-    /// A gear menu that surfaces the license status and the single buy action.
+    /// A gear menu that surfaces the license status and the buy/enter-key actions.
     ///
-    /// The trial date label is non-actionable (status only); the "Buy Stower v0"
-    /// item opens the checkout. The gear is always visible so users can find the
-    /// buy path even after dismissing the badge. Paid / no-trial → the menu
-    /// renders with no trial label and no buy item.
+    /// The trial date label is non-actionable (status only); "Buy Stower" opens the
+    /// checkout and "Enter license key…" (JC5) jumps to the key-entry screen so a
+    /// mid-trial purchaser isn't forced to wait until expiry to activate. The gear
+    /// is always visible so users can find these paths even after the banner
+    /// changes/dismisses. Licensed / no-trial → the menu renders with no items.
     internal var licenseMenu: some View {
         Menu {
             if let badge = trial {
                 Section {
                     Text(StowerTrialBadgeView.endLabel(for: badge.expiry))
                 }
-                Button("Buy Stower v0") {
-                    onBuy(badge.licenseID)
-                }
+                Button("Buy Stower", action: onBuy)
+                Button("Enter license key…", action: onEnterKey)
             }
         } label: {
             Image(systemName: "gearshape")
         }
-        // Paid / no-trial has no menu items, so disable the control rather than open
-        // an empty dead-end; the anchor stays visible for when a trial is active.
+        // Licensed / no-trial has no menu items, so disable the control rather than
+        // open an empty dead-end; the anchor stays visible for when a trial is active.
         .disabled(trial == nil)
         .help("License & settings")
         .accessibilityLabel("License and settings menu")

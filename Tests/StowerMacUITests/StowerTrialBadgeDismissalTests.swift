@@ -74,24 +74,4 @@ import Testing
         #expect(defaults.bool(forKey: StowerUserDefaultsBadgeDismissal.dismissedKey))
         #expect(StowerUserDefaultsBadgeDismissal.dismissedKey == "StowerTrialBadgeDismissed")
     }
-
-    // MARK: - Isolation invariant (I3)
-
-    @Test("dismissal flag is not read by StowerLicenseLeaseStore or offlineAuthority")
-    internal func dismissalIsolatedFromOfflineAuthority() throws {
-        // The dismissal flag lives only in UserDefaults; it must not appear in any
-        // code path that calls offlineAuthority / load on the lease store. This test
-        // is a compile-time-visible contract check: constructing StowerLicenseLeaseStore
-        // without a StowerTrialBadgeDismissing parameter is the assertion.
-        //
-        // If someone added a dismissal parameter to StowerLicenseLeaseStore or
-        // StowerLicenseGate, this file would not compile (the init would be wrong).
-        // The explicit construction below acts as the regression gate.
-        let storage = StowerInMemoryLeaseStorage()
-        _ = StowerLicenseLeaseStore(
-            storage: storage,
-            publicKeyHex: "00"  // invalid key → load returns nil; not what we're testing
-        )
-        // Reaching here without a compilation error confirms the seam is isolated.
-    }
 }

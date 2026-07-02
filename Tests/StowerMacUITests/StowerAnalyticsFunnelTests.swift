@@ -12,10 +12,7 @@ import Testing
 
     private func makeModel(
         provider: StowerFakeStartupProvider,
-        licenseGate: any StowerLicenseGating = StowerFakeLicenseGate(
-            hasLease: true,
-            statuses: [.status(.valid)]
-        ),
+        licenseGate: any StowerLicenseGating = StowerFakeLicenseGate(states: [.licensed]),
         reporter: StowerInMemoryAnalyticsReporter
     ) -> StowerStartupModel {
         StowerStartupModel(
@@ -75,10 +72,7 @@ import Testing
                 .success
             ]
         )
-        let licenseGate = StowerFakeLicenseGate(
-            hasLease: true,
-            statuses: [.status(.valid), .status(.valid)]
-        )
+        let licenseGate = StowerFakeLicenseGate(states: [.licensed, .licensed])
         let spy = StowerInMemoryAnalyticsReporter()
         let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
         model.start()
@@ -108,10 +102,7 @@ import Testing
                 .failure(.fullDiskAccessMissing(path: "/var/db"))
             ]
         )
-        let licenseGate = StowerFakeLicenseGate(
-            hasLease: true,
-            statuses: [.status(.valid), .status(.valid)]
-        )
+        let licenseGate = StowerFakeLicenseGate(states: [.licensed, .licensed])
         let spy = StowerInMemoryAnalyticsReporter()
         let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
         model.start()
@@ -144,10 +135,7 @@ import Testing
                 .failure(.fullDiskAccessMissing(path: "/var/db"))
             ]
         )
-        let licenseGate = StowerFakeLicenseGate(
-            hasLease: true,
-            statuses: [.status(.valid), .status(.valid)]
-        )
+        let licenseGate = StowerFakeLicenseGate(states: [.licensed, .licensed])
         let spy = StowerInMemoryAnalyticsReporter()
         let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
         model.start()
@@ -166,26 +154,9 @@ import Testing
         )
     }
 
-    // MARK: — License gate
-
-    @Test("license_gate_reached fires when startup commits needsLicense")
-    internal func licenseGateReachedFires() async throws {
-        let provider = StowerFakeStartupProvider()
-        let licenseGate = StowerFakeLicenseGate(
-            hasLease: true,
-            statuses: [.status(.trialExpired(licenseID: "test-id"))]
-        )
-        let spy = StowerInMemoryAnalyticsReporter()
-        let model = makeModel(provider: provider, licenseGate: licenseGate, reporter: spy)
-        model.start()
-        let run = try #require(model.activeRun)
-        await run.value
-
-        let names = spy.recorded().map(\.signalName)
-        #expect(names.contains("license_gate_reached"))
-        let gateEvent = spy.recorded().first { $0.signalName == "license_gate_reached" }
-        #expect(gateEvent?.parameters["context"] == "trial_expired")
-    }
+    // The license/trial funnel (PA3) tests live in
+    // `StowerAnalyticsFunnelLicenseTests` — split to keep each suite within
+    // the type-body length budget.
 
     // MARK: — Board failure routing
 
@@ -220,7 +191,7 @@ import Testing
         // Simulate a mid-session board failure that routes to .failed.
         model.handleBoardFailure(.unexpected)
 
-        // .unexpected routes to .failed, which does NOT emit license_gate_reached;
+        // .unexpected routes to .failed, which does NOT emit paywall_reached;
         // verify the commit path is exercised (state changed correctly).
         #expect(model.state == .failed(.unexpected))
     }
@@ -240,5 +211,27 @@ import Testing
 
         let hwEvent = spy.recorded().first { $0.signalName == "hardware_checked" }
         #expect(hwEvent?.parameters["supported"] == "false")
+    }
+
+    @Test("hardware_checked fires only once when loadDebtBoard throws modelUnavailable mid-run")
+    internal func hardwareCheckedDoesNotDoubleFireWithinOneRun() async throws {
+        // Preflight availability passes (so route() commits the optimistic,
+        // funnel-silent .checkingMessages), but loadDebtBoard itself then throws
+        // .modelUnavailable — a real path (e.g. Apple Intelligence toggled off
+        // between the preflight and the load). Only the run's true terminal
+        // outcome (supported:false) is recorded, exactly once.
+        let provider = StowerFakeStartupProvider(
+            availability: .available,
+            loadBehaviors: [.failure(.modelUnavailable(.deviceNotEligible))]
+        )
+        let spy = StowerInMemoryAnalyticsReporter()
+        let model = makeModel(provider: provider, reporter: spy)
+        model.start()
+        let run = try #require(model.activeRun)
+        await run.value
+
+        let hwEvents = spy.recorded().filter { $0.signalName == "hardware_checked" }
+        #expect(hwEvents.count == 1, "one run must report hardware_checked exactly once")
+        #expect(hwEvents.first?.parameters["supported"] == "false")
     }
 }

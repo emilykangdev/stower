@@ -1,7 +1,0 @@
-# Injects X-Forwarded-Proto: https so Keygen's hardcoded force_ssl sees a TLS
-# request and serves 200 instead of a 301 to https. Clients hit http://localhost:8080.
-:8080 {
-	reverse_proxy api:3000 {
-		header_up X-Forwarded-Proto https
-	}
-}

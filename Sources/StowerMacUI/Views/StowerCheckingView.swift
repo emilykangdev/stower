@@ -4,7 +4,7 @@ import SwiftUI
 /// and then attempts the board load.
 ///
 /// The sub-label tracks the phase ("Checking Apple Intelligence…" →
-/// "Loading Stower…" → "Checking Messages…").
+/// "Checking Messages…").
 /// The minimum on-screen time that prevents a flash lives in `StowerStartupModel`,
 /// not here. The switch is exhaustive (no `default:`) so a new state can't
 /// silently show stale copy.
@@ -24,8 +24,6 @@ internal struct StowerCheckingView: View {
         switch state {
         case .checkingModel:
             return "Checking Apple Intelligence…"
-        case .checkingLicense:
-            return "Loading Stower…"
         case .checkingMessages:
             return "Checking Messages…"
         // The remaining states render their own screens, never this one; the

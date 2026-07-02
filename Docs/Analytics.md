@@ -60,11 +60,15 @@ disappearance and re-arms on return; the shown-once flag lives in `UserDefaults`
 pane (`StowerSettingsView` → `StowerPrivacySettingsView`) in the app's `Settings { }`
 scene.
 
-Consent is **license-scoped** (JC8): the license record's `diagnostics_opt_out` is the
-durable authority and the Keychain `enabled` field is the fast local cache.
-**Precedence is "off wins"** — analytics is off if either source says off, and
-`reconcile(licenseOptOut:)` (called on each license check-in) only ever turns the
-cache *off*, never back on. Only an explicit user opt-in re-enables.
+The Keychain `enabled` field (`DiagnosticsInstallRecord`) is the durable consent
+authority as-built. **Precedence is "off wins"** — `reconcile(licenseOptOut:)`
+only ever turns the cache *off*, never back on, and only an explicit user opt-in
+re-enables. The license-scoped reconcile hook (JC8,
+`StowerDiagnostics.reconcileLicenseConsent(licenseOptOut:)`) has **no production
+caller today**: the deleted Keygen check-in that carried the license record's
+`diagnostics_opt_out` was its driver, and the Lemon Squeezy activate-once flow
+has no license record to reconcile against. The hook and its tests survive
+unwired.
 
 ## Event taxonomy (typed, PII-safe)
 
@@ -78,15 +82,22 @@ to a dot-namespaced `signalName` and a bucketed `parameters` dictionary
 | `appLaunched` | `app_launched` | per-launch | `StowerMacApp.init` |
 | `sessionEnded` | `session_ended` | per-launch | `applicationShouldTerminate` (sync, no `await`) |
 | `hardwareChecked(supported:reason:)` | `hardware_checked` | per-occurrence | `StowerStartupModel.commit` |
-| `licenseGateReached(context:)` | `license_gate_reached` | per-occurrence | `StowerStartupModel.commit` (returning-user funnel) |
+| `trialStarted` | `trial_started` | once per trial life | `StowerStartupModel.emitTrialStartedIfNeeded` (the license read that seeds `StowerTrialClock`) |
+| `paywallReached(error:)` | `paywall_reached` | per-occurrence | `StowerStartupModel.commit` (`.needsLicense`) |
+| `checkoutOpened` | `checkout_opened` | per-occurrence | `StowerRootView.openCheckout()` (only after the browser actually opened) |
+| `activated` | `activated` | per-occurrence | `StowerStartupModel.activate(key:)` (on `.activated`, before the rerun) |
 | `fdaPermissionRequested` | `fda_permission_requested` | per-run | `StowerStartupModel.commit` (`.needsFullDiskAccess`) |
 | `fdaPermissionResolved(granted:)` | `fda_permission_resolved` | per-run | only at `.connectedPreparingBoard` (board proves access) |
 | `boardReached` | `board_reached` | per-launch | `StowerStartupModel.commit` (latched once) |
 | `boardItemClicked(itemType:)` | `board_item_clicked` | per-occurrence | board view models |
 | `featureUsed(feature:surface:)` | `feature_used` | per-occurrence | board view models (e.g. voluntary "buy") |
 
-Funnel events are driven off `StowerStartupModel.commit` (not `onAppear` or
-adjacent-state matching). `fda_permission_resolved` fires only when a run that entered
+Startup funnel events are driven off `StowerStartupModel.commit` (not `onAppear` or
+adjacent-state matching); the exceptions are `trial_started`, which fires from the
+`runStartup` license read via `emitTrialStartedIfNeeded`, and
+`checkout_opened`/`activated`, which fire at their action sites
+(`StowerRootView.openCheckout()` / `StowerStartupModel.activate(key:)`).
+`fda_permission_resolved` fires only when a run that entered
 an FDA state reaches `.connectedPreparingBoard` — `.checkingMessages` commits
 optimistically and can still fall back to `.needsFullDiskAccessStillMissing`, so the
 board load is the only proof access actually works. FDA *denial* is therefore measured

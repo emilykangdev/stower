@@ -21,12 +21,6 @@ jobs:
       - run: swift --version
       - name: Install lint tools
         run: brew install swift-format swiftlint
-      # The precheck gate now runs the license Edge Function's Deno tests
-      # (Step 4c). They fail hard if Deno is absent, so CI must provide it —
-      # otherwise the gate would go permanently red on the runner.
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
       # Run the SAME gate as the local pre-commit hook so CI and local stay in
       # lockstep — one definition of "green". Any check added to precheck.sh
       # (swift-format, swiftlint, build, test, module-boundary, and future greps a
@@ -79,33 +73,6 @@ jobs:
       # yet would break — or silently ship a debug-only lever into — the Release
       # app. This step turns that into a hard CI failure. Kept OUT of the per-commit
       # precheck hook on purpose (a full release build ~doubles build time); CI is
-      # the right altitude, alongside the FM-suite and keygen-integration divergences.
+      # the right altitude, alongside the FM-suite divergence above.
       - name: Release-config build (debug seams must compile out)
         run: swift build -c release
-
-  # Licensing integration tier: stands up a real local Keygen CE and runs the Deno
-  # integration suite against it, proving our JSON:API payloads + the offline
-  # machine path for real (the check that would have caught the `page[number]` bug
-  # before it shipped). SEPARATE from the macOS `build` job ON PURPOSE: `keygen/api`
-  # is an x86_64 image, native here on ubuntu but emulated (slow/flaky) on the
-  # macos-15 arm64 runner. This tier is excluded from `precheck` (the per-commit
-  # gate stays fast + Docker-free) and runs only here.
-  #
-  # NOTE: make this a REQUIRED status check in branch protection so nothing touching
-  # the licensing API merges without real-CE regression proof (Emily's payments bar).
-  keygen-integration:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v5
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      - name: Boot Keygen CE harness
-        run: Scripts/Keygen/up.sh
-      - name: Run licensing integration tests
-        working-directory: Scripts/Keygen
-        run: deno task test:integration
-      - name: Tear down harness
-        if: always()
-        run: Scripts/Keygen/down.sh
