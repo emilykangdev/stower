@@ -52,7 +52,7 @@ internal struct StowerMessagesComposition {
     /// fallback). Only a true disk-level failure throws, which propagates as a startup
     /// failure like any other essential store.
     internal init() throws {
-        let provider = StowerDebtBoardProvider(contactsResolver: StowerContactsResolver())
+        let (provider, demoContactsResolver) = Self.makeEngine()
         startup = StowerMessagesStartupAdapter(engine: provider)
         contacts = StowerContactsAccess()
         // Build one live reporter shared across the startup funnel and the board.
@@ -74,13 +74,48 @@ internal struct StowerMessagesComposition {
         }
         let triage = StowerLiveTriageStore(store: try StowerTriageStore.open(at: triageURL))
         triageStore = triage
-        board = StowerLiveBoardDataSource(engine: provider, triage: triage)
+        if let demoContactsResolver {
+            board = StowerLiveBoardDataSource(
+                engine: provider,
+                triage: triage,
+                makeContactsResolver: demoContactsResolver
+            )
+        } else {
+            board = StowerLiveBoardDataSource(engine: provider, triage: triage)
+        }
         // Interaction recording is a NON-BLOCKING side log (gotcha #8): unlike drafts
         // and triage, a failure to open it must NEVER block the board. So it is opened
         // best-effort — any fault (unresolvable directory or a disk-level open error)
         // degrades to a no-op recorder, and dismiss/mute/unmute still work.
         interactions = Self.openInteractionRecorder()
         dropper = StowerMessagesDropper()
+    }
+
+    /// Builds the shared engine provider and, in demo mode, its fake-contacts factory.
+    ///
+    /// A DEBUG-only `STOWER_MESSAGES_DB` override points the provider at a curated
+    /// database (e.g. the demo db) without touching the user's real Messages history —
+    /// `nil` (always so in Release) keeps the engine's default source. When that
+    /// override is active, the board also resolves names from an in-memory table of
+    /// fake contacts so the demo shows names, not raw handles, without touching the
+    /// real address book or the production `.live()` resolution path. The returned
+    /// factory is `nil` outside demo mode (and always in Release).
+    private static func makeEngine() -> (
+        provider: StowerDebtBoardProvider,
+        demoContactsResolver: (@Sendable () -> StowerContactsResolver)?
+    ) {
+        guard let overrideURL = StowerMessagesSourceOverride.resolved else {
+            return (StowerDebtBoardProvider(contactsResolver: StowerContactsResolver()), nil)
+        }
+        let provider = StowerDebtBoardProvider(
+            sourceURL: overrideURL,
+            contactsResolver: StowerContactsResolver()
+        )
+        #if DEBUG
+            return (provider, { StowerContactsResolver(mapping: StowerDemoContacts.mapping) })
+        #else
+            return (provider, nil)
+        #endif
     }
 
     /// Opens the interaction recorder best-effort, degrading to a no-op on any fault.
