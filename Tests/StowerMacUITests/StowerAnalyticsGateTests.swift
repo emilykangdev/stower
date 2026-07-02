@@ -72,7 +72,7 @@ import Testing
         reporter.report(.sessionEnded)
     }
 
-    /// The in-memory kill latch overrides an enabled Keychain cache, so every
+    /// The in-memory kill latch overrides an enabled UserDefaults cache, so every
     /// reporter (which gates on `consent.isEnabled`) stops immediately even if a
     /// failed opt-out write left the cache reading "on" (F4/JC6).
     @Test internal func killLatchOverridesEnabledCacheForAllReporters() {

@@ -1,30 +1,22 @@
 import Foundation
 
-/// Keychain coordinates for the diagnostics install record.
+/// Storage location for the diagnostics install record.
 ///
-/// A case-less namespace because the keys have no single natural home type:
-/// both `StowerDiagnosticsIdentity` and `StowerDiagnosticsConsent` read/write
-/// the same one-item entry. `service` is distinct from the license-lease service
-/// (`com.stower.license.lease`) so the two records never collide; `account`
-/// identifies the record within the service.
-///
-/// The service/account strings are **unchanged** from the original analytics
-/// types (`com.stower.analytics.identity` / `install-record`) — the Swift types
-/// rename but the persisted key does not (plan §Surface, JC1).
-internal enum StowerDiagnosticsKeychainKeys {
-    /// The Keychain service identifier for the diagnostics install record.
-    internal static let service = "com.stower.analytics.identity"
-
-    /// The Keychain account key for the diagnostics install record.
-    internal static let account = "install-record"
+/// A case-less namespace because the key has no single natural home type: both
+/// `StowerDiagnosticsIdentity` and `StowerDiagnosticsConsent` read/write the same
+/// one `UserDefaults` blob. The key is distinct from the disclosure "shown" flag
+/// (`StowerDiagnosticsConsent.shownDefaultsKey`) so the two never collide.
+internal enum StowerDiagnosticsStorageLocation {
+    /// The `UserDefaults` key holding the diagnostics install record blob.
+    internal static let defaultsKey = "com.stower.analytics.install-record"
 }
 
-/// A stable, anonymous, random install identity stored in the Keychain.
+/// A stable, anonymous, random install identity stored in `UserDefaults`.
 ///
 /// `clientUser()` returns the same random UUID across relaunches and across
-/// uninstall→reinstall (the Keychain item survives because the app is not
-/// sandboxed — `ENABLE_APP_SANDBOX = NO`, verified A6). On a fresh install with
-/// no stored record it mints a new random UUID and persists it.
+/// uninstall→reinstall (`UserDefaults` persists in `~/Library/Preferences`, so
+/// it survives). On a fresh install with no stored record it mints a new random
+/// UUID and persists it.
 ///
 /// The identity is NOT hardware-derived, NOT IDFV/IDFA — it is a plain random
 /// `UUID()`, app-scoped, with no cross-device or cross-app meaning (JC4).
@@ -35,12 +27,12 @@ internal struct StowerDiagnosticsIdentity: Sendable {
 
     /// Creates the identity accessor.
     ///
-    /// - Parameter storage: The persistence seam. Defaults to the real Keychain
-    ///   item; inject an in-memory fake for tests so they never touch the Keychain.
+    /// - Parameter storage: The persistence seam. Defaults to the real
+    ///   `UserDefaults`-backed store; inject an in-memory fake for tests so they
+    ///   never touch `UserDefaults`.
     internal init(
-        storage: any StowerLeaseStorage = StowerKeychainItem(
-            service: StowerDiagnosticsKeychainKeys.service,
-            account: StowerDiagnosticsKeychainKeys.account
+        storage: any StowerLeaseStorage = StowerUserDefaultsItem(
+            key: StowerDiagnosticsStorageLocation.defaultsKey
         )
     ) {
         self.storage = storage
@@ -49,8 +41,8 @@ internal struct StowerDiagnosticsIdentity: Sendable {
     /// Returns the stable install identifier, minting and persisting a fresh
     /// random UUID if none is stored yet.
     ///
-    /// Thread-safe: `StowerKeychainItem` is a value type backed by Security
-    /// framework calls, which are thread-safe.
+    /// A concurrent first-launch race would at worst persist one of two freshly
+    /// minted UUIDs; every read thereafter is a stable single value.
     internal func clientUser() -> String {
         if let existing = storedRecord() {
             return existing.id
@@ -76,11 +68,11 @@ internal struct StowerDiagnosticsIdentity: Sendable {
 
 // MARK: — Shared install record
 
-/// The diagnostics install record persisted in the Keychain.
+/// The diagnostics install record persisted in `UserDefaults`.
 ///
 /// Both `StowerDiagnosticsIdentity` and `StowerDiagnosticsConsent` read/write
-/// the same one-item Keychain entry so the UUID and the cached opt-out are
-/// never stored in separate items that could desync.
+/// the same one `UserDefaults` blob so the UUID and the cached opt-out are never
+/// stored in separate places that could desync.
 internal struct DiagnosticsInstallRecord: Codable, Sendable {
     /// The random per-install UUID (not hardware/IDFV/IDFA).
     internal var id: String

@@ -30,8 +30,14 @@ internal final class StowerChatSnapshot {
     }
 
     deinit {
-        // Intentional best-effort cleanup: deinit cannot throw, and
-        // sweepStaleSnapshots reclaims anything left behind on the next run.
+        // Close the SQLite connection before unlinking the file. Stored
+        // properties are torn down only AFTER this body runs, so without an
+        // explicit close here the file is removed while `databaseQueue`'s own
+        // (later) teardown still holds it open — GRDB logs that race as
+        // "database integrity compromised by API violation: vnode unlinked
+        // while in use". Both are intentional best-effort: deinit cannot
+        // throw, and sweepStaleSnapshots reclaims anything left behind.
+        try? databaseQueue.close()
         try? fileManager.removeItem(at: rootURL)
     }
 
@@ -202,6 +208,10 @@ internal final class StowerChatSnapshot {
             try String.fetchAll(database, sql: "PRAGMA quick_check")
         }
         guard check == ["ok"] else {
+            // Same close-before-remove ordering as `deinit`: `databaseQueue` is
+            // still open here, and unlinking the file out from under it logs the
+            // same "vnode unlinked while in use" integrity warning.
+            try? databaseQueue.close()
             try? fileManager.removeItem(at: rootURL)
             throw StowerMessagesError.invalidSnapshot
         }

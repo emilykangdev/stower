@@ -3,12 +3,10 @@ import SwiftUI
 /// The Full Disk Access onboarding screen — the trust moment.
 ///
 /// It leads with reassurance (local-only, on-device, Messages-only) before
-/// sending a nervous user to a global System Settings toggle, gives a numbered
-/// recovery path, and hides the raw database path behind a Technical-details
-/// disclosure. When access is still missing after a Check Again, it shows
+/// sending a nervous user to a global System Settings toggle and gives a numbered
+/// recovery path. When access is still missing after a Check Again, it shows
 /// escalating quit-and-reopen copy — a distinct sub-state, not a silent re-render.
 internal struct StowerFDAOnboardingView: View {
-    internal let path: String
     internal let stillMissing: Bool
     internal let onOpenSettings: () -> Void
     internal let onCheckAgain: () -> Void
@@ -27,7 +25,6 @@ internal struct StowerFDAOnboardingView: View {
                     StowerStillMissingCallout()
                 }
                 StowerNumberedSteps()
-                StowerTechnicalDetailsDisclosure(path: path)
             }
         } actions: {
             actionButtons
@@ -118,33 +115,4 @@ private struct StowerNumberedSteps: View {
 
     private static let lineSpacing: CGFloat = 8
     private static let numberSpacing: CGFloat = 6
-}
-
-/// The collapsed Technical-details disclosure that reveals the database path.
-///
-/// The path is rendered from the `.fullDiskAccessMissing(path:)` payload, never a
-/// hardcoded literal. VoiceOver reads the descriptive label, not the raw path.
-private struct StowerTechnicalDetailsDisclosure: View {
-    let path: String
-
-    var body: some View {
-        DisclosureGroup("Technical details") {
-            VStack(alignment: .leading, spacing: Self.spacing) {
-                Text("The Messages database Stower reads")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(path)
-                    .font(.system(.caption, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .textSelection(.enabled)
-                    .accessibilityLabel("the Messages database Stower reads")
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, Self.spacing)
-        }
-        .font(.callout)
-    }
-
-    private static let spacing: CGFloat = 4
 }

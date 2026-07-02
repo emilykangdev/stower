@@ -129,6 +129,37 @@ import Testing
         #expect(spy.loadCallCount == 2)
     }
 
+    @Test("a wedged request times out, relabels Try Again, and releases the latch")
+    internal func wedgedRequestTimesOutAndReleasesLatch() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [oneRowBoard()]
+        // `request` never resumes (the real-world wedge — Docs/Permissions.md);
+        // `sleep` resolves instantly so the test doesn't wait out a real timeout.
+        let wedged = StowerContactsAccess(
+            status: { .notDetermined },
+            request: { await withCheckedContinuation { (_: CheckedContinuation<Bool, Never>) in } },
+            sleep: { _ in }
+        )
+        let model = makeViewModel(spy, contacts: wedged, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+        #expect(model.contactsBannerActionTitle == "Show names")
+
+        model.resolveContactsAccess()
+        await model.contactsTaskHandle?.value
+
+        // The latch released (not stuck forever) and the label now signals a retry
+        // rather than a first-ever prompt — the fix for the permanently-dead button.
+        #expect(model.isRequestingContacts == false)
+        #expect(model.contactsBannerActionTitle == "Try Again")
+        #expect(spy.loadCallCount == 1)  // no reload — nothing was granted
+
+        // A retry tap is not swallowed by the (now-released) guard.
+        model.resolveContactsAccess()
+        #expect(model.contactsTaskHandle != nil)
+    }
+
     @Test("denying the in-app prompt flips the banner action to Open Settings")
     internal func denyingPromptFlipsToSettings() async {
         let spy = StowerSpyBoardDataSource()

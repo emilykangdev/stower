@@ -4,7 +4,7 @@ import Testing
 @testable import StowerMacUI
 
 /// Tests `StowerDiagnosticsIdentity`: stability, fresh-UUID minting, and
-/// service/account non-collision with the license lease.
+/// storage-key non-collision with the disclosure shown flag.
 @Suite internal struct StowerAnalyticsIdentityTests {
 
     @Test internal func returnsStableIDOnMultipleCalls() {
@@ -18,7 +18,7 @@ import Testing
     @Test internal func survivesFreshStorageReinit() {
         let storage = StowerInMemoryLeaseStorage()
         let id1 = StowerDiagnosticsIdentity(storage: storage).clientUser()
-        // Simulating a reinstall with the same backing storage (Keychain survives).
+        // Simulating a reinstall with the same backing storage (UserDefaults survives).
         let id2 = StowerDiagnosticsIdentity(storage: storage).clientUser()
         #expect(id1 == id2)
     }
@@ -29,10 +29,12 @@ import Testing
         #expect(UUID(uuidString: id) != nil, "clientUser() must return a valid UUID string")
     }
 
-    @Test internal func analyticsAndLeaseKeychainItemsNeverCollide() {
-        // The diagnostics service/account must differ from the license lease pair.
-        #expect(StowerDiagnosticsKeychainKeys.service != "com.stower.license.lease")
-        #expect(StowerDiagnosticsKeychainKeys.account != "machine-file")
+    @Test internal func analyticsStorageKeyNeverCollidesWithShownFlag() {
+        // The install-record blob key must differ from the disclosure "shown"
+        // flag key — both live in UserDefaults, so a collision would corrupt one.
+        let recordKey = StowerDiagnosticsStorageLocation.defaultsKey
+        let shownKey = StowerDiagnosticsConsent.shownDefaultsKey
+        #expect(recordKey != shownKey)
     }
 
     @Test internal func freshStorageDefaultsEnabled() {

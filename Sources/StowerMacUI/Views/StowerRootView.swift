@@ -68,8 +68,8 @@ public struct StowerRootView: View {
 
     /// The consent state accessor shared by the disclosure card and the settings toggle.
     ///
-    /// A single instance covers both surfaces so they never desync (the Keychain record
-    /// is the underlying source of truth — shared across all readers). `internal` so
+    /// A single instance covers both surfaces so they never desync (the UserDefaults
+    /// record is the underlying source of truth — shared across all readers). `internal` so
     /// `StowerRootViewLicensing.swift`'s `scheduleConsentCardIfNeeded()` can read it.
     internal let consent = StowerDiagnosticsConsent()
 
@@ -206,10 +206,10 @@ public struct StowerRootView: View {
                 onCheckAgain: { model.checkAgain() },
                 onOpenAppleIntelligence: { settings.openPane(.appleIntelligence) }
             )
-        case .needsFullDiskAccess(let path):
-            fdaView(path: path, stillMissing: false)
-        case .needsFullDiskAccessStillMissing(let path):
-            fdaView(path: path, stillMissing: true)
+        case .needsFullDiskAccess:
+            fdaView(stillMissing: false)
+        case .needsFullDiskAccessStillMissing:
+            fdaView(stillMissing: true)
         case .connectedPreparingBoard:
             ZStack(alignment: .bottom) {
                 StowerBoardView(
@@ -268,9 +268,8 @@ public struct StowerRootView: View {
         }
     }
 
-    private func fdaView(path: String, stillMissing: Bool) -> some View {
+    private func fdaView(stillMissing: Bool) -> some View {
         StowerFDAOnboardingView(
-            path: path,
             stillMissing: stillMissing,
             onOpenSettings: { settings.openPane(.fullDiskAccess) },
             onCheckAgain: { model.checkAgain() },

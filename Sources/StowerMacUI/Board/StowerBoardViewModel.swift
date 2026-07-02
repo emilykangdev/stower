@@ -228,6 +228,13 @@ internal final class StowerBoardViewModel {
     internal var isRequestingContacts = false
     internal var awaitingContactsRecovery = false
 
+    /// Set when the last `requestAccessIfNeeded` call threw `.timedOut`.
+    ///
+    /// Relabels the banner "Try Again" instead of "Show names" so a retry
+    /// doesn't read as the first-ever prompt. Cleared by `applyContactsOutcome`
+    /// the moment any outcome (fresh or late) lands.
+    internal var contactsRequestTimedOut = false
+
     /// Creates the board view-model.
     ///
     /// `draftStore` defaults to an in-memory store and `dropper` to a no-op, so

@@ -2,12 +2,12 @@ import Foundation
 
 /// A process-wide, in-memory diagnostics opt-out latch.
 ///
-/// The Keychain `enabled` field is the persistent cache, but multiple reporter
-/// instances (facade, board, startup) each re-read it per signal. If a user
-/// opts out and the Keychain write *fails*, those reporters would read the stale
-/// "on" value and keep emitting. This latch closes that gap: once
+/// The `UserDefaults` `enabled` field is the persistent cache, but multiple
+/// reporter instances (facade, board, startup) each re-read it per signal. If a
+/// user opts out and the UserDefaults write *fails*, those reporters would read
+/// the stale "on" value and keep emitting. This latch closes that gap: once
 /// `StowerDiagnostics.setEnabled(false)` latches off, every reporter honors it
-/// immediately this session — independent of whether the Keychain write
+/// immediately this session — independent of whether the UserDefaults write
 /// succeeded. Durable off across launches is backstopped by the license
 /// `diagnostics_opt_out` reconcile (JC8).
 ///
@@ -45,19 +45,18 @@ internal enum StowerDiagnosticsKillLatch {
 ///
 /// Consent is **license-scoped** (JC8): the authoritative source of truth is
 /// the license record's `diagnostics_opt_out` field (parallel licensing
-/// workstream). The **Keychain `enabled` field** inside the diagnostics install
-/// record is the **fast local cache** used at launch and when offline.
+/// workstream). The **`enabled` field** inside the diagnostics install record
+/// is the **fast local cache** used at launch and when offline.
 ///
 /// **Precedence: "off wins."** Diagnostics is off if EITHER the license record
-/// OR the Keychain cache says off. Only an explicit user action re-enables.
+/// OR the UserDefaults cache says off. Only an explicit user action re-enables.
 ///
 /// The **first-run-shown** flag for the disclosure card lives in `UserDefaults`
-/// (ephemeral UI state only) — not in the consent/identity Keychain record.
+/// under a separate key — not in the consent/identity install record.
 ///
-/// The persisted Keychain service/account strings (`com.stower.analytics.identity`
-/// / `install-record`) are unchanged from the analytics rename — the Swift type
-/// name changes but the stored key does not (no installed base to migrate, and
-/// churning a persisted key buys nothing, plan §Surface).
+/// The record lives in `UserDefaults`, not the Keychain: it holds only an
+/// anonymous UUID and an opt-out cache (never a secret), and a Keychain read on
+/// the launch path raised a password dialog before the first window drew.
 internal struct StowerDiagnosticsConsent: Sendable {
     private let storage: any StowerLeaseStorage
 
@@ -66,13 +65,12 @@ internal struct StowerDiagnosticsConsent: Sendable {
 
     /// Creates the consent accessor.
     ///
-    /// - Parameter storage: The persistence seam (same item as
-    ///   `StowerDiagnosticsIdentity`). Defaults to the real Keychain item; inject
-    ///   an in-memory fake for tests.
+    /// - Parameter storage: The persistence seam (same store as
+    ///   `StowerDiagnosticsIdentity`). Defaults to the real `UserDefaults`-backed
+    ///   store; inject an in-memory fake for tests.
     internal init(
-        storage: any StowerLeaseStorage = StowerKeychainItem(
-            service: StowerDiagnosticsKeychainKeys.service,
-            account: StowerDiagnosticsKeychainKeys.account
+        storage: any StowerLeaseStorage = StowerUserDefaultsItem(
+            key: StowerDiagnosticsStorageLocation.defaultsKey
         )
     ) {
         self.storage = storage
@@ -82,12 +80,12 @@ internal struct StowerDiagnosticsConsent: Sendable {
 
     /// Whether diagnostics collection is currently enabled.
     ///
-    /// Reads the Keychain cache. Returns `true` (default-on) when no record
+    /// Reads the UserDefaults cache. Returns `true` (default-on) when no record
     /// exists yet (fresh install). This is the fast at-launch gate; the license
     /// record is authoritative and reconciled on each check-in.
     ///
     /// The in-memory `StowerDiagnosticsKillLatch` wins over the cache: once the
-    /// user opts out this session, this returns `false` even if the Keychain
+    /// user opts out this session, this returns `false` even if the UserDefaults
     /// write failed (so every reporter stops immediately).
     internal var isEnabled: Bool {
         if StowerDiagnosticsKillLatch.isLatchedOff { return false }
@@ -96,11 +94,11 @@ internal struct StowerDiagnosticsConsent: Sendable {
 
     /// Enables or disables diagnostics collection.
     ///
-    /// Writes the choice immediately to the Keychain (instant local effect).
+    /// Writes the choice immediately to UserDefaults (instant local effect).
     /// The caller is responsible for pushing `diagnostics_opt_out` to the
     /// license record (durable, license-scoped store, parallel workstream).
     ///
-    /// - Returns: `true` if the Keychain cache write succeeded. A `false` return
+    /// - Returns: `true` if the UserDefaults cache write succeeded. A `false` return
     ///   means the local cache could not be updated; the caller's facade fails
     ///   closed in memory for the session and the license record remains the
     ///   durable authority (JC8).
@@ -112,9 +110,9 @@ internal struct StowerDiagnosticsConsent: Sendable {
         return writeRecord(record)
     }
 
-    /// Reconciles the Keychain cache against the authoritative license record.
+    /// Reconciles the UserDefaults cache against the authoritative license record.
     ///
-    /// If the license says off but the cache says on (a wiped-Keychain case where
+    /// If the license says off but the cache says on (a wiped-storage case where
     /// the user opted out on another install), this turns off the local cache.
     /// "Off wins" — this method never re-enables diagnostics; only an explicit
     /// user action does that.

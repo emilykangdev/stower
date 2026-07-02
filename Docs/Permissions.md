@@ -69,6 +69,47 @@ codesign -d --entitlements - --xml "<path>/StowerMac.app" | plutil -p - | grep a
 - We chased "stale build" for a while: the running binary lagged the source. Use
   `Scripts/run-mac.sh`, which prints the binary's build time vs the last commit.
 
+## A second bug: `requestAccess` can hang forever with no error at all
+
+**Symptom:** "Show names" did nothing on a second machine, on a build that already
+had the correct entitlement/usage-string from the fix above. No prompt, no crash, no
+`Code=100` — the button just went dead permanently after one tap.
+
+**Root cause:** `CNContactStore.requestAccess(for:.contacts)`'s completion handler
+can wedge **client-side, before it ever reaches `tccd`**. Unified-log proof: the
+app's `TCCAccessRequest() IPC` activity starts, but there is no XPC `SEND`, no
+daemon-side `REQUEST`, no prompt, no callback — ever. This is an OS-layer failure,
+not a Stower bug, but the app had no defense against it: `StowerBoardViewModel`
+latched `isRequestingContacts = true` before the `await` and only cleared it in a
+`defer` that runs when the `await` returns — which it never did. One wedged OS call
+= a permanently dead button for the rest of the process's life, with zero user
+feedback.
+
+**Contributing factor on the dev machine that first hit this:** a stale permission
+grant (from an earlier App-Translocated launch out of `~/Downloads`, an ephemeral
+quarantined identity) explained why "I granted this once before" didn't carry over —
+machine-state pollution, not something the app can detect or fix. `lsregister -dump`
+showed 10+ stale LaunchServices registrations for the bundle ID; `tccutil reset
+AddressBook <bundle-id>` plus deleting the stale copies is the recovery.
+
+**The fix (`StowerContactsAccess.requestAccessIfNeeded`):** race `request()` against
+a 10-second timeout (`requestTimeout`), implemented as a single continuation resumed
+by whichever side settles first — deliberately **not** a `TaskGroup`/`async let`,
+because both implicitly await every child task before returning, so "cancelling" a
+wedged `request()` stuck in an uncancellable `withCheckedContinuation` would still
+block forever. On timeout the call throws `StowerContactsAccessError.timedOut`,
+which `resolveContactsAccess` uses to release `isRequestingContacts` and relabel the
+banner "Try Again" — never Settings, since the request never reached `tccd` and
+Stower was never listed there to grant. If the abandoned OS call eventually does
+answer (the timeout can race genuine user deliberation on the prompt, not just the
+hang), `onLateResult` reports that real decision instead of discarding it.
+
+**Verify the timeout path without waiting 10 real seconds:** see
+`StowerContactsAccessTests.timesOutWhenRequestNeverResumes` — it injects a `request`
+that never resumes its continuation (modeling the exact hang) and a fast `sleep`, and
+proves the call still terminates. That test would hang forever if the race ever
+regresses back to a `TaskGroup`/`async let` shape.
+
 ## The non-obvious rules (each cost us a debugging loop)
 
 1. **Contacts is request-gated, not add-able.** An app only appears in Privacy →
