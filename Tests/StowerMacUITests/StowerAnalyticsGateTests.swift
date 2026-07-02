@@ -21,7 +21,7 @@ import Testing
         // Initialize with disabled consent — makeClient must NOT be called.
         StowerAnalytics.startBackend(
             consent: StowerDiagnosticsConsent(storage: storage),
-            identity: StowerDiagnosticsIdentity(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
             makeClient: { _, _, _ in makeClientCalled = true }
         )
 
@@ -45,7 +45,7 @@ import Testing
 
         StowerAnalytics.startBackend(
             consent: StowerDiagnosticsConsent(storage: storage),
-            identity: StowerDiagnosticsIdentity(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
             makeClient: { _, _, _ in makeClientCalled = true }
         )
 

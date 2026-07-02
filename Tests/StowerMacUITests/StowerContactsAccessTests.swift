@@ -132,16 +132,32 @@ import Testing
 /// Holds `request()` suspended until the test calls `signal`, so a "late" OS
 /// answer (arriving after `requestAccessIfNeeded` already timed out) can be
 /// modeled deterministically instead of racing two near-instant closures.
+///
+/// Buffers an early `signal` as `pendingResult`: `requestAccessIfNeeded`
+/// starts its request task concurrently with racing the (instant, injected)
+/// timeout, so `signal` can run before `waitForSignal` has registered its
+/// continuation. Without the buffer that signal would be silently dropped —
+/// `continuation` still `nil` — leaving the request task suspended forever
+/// and making this test flaky depending on executor scheduling order.
 private actor LateAnswerGate {
     private var continuation: CheckedContinuation<Bool, Never>?
+    private var pendingResult: Bool?
 
     func waitForSignal() async -> Bool {
-        await withCheckedContinuation { continuation = $0 }
+        if let pendingResult {
+            self.pendingResult = nil
+            return pendingResult
+        }
+        return await withCheckedContinuation { continuation = $0 }
     }
 
     func signal(_ result: Bool) {
-        continuation?.resume(returning: result)
-        continuation = nil
+        if let continuation {
+            continuation.resume(returning: result)
+            self.continuation = nil
+        } else {
+            pendingResult = result
+        }
     }
 }
 

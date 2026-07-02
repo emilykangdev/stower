@@ -19,14 +19,24 @@ entry point that starts both backends behind one consent gate.
 ## Identity (anonymous by construction)
 
 `StowerDiagnosticsIdentity.clientUser()` returns a plain random per-install `UUID`,
-minted once and persisted in the Keychain (`StowerDiagnosticsKeychainKeys.service =
-com.stower.analytics.identity`). It is **not** hardware-derived, **not** IDFV/IDFA,
-and has no cross-device or cross-app meaning. The UUID never travels the network:
-TelemetryDeck double-hashes it (a stable app salt + SHA-256, then its own on-wire
-hash) before any signal leaves the device. The salt (`StowerAnalytics.stableSalt`)
-exists only for hash stability — anonymity comes from the random UUID, not the salt —
-and must never change, or every existing user would look new. The UUID and the
-cached opt-out share one Keychain item (`DiagnosticsInstallRecord`) so they can't desync.
+minted once and persisted in `UserDefaults`
+(`StowerDiagnosticsStorageLocation.defaultsKey`). It is **not** hardware-derived,
+**not** IDFV/IDFA, and has no cross-device or cross-app meaning. The UUID never
+travels the network: TelemetryDeck double-hashes it (a stable app salt + SHA-256,
+then its own on-wire hash) before any signal leaves the device. The salt
+(`StowerAnalytics.stableSalt`) exists only for hash stability — anonymity comes
+from the random UUID, not the salt — and must never change, or every existing user
+would look new. The UUID and the cached opt-out share one `UserDefaults` blob
+(`DiagnosticsInstallRecord`) so they can't desync.
+
+An install that predates the `UserDefaults` move has its record in the Keychain
+instead (the original storage). `clientUser()` migrates it forward exactly once —
+read-only, coordinates unchanged (`StowerDiagnosticsLegacyKeychainKeys`) — so an
+upgrading install keeps its identity and its opt-out instead of silently minting a
+fresh UUID and resetting to default-on. `UserDefaults` moved off the Keychain
+specifically because a Keychain read on the launch path raised the macOS "allow
+access to your keychain" password dialog before the first window drew; the
+migration reads the Keychain once per install, never again.
 
 ## Kill switch (never-start, not stop)
 
@@ -42,7 +52,7 @@ emits TelemetryDeck's automatic `Session.started` signal. Two layers of defence:
 When a user opts out mid-session, `StowerDiagnostics.setEnabled(false)` →
 `StowerAnalytics.setEnabled(false)` trips the process-wide in-memory
 `StowerDiagnosticsKillLatch` (`latchOff()`), so every reporter fails closed
-**immediately** this session even if the Keychain cache write failed.
+**immediately** this session even if the `UserDefaults` cache write failed.
 Re-enabling clears the latch; if the SDK never started this launch its backend is
 started then, otherwise a live reporter is restored (the SDK can't be re-initialized).
 (Sentry's kill switch differs — it has a real `SentrySDK.close()`; see
@@ -60,7 +70,7 @@ disappearance and re-arms on return; the shown-once flag lives in `UserDefaults`
 pane (`StowerSettingsView` → `StowerPrivacySettingsView`) in the app's `Settings { }`
 scene.
 
-The Keychain `enabled` field (`DiagnosticsInstallRecord`) is the durable consent
+The `UserDefaults` `enabled` field (`DiagnosticsInstallRecord`) is the durable consent
 authority as-built. **Precedence is "off wins"** — `reconcile(licenseOptOut:)`
 only ever turns the cache *off*, never back on, and only an explicit user opt-in
 re-enables. The license-scoped reconcile hook (JC8,

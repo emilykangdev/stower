@@ -67,7 +67,13 @@ extension StowerBoardViewModel {
                     applyContactsOutcome(granted)
                 } catch {
                     // requestAccessIfNeeded's only throwing case is the OS call
-                    // wedging past the timeout.
+                    // wedging past the timeout — but this task may have been
+                    // cancelled (onDisappear) while waiting on it, in which case
+                    // the board is gone and this is not a real timeout the user
+                    // ever saw. Checking `contactsTask` (the outer task's own
+                    // handle) rather than the ambient `Task.isCancelled` matters
+                    // here too — see `applyContactsOutcome`.
+                    guard contactsTask?.isCancelled != true else { return }
                     contactsRequestTimedOut = true
                     syncContactsAuthorization()
                 }
@@ -78,10 +84,17 @@ extension StowerBoardViewModel {
     /// Applies a grant/deny outcome — including one that arrives late, after
     /// `resolveContactsAccess` already gave up and threw `.timedOut` — by
     /// refreshing the observed status and reloading into names on a grant.
+    ///
+    /// A late outcome runs on `StowerContactsAccess`'s own unstructured
+    /// tracking task, not on `contactsTask` — the ambient `Task.isCancelled`
+    /// there would always read `false` regardless of whether the board was
+    /// torn down, silently letting a stale grant reload it. Checking
+    /// `contactsTask?.isCancelled` instead asks the specific outer task the
+    /// user's `cancel()` actually cancels.
     private func applyContactsOutcome(_ granted: Bool) {
         contactsRequestTimedOut = false
         syncContactsAuthorization()
-        guard granted, !Task.isCancelled else { return }
+        guard granted, contactsTask?.isCancelled != true else { return }
         load()
     }
 

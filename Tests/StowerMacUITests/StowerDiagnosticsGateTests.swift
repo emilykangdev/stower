@@ -21,7 +21,7 @@ import Testing
         // backend should fire (A6/JC3: one gate governs both).
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
-            identity: StowerDiagnosticsIdentity(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
             makeAnalyticsClient: { _, _, _ in analyticsClientCalled = true }
         )
         // The crash SDK gate is verified separately in StowerCrashReportingTests via
@@ -45,7 +45,7 @@ import Testing
 
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
-            identity: StowerDiagnosticsIdentity(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
             makeAnalyticsClient: { _, _, _ in analyticsClientCalled = true }
         )
 
@@ -60,7 +60,7 @@ import Testing
         let storage = StowerInMemoryLeaseStorage()
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
-            identity: StowerDiagnosticsIdentity(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
             makeAnalyticsClient: { _, _, _ in }
         )
         #expect(StowerDiagnostics.isEnabled() == true)
@@ -77,7 +77,7 @@ import Testing
         let storage = StowerInMemoryLeaseStorage()
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
-            identity: StowerDiagnosticsIdentity(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
             makeAnalyticsClient: { _, _, _ in }
         )
         #expect(StowerDiagnostics.isEnabled() == true)
@@ -97,7 +97,7 @@ import Testing
         let storage = StowerInMemoryLeaseStorage()
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
-            identity: StowerDiagnosticsIdentity(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
             makeAnalyticsClient: { _, _, _ in }
         )
 
@@ -119,7 +119,7 @@ import Testing
         let storage = StowerInMemoryLeaseStorage()
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
-            identity: StowerDiagnosticsIdentity(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
             makeAnalyticsClient: { _, _, _ in }
         )
 

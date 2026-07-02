@@ -160,6 +160,10 @@ import Testing
         #expect(model.contactsTaskHandle != nil)
     }
 
+    // Timeout / retry-coalescing / cancellation-safety tests live in
+    // StowerBoardViewModelContactsTimeoutTests.swift (split to stay under the
+    // file_length/type_body_length precheck gates).
+
     @Test("denying the in-app prompt flips the banner action to Open Settings")
     internal func denyingPromptFlipsToSettings() async {
         let spy = StowerSpyBoardDataSource()

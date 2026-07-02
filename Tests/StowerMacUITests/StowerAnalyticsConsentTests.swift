@@ -40,7 +40,7 @@ import Testing
     @Test internal func reconcileLicenseOptOutTurnsOffCache() {
         let storage = StowerInMemoryLeaseStorage()
         // Seed a fresh record with enabled=true (simulates wiped storage).
-        let identity = StowerDiagnosticsIdentity(storage: storage)
+        let identity = StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil })
         _ = identity.clientUser()  // mints record with enabled=true
         let consent = StowerDiagnosticsConsent(storage: storage)
         #expect(consent.isEnabled == true)
@@ -60,7 +60,7 @@ import Testing
 
     @Test internal func identityAndConsentShareSameRecord() {
         let storage = StowerInMemoryLeaseStorage()
-        let identity = StowerDiagnosticsIdentity(storage: storage)
+        let identity = StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil })
         let consent = StowerDiagnosticsConsent(storage: storage)
         let id = identity.clientUser()
         consent.setEnabled(false)

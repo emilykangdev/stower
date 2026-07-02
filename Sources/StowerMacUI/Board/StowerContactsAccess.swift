@@ -45,6 +45,15 @@ internal struct StowerContactsAccess: Sendable {
     private let request: @MainActor @Sendable () async -> Bool
     private let sleep: @Sendable (Duration) async throws -> Void
 
+    /// Coalesces overlapping `requestAccessIfNeeded` calls onto the single real
+    /// `request()` in flight, so a "Try Again" tap after a timeout joins the
+    /// abandoned OS call instead of firing a second one. `StowerContactsAccess`
+    /// is a value type recreated per call site, but this reference is shared
+    /// across every copy (all trace back to one `init`), matching the real
+    /// constraint: only one `CNContactStore.requestAccess` should ever be
+    /// outstanding per process.
+    private let inFlight: StowerContactsInFlightRequest
+
     /// How long to wait for `requestAccess` before treating it as wedged.
     ///
     /// See `Docs/Permissions.md` for the observed hang this bounds.
@@ -83,6 +92,7 @@ internal struct StowerContactsAccess: Sendable {
         self.status = status
         self.request = request
         self.sleep = sleep
+        self.inFlight = StowerContactsInFlightRequest()
     }
 
     /// A denied no-op access for previews and tests, so they never prompt.
@@ -132,34 +142,80 @@ internal struct StowerContactsAccess: Sendable {
         }
     }
 
-    /// Resumes a single continuation with whichever of `request()` or the
-    /// timeout settles first.
+    /// Resumes a single continuation with whichever of the shared in-flight
+    /// `request()` or this call's own timeout settles first.
     ///
     /// Deliberately not a `TaskGroup`/`async let` race: both implicitly await
     /// every child task before returning, so even after "cancelling" the
     /// loser, a `request()` stuck inside an uncancellable
     /// `withCheckedContinuation` would still block this function forever —
-    /// exactly the hang this exists to fix. Instead both arms run as
-    /// unstructured `@MainActor` `Task`s (matching `request`'s own run-loop
-    /// requirement) that share `StowerContactsRequestBox`'s single
-    /// `continuation` slot: a wedged `request()` is genuinely abandoned, never
-    /// awaited, while the timeout arm still resumes on schedule.
+    /// exactly the hang this exists to fix. Instead the timeout runs as an
+    /// unstructured `@MainActor` `Task` racing against `inFlight`, which owns
+    /// the actual `request()` call across every caller (see its doc comment):
+    /// a wedged `request()` is genuinely abandoned by THIS call, never
+    /// awaited, but stays alive for a later "Try Again" to join instead of
+    /// starting a second real `CNContactStore.requestAccess`.
     private func raceRequestAgainstTimeout(
         onLateResult: (@MainActor @Sendable (Bool) -> Void)?
     ) async throws -> Bool {
         let request = self.request
         let sleep = self.sleep
+        let inFlight = self.inFlight
         return try await withCheckedThrowingContinuation { continuation in
             let box = StowerContactsRequestBox(
                 continuation: continuation,
                 onLateResult: onLateResult
             )
             Task { @MainActor in
-                box.resolve(await request())
+                inFlight.join(box: box, request: request)
             }
             Task { @MainActor in
-                try? await sleep(Self.requestTimeout)
-                box.fireTimeout()
+                do {
+                    try await sleep(Self.requestTimeout)
+                    box.fireTimeout()
+                } catch {
+                    // The sleep was interrupted before genuinely timing out
+                    // (e.g. cancellation) — not a real wedge, so don't report
+                    // one. `inFlight` is unaffected and keeps waiting on the
+                    // real `request()` regardless of this call's own outcome.
+                }
+            }
+        }
+    }
+}
+
+/// Owns the single real `request()` call in flight, so every
+/// `requestAccessIfNeeded` caller — including a "Try Again" tap after a prior
+/// call already timed out — joins the SAME abandoned OS call instead of
+/// starting a second one.
+///
+/// `CNContactStore` only ever has one prompt outstanding per process; two
+/// overlapping `requestAccess` calls have been observed (`Docs/Permissions.md`)
+/// to leave the permission daemon's own prompt queue stuck rather than each
+/// resolving independently. `@MainActor`-isolated to match `request`'s
+/// run-loop requirement and to serialize access to `waiters`/`isRunning`
+/// without a lock.
+@MainActor
+private final class StowerContactsInFlightRequest {
+    private var waiters: [StowerContactsRequestBox] = []
+    private var isRunning = false
+
+    /// Registers `box` to receive the outcome of the single outstanding
+    /// `request()` call, starting it only if none is running yet.
+    func join(
+        box: StowerContactsRequestBox,
+        request: @escaping @MainActor @Sendable () async -> Bool
+    ) {
+        waiters.append(box)
+        guard !isRunning else { return }
+        isRunning = true
+        Task { @MainActor in
+            let granted = await request()
+            self.isRunning = false
+            let pending = self.waiters
+            self.waiters = []
+            for waiter in pending {
+                waiter.resolve(granted)
             }
         }
     }
