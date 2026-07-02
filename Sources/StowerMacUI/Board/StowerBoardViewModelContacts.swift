@@ -62,10 +62,10 @@ extension StowerBoardViewModel {
                 guard let self else { return }
                 defer { isRequestingContacts = false }
                 do {
-                    let granted = try await contacts.requestAccessIfNeeded { [weak self] in
-                        self?.applyContactsOutcome($0)
+                    _ = try await contacts.requestAccessIfNeeded { [weak self] _ in
+                        self?.applyContactsOutcome()
                     }
-                    applyContactsOutcome(granted)
+                    applyContactsOutcome()
                 } catch {
                     // requestAccessIfNeeded's only throwing case is the OS call
                     // wedging past the timeout — but this task may have been
@@ -82,9 +82,18 @@ extension StowerBoardViewModel {
         }
     }
 
-    /// Applies a grant/deny outcome — including one that arrives late, after
+    /// Applies a request outcome — including one that arrives late, after
     /// `resolveContactsAccess` already gave up and threw `.timedOut` — by
-    /// refreshing the observed status and reloading into names on a grant.
+    /// refreshing the observed status and reloading into names once it's
+    /// authorized.
+    ///
+    /// Deliberately takes no `granted` flag: `requestAccessIfNeeded`'s own
+    /// answer can be stale by the time a late callback actually runs — e.g.
+    /// the user grants via System Settings while a wedged `requestAccess` is
+    /// still finishing, and that abandoned call later delivers a `false` that
+    /// no longer reflects reality. The freshly re-synced `contactsAuthorization`
+    /// is always the live ground truth, so it — not the delivered flag —
+    /// decides whether to reload.
     ///
     /// A late outcome runs on `StowerContactsAccess`'s own unstructured
     /// tracking task, not on `contactsTask` — the ambient `Task.isCancelled`
@@ -103,20 +112,16 @@ extension StowerBoardViewModel {
     ///
     /// Applies at most once per attempt (`contactsOutcomeApplied`, reset when
     /// a fresh `.notDetermined` tap starts): `StowerContactsInFlightRequest`
-    /// can deliver the same real grant to more than one waiter — a "Try
-    /// Again" tap that joins the in-flight request, plus the original
-    /// timed-out tap's `onLateResult` — so without this guard both callbacks
-    /// would independently call `load()` for one grant. Not gated on
-    /// `contactsAuthorization` actually changing: a test double (or a
-    /// same-instant real read) can legitimately report the same status
-    /// before and after, so authorization equality isn't a reliable signal
-    /// for "already handled."
-    private func applyContactsOutcome(_ granted: Bool) {
+    /// can deliver one real answer to more than one waiter — a "Try Again"
+    /// tap that joins the in-flight request, plus the original timed-out
+    /// tap's `onLateResult` — so without this guard both callbacks would
+    /// independently call `load()` for one answer.
+    private func applyContactsOutcome() {
         guard contactsTask?.isCancelled != true, !contactsOutcomeApplied else { return }
         contactsOutcomeApplied = true
         contactsRequestTimedOut = false
         syncContactsAuthorization()
-        guard granted else { return }
+        guard contactsAuthorization == .authorized else { return }
         load()
     }
 

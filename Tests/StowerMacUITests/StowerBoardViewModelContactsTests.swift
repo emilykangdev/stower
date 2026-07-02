@@ -114,7 +114,17 @@ import Testing
     internal func notDeterminedActionRequestsAndReloads() async {
         let spy = StowerSpyBoardDataSource()
         spy.loadModels = [oneRowBoard()]
-        let granting = StowerContactsAccess(status: { .notDetermined }, request: { true })
+        // Stateful, like the real CNContactStore: authorizationStatus() reads
+        // .authorized once requestAccess's completion has granted — applyContactsOutcome
+        // now decides whether to reload from this live status, not the delivered flag.
+        let isGranted = Mutex(false)
+        let granting = StowerContactsAccess(
+            status: { isGranted.withLock { $0 } ? .authorized : .notDetermined },
+            request: {
+                isGranted.withLock { $0 = true }
+                return true
+            }
+        )
         let model = makeViewModel(spy, contacts: granting, recorder: FailureRecorder())
 
         model.load()

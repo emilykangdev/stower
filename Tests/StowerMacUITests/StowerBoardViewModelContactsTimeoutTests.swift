@@ -166,12 +166,20 @@ import Testing
         let spy = StowerSpyBoardDataSource()
         spy.loadModels = [oneRowBoard()]
         let gate = StowerLateGrantGate()
+        // Stateful, like the real CNContactStore: authorizationStatus() reads
+        // .authorized once the gate delivers a grant — applyContactsOutcome
+        // decides whether to reload from this live status.
+        let isGranted = Mutex(false)
         // The one real request() call every tap joins — never resumes until
         // the test signals it, so both taps below race their own instant
         // timeout first and become waiters on this single in-flight call.
         let access = StowerContactsAccess(
-            status: { .notDetermined },
-            request: { await gate.waitForGrant() },
+            status: { isGranted.withLock { $0 } ? .authorized : .notDetermined },
+            request: {
+                let granted = await gate.waitForGrant()
+                isGranted.withLock { $0 = granted }
+                return granted
+            },
             sleep: { _ in }
         )
         let model = makeViewModel(spy, contacts: access, recorder: FailureRecorder())
@@ -200,6 +208,49 @@ import Testing
             spy.loadCallCount == loadCountBeforeGrant + 1,
             "one real grant delivered to multiple waiters must reload exactly once, not per waiter"
         )
+    }
+
+    @Test("a late deny still reloads if the user granted access another way meanwhile")
+    internal func lateDenyStillReloadsWhenAlreadyAuthorized() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [oneRowBoard()]
+        let gate = StowerLateGrantGate()
+        // Models the exact race Bugbot flagged: the user grants via System
+        // Settings (status flips to .authorized) WHILE the app's own wedged
+        // requestAccess is still finishing — and that abandoned call later
+        // delivers a stale `false` that no longer reflects reality.
+        let isAuthorizedViaSettings = Mutex(false)
+        let access = StowerContactsAccess(
+            status: { isAuthorizedViaSettings.withLock { $0 } ? .authorized : .notDetermined },
+            request: { await gate.waitForGrant() },
+            sleep: { _ in }
+        )
+        let model = makeViewModel(spy, contacts: access, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+        let loadCountBeforeGrant = spy.loadCallCount
+
+        model.resolveContactsAccess()
+        await model.contactsTaskHandle?.value
+        #expect(model.contactsBannerActionTitle == "Try Again")
+
+        // The user grants via System Settings — independent of this app's own
+        // wedged request.
+        isAuthorizedViaSettings.withLock { $0 = true }
+
+        // The abandoned requestAccess call finally answers — with a stale
+        // `false`, since it doesn't know about the out-of-band grant.
+        await gate.grant(false)
+        for _ in 0..<50 where spy.loadCallCount == loadCountBeforeGrant {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(
+            spy.loadCallCount == loadCountBeforeGrant + 1,
+            "a stale late deny must not skip reloading a board that is actually authorized now"
+        )
+        #expect(model.contactsAuthorization == .authorized)
     }
 }
 
