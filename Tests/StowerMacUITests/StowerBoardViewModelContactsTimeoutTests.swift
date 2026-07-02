@@ -150,6 +150,15 @@ import Testing
             spy.loadCallCount == loadCountBeforeCancel,
             "a grant arriving after cancel() must not reload a board the user already left"
         )
+        // A cancelled outcome must skip syncing authorization too, not just the
+        // reload — otherwise the banner hides (status flips to authorized)
+        // while the rows were never actually reloaded with resolved names,
+        // leaving stale handle-only rows on screen with nothing left to
+        // prompt a retry (Bugbot: "Late grant skips board reload").
+        #expect(
+            model.contactsBannerActionTitle == "Try Again",
+            "a cancelled outcome must not sync authorization and hide the banner without reloading"
+        )
     }
 }
 

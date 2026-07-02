@@ -80,6 +80,26 @@ import Testing
         )
     }
 
+    @Test internal func undecodableStorageStillFallsThroughToLegacyMigration() throws {
+        // UserDefaults holds SOME bytes under the key (not missing), but they
+        // fail to decode as a DiagnosticsInstallRecord — must still fall
+        // through to the legacy Keychain migration, not silently default on.
+        let storage = StowerInMemoryLeaseStorage()
+        storage.write(Data("not valid json".utf8))
+        let legacyRecord = try JSONEncoder().encode(
+            DiagnosticsInstallRecord(id: UUID().uuidString, enabled: false)
+        )
+        let consent = StowerDiagnosticsConsent(
+            storage: storage,
+            legacyKeychainRead: { legacyRecord }
+        )
+
+        #expect(
+            consent.isEnabled == false,
+            "corrupted UserDefaults must not skip the legacy migration and default to enabled"
+        )
+    }
+
     @Test internal func identityAndConsentShareSameRecord() {
         let storage = StowerInMemoryLeaseStorage()
         let identity = StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil })

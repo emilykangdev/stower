@@ -156,8 +156,17 @@ internal struct StowerDiagnosticsConsent: Sendable {
     // MARK: — Private helpers
 
     private func readRecord() -> DiagnosticsInstallRecord? {
-        guard let data = storage.readData() else { return migrateFromLegacyKeychain() }
-        return try? JSONDecoder().decode(DiagnosticsInstallRecord.self, from: data)
+        // Falls through to migration on ANY failure to produce a record — data
+        // missing entirely, or present but undecodable (matches
+        // StowerDiagnosticsIdentity.storedRecord()'s same fall-through via
+        // clientUser(), so corrupted UserDefaults doesn't skip a real
+        // pre-migration opt-out and re-enable diagnostics for that launch).
+        guard let data = storage.readData(),
+            let record = try? JSONDecoder().decode(DiagnosticsInstallRecord.self, from: data)
+        else {
+            return migrateFromLegacyKeychain()
+        }
+        return record
     }
 
     /// One-time migration for an install predating the `UserDefaults` move.

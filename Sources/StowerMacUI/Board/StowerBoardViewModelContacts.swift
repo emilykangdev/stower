@@ -91,10 +91,19 @@ extension StowerBoardViewModel {
     /// torn down, silently letting a stale grant reload it. Checking
     /// `contactsTask?.isCancelled` instead asks the specific outer task the
     /// user's `cancel()` actually cancels.
+    ///
+    /// A cancelled outcome does nothing at all — not even
+    /// `syncContactsAuthorization()` — rather than syncing status without
+    /// reloading rows: that would hide the banner while leaving stale
+    /// handle-only rows on screen with nothing left to prompt a retry. Safe to
+    /// skip entirely: `onAppear`/`onAppBecameActive` already re-sync
+    /// authorization (and reload if it changed) the next time the board
+    /// becomes relevant again.
     private func applyContactsOutcome(_ granted: Bool) {
+        guard contactsTask?.isCancelled != true else { return }
         contactsRequestTimedOut = false
         syncContactsAuthorization()
-        guard granted, contactsTask?.isCancelled != true else { return }
+        guard granted else { return }
         load()
     }
 
