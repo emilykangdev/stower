@@ -14,6 +14,12 @@ internal struct StowerLicenseEntryView: View {
     internal let onActivate: (String) -> Void
     /// Opens the Lemon Squeezy checkout in the browser.
     internal let onBuy: () -> Void
+    /// Backs out to the board.
+    ///
+    /// `nil` when there is nowhere to go back to (the hard paywall after an
+    /// expired trial); non-nil only when the screen was opened voluntarily
+    /// mid-trial (JC5), so the user is never trapped.
+    internal let onBack: (() -> Void)?
     /// `true` while a prior `onActivate` call is still in flight — disables
     /// Activate so a rapid double-submit can't fire two concurrent `/activate`
     /// calls against Lemon Squeezy's finite `activation_limit`.
@@ -58,8 +64,11 @@ internal struct StowerLicenseEntryView: View {
             Button("Activate", action: activate)
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(normalizedKey.isEmpty || isActivating)
+                .disabled(!Self.isPlausibleKey(key) || isActivating)
             HStack(spacing: Self.helpSpacing) {
+                if let onBack {
+                    Button("Back to trial", action: onBack)
+                }
                 if let supportURL = Self.supportURL {
                     Link("Lost your key?", destination: supportURL)
                 }
@@ -77,12 +86,23 @@ internal struct StowerLicenseEntryView: View {
         Self.normalize(key)
     }
 
-    /// Activates the normalized key; an empty result or an in-flight activate
-    /// can't submit (the Activate button is also disabled in both cases).
+    /// Activates the normalized key; a mis-formatted key or an in-flight
+    /// activate can't submit (the Activate button is also disabled in both
+    /// cases), so a stray keystroke never fires a pointless `/activate` call.
     private func activate() {
-        let normalized = normalizedKey
-        guard !normalized.isEmpty, !isActivating else { return }
-        onActivate(normalized)
+        guard Self.isPlausibleKey(key), !isActivating else { return }
+        onActivate(normalizedKey)
+    }
+
+    /// Whether `rawKey`, once normalized, looks like a Lemon Squeezy key.
+    ///
+    /// The default Lemon Squeezy license key is a UUID of the form `8-4-4-4-12`
+    /// hex digits. This is a cheap client gate so a single stray character can't
+    /// fire a network `/activate`; Lemon Squeezy's server stays the real
+    /// authority. If the store is ever switched to a custom key format, loosen
+    /// this pattern.
+    internal static func isPlausibleKey(_ rawKey: String) -> Bool {
+        normalize(rawKey).wholeMatch(of: keyFormat) != nil
     }
 
     /// Trims whitespace/newlines, then strips a leading `key:` label or a
@@ -118,17 +138,32 @@ internal struct StowerLicenseEntryView: View {
     private static var supportURL: URL? { URL(string: "mailto:\(supportEmail)") }
     private static let supportEmail = "emily@stower.app"
     private static let stripPrefixes = ["key:", "license key:", "license_key="]
+    /// Lemon Squeezy's default license-key shape: a UUID (`8-4-4-4-12` hex).
+    private static let keyFormat =
+        /[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}/
     private static let fieldSpacing: CGFloat = 6
     private static let actionSpacing: CGFloat = 8
     private static let helpSpacing: CGFloat = 16
 }
 
-#Preview("No error") {
+#Preview("No error (hard paywall, no Back)") {
     StowerLicenseEntryView(
         key: .constant(""),
         error: nil,
         onActivate: { _ in },
         onBuy: {},
+        onBack: nil,
+        isActivating: false
+    )
+}
+
+#Preview("Mid-trial visit (with Back)") {
+    StowerLicenseEntryView(
+        key: .constant("80e15db5-c796-436b-850c-8f9c98a48abe"),
+        error: nil,
+        onActivate: { _ in },
+        onBuy: {},
+        onBack: {},
         isActivating: false
     )
 }
@@ -139,6 +174,7 @@ internal struct StowerLicenseEntryView: View {
         error: .invalid,
         onActivate: { _ in },
         onBuy: {},
+        onBack: nil,
         isActivating: false
     )
 }
@@ -149,16 +185,18 @@ internal struct StowerLicenseEntryView: View {
         error: .couldNotReach,
         onActivate: { _ in },
         onBuy: {},
+        onBack: nil,
         isActivating: false
     )
 }
 
 #Preview("Activating") {
     StowerLicenseEntryView(
-        key: .constant("ABCD-1234"),
+        key: .constant("80e15db5-c796-436b-850c-8f9c98a48abe"),
         error: nil,
         onActivate: { _ in },
         onBuy: {},
+        onBack: nil,
         isActivating: true
     )
 }

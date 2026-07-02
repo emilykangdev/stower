@@ -44,4 +44,40 @@ import Testing
         #expect(StowerLicenseEntryView.normalize("   ") == "")
         #expect(StowerLicenseEntryView.normalize("") == "")
     }
+
+    // MARK: - Key-format gate (isPlausibleKey)
+
+    @Test("a well-formed UUID license key is plausible")
+    internal func wellFormedUUIDIsPlausible() {
+        #expect(StowerLicenseEntryView.isPlausibleKey("80e15db5-c796-436b-850c-8f9c98a48abe"))
+        // Case-insensitive — Lemon Squeezy keys are lowercase, but a user may
+        // paste an upper/mixed-case copy.
+        #expect(StowerLicenseEntryView.isPlausibleKey("80E15DB5-C796-436B-850C-8F9C98A48ABE"))
+    }
+
+    @Test("a UUID key with paste junk is still plausible after normalization")
+    internal func uuidWithJunkIsPlausible() {
+        #expect(
+            StowerLicenseEntryView.isPlausibleKey("  key: 80e15db5-c796-436b-850c-8f9c98a48abe\n")
+        )
+    }
+
+    @Test("a single stray character is NOT plausible (blocks a pointless /activate)")
+    internal func strayCharacterIsNotPlausible() {
+        #expect(!StowerLicenseEntryView.isPlausibleKey("a"))
+        #expect(!StowerLicenseEntryView.isPlausibleKey(""))
+        #expect(!StowerLicenseEntryView.isPlausibleKey("   "))
+    }
+
+    @Test("a malformed key (wrong segments, non-hex, truncated) is NOT plausible")
+    internal func malformedKeyIsNotPlausible() {
+        // Too short / non-hex.
+        #expect(!StowerLicenseEntryView.isPlausibleKey("ABCD-1234"))
+        // No hyphens.
+        #expect(!StowerLicenseEntryView.isPlausibleKey("80e15db5c796436b850c8f9c98a48abe"))
+        // 11-digit tail (needs 12).
+        #expect(!StowerLicenseEntryView.isPlausibleKey("80e15db5-c796-436b-850c-8f9c98a48ab"))
+        // Non-hex characters.
+        #expect(!StowerLicenseEntryView.isPlausibleKey("zzzzzzzz-c796-436b-850c-8f9c98a48abe"))
+    }
 }

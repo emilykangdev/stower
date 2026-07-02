@@ -53,8 +53,12 @@
       </BuildableProductRunnable>
       <CommandLineArguments>
          <CommandLineArgument
-            argument = "--clear-lease-on-start --fingerprint dev-6"
+            argument = "--clear-license --reset-trial"
             isEnabled = "YES">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "--clear-lease-on-start --fingerprint dev-6"
+            isEnabled = "NO">
          </CommandLineArgument>
          <CommandLineArgument
             argument = "--clear-lease-on-start --fingerprint dev-5"

@@ -17,11 +17,17 @@ internal final class StowerStartupModel {
     internal private(set) var state: StowerStartupState = .checkingModel
 
     private let provider: any StowerStartupProviding
-    private let licenseGate: any StowerLicenseGating
     private let config: StowerStartupDebtConfig
-    private let clock: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
     private let onCommit: (@MainActor @Sendable (StowerStartupState) -> Void)?
+
+    /// The license gate and clock.
+    ///
+    /// `internal` (not `private`) so the `StowerStartupModelLicenseEntry.swift`
+    /// extension's `showLicenseEntry()`/`dismissLicenseEntry()` can read them
+    /// without widening access beyond the module.
+    internal let licenseGate: any StowerLicenseGating
+    internal let clock: @Sendable () -> Date
 
     /// The analytics reporter.
     ///
@@ -29,8 +35,10 @@ internal final class StowerStartupModel {
     /// `emitFunnelEvent(for:)` and its helpers can report funnel events without
     /// widening access beyond the module.
     internal let reporter: any StowerAnalyticsReporting
-    private var inFlight: Task<Void, Never>?
-    private var generation = 0
+    /// `internal` so the `StowerStartupModelLicenseEntry.swift` extension can
+    /// cancel/bump the in-flight run when jumping to or out of key entry.
+    internal var inFlight: Task<Void, Never>?
+    internal var generation = 0
 
     /// `true` while a run is in an FDA-awaiting state; cleared after `fda_permission_resolved` fires.
     ///
@@ -67,6 +75,15 @@ internal final class StowerStartupModel {
     /// two concurrent calls for one real purchase must not both consume a
     /// slot. Exposed so the key-entry view can disable Activate while true.
     internal private(set) var isActivating = false
+
+    /// Whether the Back affordance is offered on `StowerLicenseEntryView`.
+    ///
+    /// `true` only while the key-entry screen was opened VOLUNTARILY mid-trial
+    /// (JC5) and the user can still return; NOT set on an expiry paywall (no
+    /// board to go back to). Set by `showLicenseEntry()`, cleared by
+    /// `beginRun()`/`dismissLicenseEntry()`. `internal` (settable) so the
+    /// `StowerStartupModelLicenseEntry.swift` extension owns those two methods.
+    internal var licenseEntryIsDismissible = false
 
     /// Minimum time the checking state stays up, so a fast result doesn't flash.
     private static let minimumCheckingDisplay: Duration = .milliseconds(400)
@@ -239,24 +256,10 @@ internal final class StowerStartupModel {
         }
     }
 
-    /// Jumps to the key-entry screen from the board (JC5): the gear menu's
-    /// "Enter license key…" item and the F2 banner both call this so a mid-trial
-    /// purchaser isn't forced to wait until expiry to activate.
-    ///
-    /// Cancels any in-flight run and bumps the generation, mirroring
-    /// `handleBoardFailure` — a late startup completion can't overwrite this.
-    /// Does NOT emit a funnel event: this is a voluntary mid-trial visit, not
-    /// the forced paywall routing `hardware_checked`/`paywall_reached` measure.
-    internal func showLicenseEntry() {
-        inFlight?.cancel()
-        inFlight = nil
-        generation += 1
-        commit(.needsLicense(nil), generation: generation, emitsFunnelEvent: false)
-    }
-
     /// Cancels any in-flight run, bumps the generation, and starts a fresh run.
     private func beginRun() {
         inFlight?.cancel()
+        licenseEntryIsDismissible = false
         generation += 1
         let runGeneration = generation
         let wasAwaitingFDA = state.isAwaitingFullDiskAccess

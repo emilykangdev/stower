@@ -197,6 +197,7 @@ public struct StowerRootView: View {
                 error: error,
                 onActivate: { activate(key: $0) },
                 onBuy: { openCheckout() },
+                onBack: model.licenseEntryIsDismissible ? { model.dismissLicenseEntry() } : nil,
                 isActivating: model.isActivating
             )
         case .modelUnavailable(let reason):
