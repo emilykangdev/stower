@@ -33,7 +33,7 @@ public final class StowerAnalytics {
 
     /// A stable, app-specific salt for hash stability only.
     ///
-    /// Anonymity comes from the random Keychain UUID, NOT the salt (Eng F7).
+    /// Anonymity comes from the random install UUID, NOT the salt (Eng F7).
     /// Once set, this must never change — a changed salt makes every existing
     /// user look like a new user to TelemetryDeck.
     private static let stableSalt = "stower-v0-analytics-salt-2026"
@@ -57,9 +57,9 @@ public final class StowerAnalytics {
     /// when disabled."
     ///
     /// - Parameters:
-    ///   - consent: The consent accessor (real Keychain-backed in production;
+    ///   - consent: The consent accessor (real UserDefaults-backed in production;
     ///     inject a fake for tests).
-    ///   - identity: The install-identity accessor (real Keychain in production;
+    ///   - identity: The install-identity accessor (real UserDefaults-backed in production;
     ///     inject a fake for tests).
     ///   - makeClient: Injectable SDK-init closure. Receives `(appID, salt,
     ///     userID)`. The default calls `StowerTelemetryDeckReporter.initializeSDK`
@@ -157,7 +157,7 @@ public final class StowerAnalytics {
         shared?.consent.isEnabled ?? false
     }
 
-    /// Enables or disables the analytics backend and updates the local Keychain cache.
+    /// Enables or disables the analytics backend and updates the local UserDefaults cache.
     ///
     /// In production this is called via `StowerDiagnostics.setEnabled(_:)` which
     /// handles both backends. The caller (Settings toggle / disclosure card) is
@@ -180,7 +180,7 @@ public final class StowerAnalytics {
                 startBackend(consent: current.consent, identity: StowerDiagnosticsIdentity())
             }
         } else {
-            // Fail closed in memory across every reporter, even if the Keychain
+            // Fail closed in memory across every reporter, even if the UserDefaults
             // write failed. Durable off is backstopped by the license record's
             // `diagnostics_opt_out`, reconciled on the next check-in (JC8).
             StowerDiagnosticsKillLatch.latchOff()
@@ -191,7 +191,7 @@ public final class StowerAnalytics {
         }
     }
 
-    /// Reconciles the local Keychain cache against the license record's opt-out
+    /// Reconciles the local UserDefaults cache against the license record's opt-out
     /// flag on each license check-in.
     ///
     /// "Off wins" — this never auto-re-enables. Called via

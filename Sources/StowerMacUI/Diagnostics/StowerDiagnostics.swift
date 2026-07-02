@@ -27,7 +27,7 @@ public enum StowerDiagnostics {
     /// automatic `TelemetryDeck.Session.started` (A3/JC3/JC6).
     ///
     /// The injectable form used by tests is `internal`; this public wrapper
-    /// supplies real Keychain-backed instances so the app target never names
+    /// supplies real UserDefaults-backed instances so the app target never names
     /// those internal types.
     @MainActor
     public static func initialize() {
@@ -40,9 +40,9 @@ public enum StowerDiagnostics {
     /// Initializes all diagnostics backends.
     ///
     /// - Parameters:
-    ///   - consent: Shared consent accessor (real Keychain-backed in production;
+    ///   - consent: Shared consent accessor (real UserDefaults-backed in production;
     ///     inject a fake for tests).
-    ///   - identity: Shared install-identity accessor (real Keychain in
+    ///   - identity: Shared install-identity accessor (real UserDefaults-backed in
     ///     production; inject a fake for tests).
     ///   - makeAnalyticsClient: Injectable TelemetryDeck init closure for tests.
     ///     Tests inject a spy to verify zero calls when consent is off.
@@ -82,12 +82,12 @@ public enum StowerDiagnostics {
     /// Whether diagnostics collection is currently enabled.
     ///
     /// Reads from the live analytics shared instance. Matches
-    /// `StowerDiagnosticsConsent.isEnabled` (the Keychain cache + kill latch).
+    /// `StowerDiagnosticsConsent.isEnabled` (the UserDefaults cache + kill latch).
     public static func isEnabled() -> Bool {
         StowerAnalytics.isEnabled()
     }
 
-    /// Enables or disables all diagnostics backends and updates the Keychain cache.
+    /// Enables or disables all diagnostics backends and updates the UserDefaults cache.
     ///
     /// When disabling, calls `StowerCrashReporting.stop()` (which closes the
     /// Sentry SDK) for a best-effort immediate halt. The primary guarantee remains
@@ -110,7 +110,7 @@ public enum StowerDiagnostics {
         }
     }
 
-    /// Reconciles the local Keychain cache against the license record's opt-out
+    /// Reconciles the local UserDefaults cache against the license record's opt-out
     /// flag on each license check-in.
     ///
     /// "Off wins" — this never auto-re-enables. When `licenseOptOut` is `true`,

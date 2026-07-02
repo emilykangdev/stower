@@ -21,10 +21,13 @@ extension StowerBoardViewModel {
 
     /// The banner button's label, matched to the action `resolveContactsAccess` will
     /// take: a never-asked board can be prompted in-app; a denied one must go to
-    /// Settings, so the label sets that expectation before the tap.
+    /// Settings; a wedged request (`contactsRequestTimedOut` — see
+    /// `Docs/Permissions.md`) can only be retried in-app too, since the request
+    /// never reached `tccd` and Stower was never listed in Settings to begin with.
     internal var contactsBannerActionTitle: String {
         switch contactsAuthorization {
         case .denied: return "Open Settings"
+        case .notDetermined where contactsRequestTimedOut: return "Try Again"
         default: return "Show names"
         }
     }
@@ -35,6 +38,15 @@ extension StowerBoardViewModel {
     /// (in-flight re-taps ignored); `.denied`/restricted can't be re-prompted, so it
     /// opens System Settings → Contacts and arms a recovery reload for when the user
     /// returns (`onAppBecameActive`); `.authorized` is a no-op.
+    ///
+    /// The system prompt itself can wedge on this machine's permission state
+    /// (`Docs/Permissions.md`) — that surfaces here as a thrown `.timedOut`,
+    /// which releases `isRequestingContacts` and relabels the banner "Try Again"
+    /// instead of leaving it silently dead forever. Settings is deliberately NOT
+    /// offered on timeout: the request never reached the OS permission broker,
+    /// so Stower isn't listed there to grant. A genuinely late answer (the user
+    /// was just slow to tap Allow) still lands via `onLateResult` rather than
+    /// being discarded.
     internal func resolveContactsAccess() {
         switch contacts.authorization {
         case .authorized:
@@ -45,17 +57,72 @@ extension StowerBoardViewModel {
         case .notDetermined:
             guard !isRequestingContacts else { return }
             isRequestingContacts = true
+            contactsOutcomeApplied = false
             contactsTask = Task { [weak self] in
                 guard let self else { return }
                 defer { isRequestingContacts = false }
-                let granted = await contacts.requestAccessIfNeeded()
-                // Reflect the outcome (grant *or* deny) so the banner updates: a deny
-                // flips the label to "Open Settings"; a grant reloads into names.
-                syncContactsAuthorization()
-                guard granted, !Task.isCancelled else { return }
-                load()
+                do {
+                    _ = try await contacts.requestAccessIfNeeded { [weak self] _ in
+                        self?.applyContactsOutcome()
+                    }
+                    applyContactsOutcome()
+                } catch {
+                    // requestAccessIfNeeded's only throwing case is the OS call
+                    // wedging past the timeout — but this task may have been
+                    // cancelled (onDisappear) while waiting on it, in which case
+                    // the board is gone and this is not a real timeout the user
+                    // ever saw. Checking `contactsTask` (the outer task's own
+                    // handle) rather than the ambient `Task.isCancelled` matters
+                    // here too — see `applyContactsOutcome`.
+                    guard contactsTask?.isCancelled != true else { return }
+                    contactsRequestTimedOut = true
+                    syncContactsAuthorization()
+                }
             }
         }
+    }
+
+    /// Applies a request outcome — including one that arrives late, after
+    /// `resolveContactsAccess` already gave up and threw `.timedOut` — by
+    /// refreshing the observed status and reloading into names once it's
+    /// authorized.
+    ///
+    /// Deliberately takes no `granted` flag: `requestAccessIfNeeded`'s own
+    /// answer can be stale by the time a late callback actually runs — e.g.
+    /// the user grants via System Settings while a wedged `requestAccess` is
+    /// still finishing, and that abandoned call later delivers a `false` that
+    /// no longer reflects reality. The freshly re-synced `contactsAuthorization`
+    /// is always the live ground truth, so it — not the delivered flag —
+    /// decides whether to reload.
+    ///
+    /// A late outcome runs on `StowerContactsAccess`'s own unstructured
+    /// tracking task, not on `contactsTask` — the ambient `Task.isCancelled`
+    /// there would always read `false` regardless of whether the board was
+    /// torn down, silently letting a stale grant reload it. Checking
+    /// `contactsTask?.isCancelled` instead asks the specific outer task the
+    /// user's `cancel()` actually cancels.
+    ///
+    /// A cancelled outcome does nothing at all — not even
+    /// `syncContactsAuthorization()` — rather than syncing status without
+    /// reloading rows: that would hide the banner while leaving stale
+    /// handle-only rows on screen with nothing left to prompt a retry. Safe to
+    /// skip entirely: `onAppear`/`onAppBecameActive` already re-sync
+    /// authorization (and reload if it changed) the next time the board
+    /// becomes relevant again.
+    ///
+    /// Applies at most once per attempt (`contactsOutcomeApplied`, reset when
+    /// a fresh `.notDetermined` tap starts): `StowerContactsInFlightRequest`
+    /// can deliver one real answer to more than one waiter — a "Try Again"
+    /// tap that joins the in-flight request, plus the original timed-out
+    /// tap's `onLateResult` — so without this guard both callbacks would
+    /// independently call `load()` for one answer.
+    private func applyContactsOutcome() {
+        guard contactsTask?.isCancelled != true, !contactsOutcomeApplied else { return }
+        contactsOutcomeApplied = true
+        contactsRequestTimedOut = false
+        syncContactsAuthorization()
+        guard contactsAuthorization == .authorized else { return }
+        load()
     }
 
     /// Mirrors the live Contacts authorization into observed state.

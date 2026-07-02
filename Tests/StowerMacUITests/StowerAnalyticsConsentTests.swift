@@ -9,20 +9,20 @@ import Testing
 
     @Test internal func defaultsOnForFreshInstall() {
         let storage = StowerInMemoryLeaseStorage()
-        let consent = StowerDiagnosticsConsent(storage: storage)
+        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         #expect(consent.isEnabled == true)
     }
 
     @Test internal func setEnabledFalseDisables() {
         let storage = StowerInMemoryLeaseStorage()
-        let consent = StowerDiagnosticsConsent(storage: storage)
+        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         consent.setEnabled(false)
         #expect(consent.isEnabled == false)
     }
 
     @Test internal func setEnabledTrueRe_enables() {
         let storage = StowerInMemoryLeaseStorage()
-        let consent = StowerDiagnosticsConsent(storage: storage)
+        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         consent.setEnabled(false)
         consent.setEnabled(true)
         #expect(consent.isEnabled == true)
@@ -30,19 +30,19 @@ import Testing
 
     @Test internal func optOutPersistsAcrossInstances() {
         let storage = StowerInMemoryLeaseStorage()
-        let consent1 = StowerDiagnosticsConsent(storage: storage)
+        let consent1 = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         consent1.setEnabled(false)
         // Simulating a relaunch by creating a new instance over the same storage.
-        let consent2 = StowerDiagnosticsConsent(storage: storage)
+        let consent2 = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         #expect(consent2.isEnabled == false)
     }
 
     @Test internal func reconcileLicenseOptOutTurnsOffCache() {
         let storage = StowerInMemoryLeaseStorage()
-        // Seed a fresh record with enabled=true (simulates wiped Keychain).
-        let identity = StowerDiagnosticsIdentity(storage: storage)
+        // Seed a fresh record with enabled=true (simulates wiped storage).
+        let identity = StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil })
         _ = identity.clientUser()  // mints record with enabled=true
-        let consent = StowerDiagnosticsConsent(storage: storage)
+        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         #expect(consent.isEnabled == true)
         // License says opted out — reconcile must turn off the cache.
         consent.reconcile(licenseOptOut: true)
@@ -51,17 +51,59 @@ import Testing
 
     @Test internal func reconcileDoesNotReenableIfLicenseIsOn() {
         let storage = StowerInMemoryLeaseStorage()
-        let consent = StowerDiagnosticsConsent(storage: storage)
+        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         consent.setEnabled(false)
         // License says NOT opted out — reconcile must not re-enable ("off wins").
         consent.reconcile(licenseOptOut: false)
         #expect(consent.isEnabled == false, "off wins: reconcile must never auto-re-enable")
     }
 
+    @Test internal func migratesLegacyOptOutBeforeIdentityEverRuns() throws {
+        // The real launch order (StowerDiagnostics.initialize()): consent.isEnabled
+        // is checked BEFORE identity.clientUser() is ever called. A migration that
+        // only lived on StowerDiagnosticsIdentity would let this default an
+        // upgrading, previously-opted-out install back to enabled for the launch
+        // that migrates — starting Sentry/TelemetryDeck for a user who opted out.
+        let legacyRecord = try JSONEncoder().encode(
+            DiagnosticsInstallRecord(id: UUID().uuidString, enabled: false)
+        )
+        let storage = StowerInMemoryLeaseStorage()
+        let consent = StowerDiagnosticsConsent(
+            storage: storage,
+            legacyKeychainRead: { legacyRecord }
+        )
+
+        // No call to any StowerDiagnosticsIdentity in this test at all.
+        #expect(
+            consent.isEnabled == false,
+            "a prior opt-out must be honored on first launch, not just after identity migrates"
+        )
+    }
+
+    @Test internal func undecodableStorageStillFallsThroughToLegacyMigration() throws {
+        // UserDefaults holds SOME bytes under the key (not missing), but they
+        // fail to decode as a DiagnosticsInstallRecord — must still fall
+        // through to the legacy Keychain migration, not silently default on.
+        let storage = StowerInMemoryLeaseStorage()
+        storage.write(Data("not valid json".utf8))
+        let legacyRecord = try JSONEncoder().encode(
+            DiagnosticsInstallRecord(id: UUID().uuidString, enabled: false)
+        )
+        let consent = StowerDiagnosticsConsent(
+            storage: storage,
+            legacyKeychainRead: { legacyRecord }
+        )
+
+        #expect(
+            consent.isEnabled == false,
+            "corrupted UserDefaults must not skip the legacy migration and default to enabled"
+        )
+    }
+
     @Test internal func identityAndConsentShareSameRecord() {
         let storage = StowerInMemoryLeaseStorage()
-        let identity = StowerDiagnosticsIdentity(storage: storage)
-        let consent = StowerDiagnosticsConsent(storage: storage)
+        let identity = StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil })
+        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         let id = identity.clientUser()
         consent.setEnabled(false)
         // After opt-out, the identity UUID must still be readable (same record).

@@ -13,15 +13,15 @@ import Testing
 
         let storage = StowerInMemoryLeaseStorage()
         // Pre-write a record with enabled=false.
-        let consent = StowerDiagnosticsConsent(storage: storage)
+        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         consent.setEnabled(false)
 
         var makeClientCalled = false
 
         // Initialize with disabled consent — makeClient must NOT be called.
         StowerAnalytics.startBackend(
-            consent: StowerDiagnosticsConsent(storage: storage),
-            identity: StowerDiagnosticsIdentity(storage: storage),
+            consent: StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil }),
+            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
             makeClient: { _, _, _ in makeClientCalled = true }
         )
 
@@ -44,8 +44,8 @@ import Testing
         var makeClientCalled = false
 
         StowerAnalytics.startBackend(
-            consent: StowerDiagnosticsConsent(storage: storage),
-            identity: StowerDiagnosticsIdentity(storage: storage),
+            consent: StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil }),
+            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
             makeClient: { _, _, _ in makeClientCalled = true }
         )
 
@@ -72,7 +72,7 @@ import Testing
         reporter.report(.sessionEnded)
     }
 
-    /// The in-memory kill latch overrides an enabled Keychain cache, so every
+    /// The in-memory kill latch overrides an enabled UserDefaults cache, so every
     /// reporter (which gates on `consent.isEnabled`) stops immediately even if a
     /// failed opt-out write left the cache reading "on" (F4/JC6).
     @Test internal func killLatchOverridesEnabledCacheForAllReporters() {
@@ -80,7 +80,7 @@ import Testing
         defer { StowerAnalytics.resetForTesting() }
 
         let storage = StowerInMemoryLeaseStorage()
-        let consent = StowerDiagnosticsConsent(storage: storage)
+        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
         // Fresh storage = enabled cache (default-on).
         #expect(consent.isEnabled == true)
 

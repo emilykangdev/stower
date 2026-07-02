@@ -114,7 +114,17 @@ import Testing
     internal func notDeterminedActionRequestsAndReloads() async {
         let spy = StowerSpyBoardDataSource()
         spy.loadModels = [oneRowBoard()]
-        let granting = StowerContactsAccess(status: { .notDetermined }, request: { true })
+        // Stateful, like the real CNContactStore: authorizationStatus() reads
+        // .authorized once requestAccess's completion has granted — applyContactsOutcome
+        // now decides whether to reload from this live status, not the delivered flag.
+        let isGranted = Mutex(false)
+        let granting = StowerContactsAccess(
+            status: { isGranted.withLock { $0 } ? .authorized : .notDetermined },
+            request: {
+                isGranted.withLock { $0 = true }
+                return true
+            }
+        )
         let model = makeViewModel(spy, contacts: granting, recorder: FailureRecorder())
 
         model.load()
@@ -128,6 +138,41 @@ import Testing
         // Initial load + one reload from the grant.
         #expect(spy.loadCallCount == 2)
     }
+
+    @Test("a wedged request times out, relabels Try Again, and releases the latch")
+    internal func wedgedRequestTimesOutAndReleasesLatch() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [oneRowBoard()]
+        // `request` never resumes (the real-world wedge — Docs/Permissions.md);
+        // `sleep` resolves instantly so the test doesn't wait out a real timeout.
+        let wedged = StowerContactsAccess(
+            status: { .notDetermined },
+            request: { await withCheckedContinuation { (_: CheckedContinuation<Bool, Never>) in } },
+            sleep: { _ in }
+        )
+        let model = makeViewModel(spy, contacts: wedged, recorder: FailureRecorder())
+
+        model.load()
+        await model.loadTaskHandle?.value
+        #expect(model.contactsBannerActionTitle == "Show names")
+
+        model.resolveContactsAccess()
+        await model.contactsTaskHandle?.value
+
+        // The latch released (not stuck forever) and the label now signals a retry
+        // rather than a first-ever prompt — the fix for the permanently-dead button.
+        #expect(model.isRequestingContacts == false)
+        #expect(model.contactsBannerActionTitle == "Try Again")
+        #expect(spy.loadCallCount == 1)  // no reload — nothing was granted
+
+        // A retry tap is not swallowed by the (now-released) guard.
+        model.resolveContactsAccess()
+        #expect(model.contactsTaskHandle != nil)
+    }
+
+    // Timeout / retry-coalescing / cancellation-safety tests live in
+    // StowerBoardViewModelContactsTimeoutTests.swift (split to stay under the
+    // file_length/type_body_length precheck gates).
 
     @Test("denying the in-app prompt flips the banner action to Open Settings")
     internal func denyingPromptFlipsToSettings() async {
