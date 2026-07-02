@@ -49,6 +49,10 @@ internal struct StowerUserDefaultsItem: StowerLeaseStorage {
     @discardableResult
     internal func write(_ data: Data) -> Bool {
         UserDefaults.standard.set(data, forKey: key)
+        // `UserDefaults.set` has no synchronous failure signal, so this always
+        // reports success. The `Bool` exists only to satisfy the
+        // `StowerLeaseStorage` contract shared with the Keychain-style store
+        // this replaced, which could fail synchronously.
         return true
     }
 
