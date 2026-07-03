@@ -16,15 +16,11 @@
 When the contract changes: edit here, bump the version, record the change in
 §Changelog. Plans reference this file by version number.
 
-> **Note (2026-07-01): this is a major-version bump (1.21 → 2.0), not an
-> incremental sync.** The entire Keygen + Supabase Edge Function licensing
-> backend described by every earlier version of this file — `supabase/functions/license/`,
-> `Scripts/Keygen/`, all DB migrations, and every Swift client that talked to
-> them — has been **deleted**. It is replaced by a client-only Lemon Squeezy
-> activate-once flow plus a local 7-day trial clock. Sections §1–§5 below
-> describe the new as-built system from scratch. The full history of the
-> deleted Keygen/Supabase design lives in §Changelog entries 1.0–1.21 (kept
-> for archaeology; none of it is live).
+> **This is the v2.0 contract:** a client-only Lemon Squeezy activate-once flow
+> plus a local 7-day trial clock, with **no Stower-operated backend**. Sections
+> §1–§5 describe the as-built system from scratch. The pre-2.0 history of the
+> earlier server-backed design is preserved in §Changelog (entries 1.0–1.21)
+> for archaeology only — none of it is live.
 
 ## Sequencing
 

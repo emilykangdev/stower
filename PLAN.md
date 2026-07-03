@@ -6,23 +6,19 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
-- 2026-07-01: **Licensing rebuilt as client-only Lemon Squeezy activate-once + local 7-day trial — the entire Keygen/Supabase backend is deleted (branch `v0-prep`, PR #41).**
-  Deleted wholesale: `supabase/` (Edge Function + migrations), `Scripts/Keygen/`, and every Swift client
-  that talked to them (`StowerLicenseGate`, `StowerLicenseCheckInClient`, `StowerTrialMintClient`,
-  `StowerDeviceFingerprint`, `StowerLicenseLeaseStore`, machine-file/lease lifecycle). No Stower-operated
-  server exists. As-built seam (`Sources/StowerMacUI/Startup/`): `StowerLicenseGating` →
+- 2026-07-01: **Licensing is client-only Lemon Squeezy activate-once + local 7-day trial (branch `v0-prep`, PR #41).**
+  No Stower-operated server exists. As-built seam (`Sources/StowerMacUI/Startup/`): `StowerLicenseGating` →
   `StowerLemonSqueezyLicenseGate` composes `StowerLemonSqueezyClient` (the app's ONLY licensing network
   call — `POST api.lemonsqueezy.com/v1/licenses/activate`, response `meta.store_id`/`meta.product_id`
   checked against `StowerLicenseConfig` so another product's key can't unlock Stower), `StowerLicenseStore`
   (plaintext single-key `UserDefaults` record: key + `instance.id`), and `StowerTrialClock` (7-day window
   seeded from a `UserDefaults` first-launch date; `StowerTrialClock.trialDuration`). Activate once →
-  licensed forever offline: no `/validate`, no check-in, no revocation (contract I6). Money moments:
+  licensed forever offline: no re-validation, no revocation (contract I6). Money moments:
   F1 "You're all set." alert on every successful activation path, F2 enter-key banner after checkout
   (`StowerRootView.openCheckout()` sets `boughtThisSession`), F3 buy-nudge via `StowerBoardBannerState`;
-  key entry is `StowerLicenseEntryView` (paste-forgiving `normalize()`). Trial funnel analytics replaced
-  the Keygen-era events: `trial_started` / `paywall_reached` / `checkout_opened` / `activated`
-  (`licenseGateReached`/`licenseUnreachable` deleted). Precheck `6o` pins licensing egress to
-  `api.lemonsqueezy.com` and bans `supabase`/`keygen`/`/check-in`/`mint-trial` tokens in `Sources/`.
+  key entry is `StowerLicenseEntryView` (paste-forgiving `normalize()`). Trial funnel analytics:
+  `trial_started` / `paywall_reached` / `checkout_opened` / `activated`. Precheck `6o` pins licensing
+  egress to `api.lemonsqueezy.com` and bans any residual server-backed licensing token from `Sources/`.
   Docs rewritten from the as-built code: `Docs/licensing-contract.md` v2.0, `Docs/Lifecycle.md` v2.0,
   `Docs/EnvironmentVariables.md`; `Docs/licensing.md` keeps its 30-day/per-major pricing philosophy with
   "As-built (v0)" callouts (parked business decision, `tmp/OPEN_QUESTIONS.md` G4). **Still open (release
@@ -51,52 +47,6 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
   at `.connectedPreparingBoard` only, `board_reached`); board view models emit `board_item_clicked` /
   `feature_used`. Rationale captured in `Docs/Analytics.md`; `Docs/MacAppContract.md` updated for the new
   Settings scene + launch/quit analytics hooks.
-- 2026-06-25: **Supabase licensing backend — the Edge Function is now the licensing brain (mint + check-in + webhook).**
-  Decision (Emily, firm, 2-way door): the licensing brain is the existing `supabase/functions/license/`
-  Edge Function, **not** a new Railway service (Railway plan superseded). Extended the function in place:
-  `/mint-trial` now activates the Keygen machine + checks out a 7-day signed machine file and returns
-  `{minted, licenseKey, licenseID, machineID, machineFile}` (wire field renamed `key`→`licenseKey`);
-  NEW `POST /check-in` (reachable-launch gate authority — per-license JC5 signature, once-per-major +7d
-  extension via record-before-patch to a frozen target (I11, idempotent under crash/retry), validate +
-  machine repair, entitlement OR in code (I4), fresh signed-file checkout (I13), never returns the key);
-  NEW `GET /health`; `/ls-webhook` now attaches `STOWER_V0` + records `purchased_major`/`entitlement_code`.
-  New modules: `github.ts` (current-latest-stable-major for the +7d decision; 5-min cache; null-on-failure),
-  `requestSignature.ts` (JC5 verifier via Web Crypto, 120s window, committed parity vector in `fixtures/`).
-  Migration `20260625_license_checkin.sql` (additive: `device_trials` columns + `trial_extension_grants`
-  + `purchases` columns). JC7 for v0: the required entitlement is the flat `STOWER_V0` constant (no major
-  derivation yet; per-major `STOWER_V${major}` from `purchased_major` returns at v1); JC9 keeps the
-  `STOWER_V0` *code* a per-runtime constant (only the `KEYGEN_V0_ENTITLEMENT` UUID is env). **A2 resolved
-  (one-way door):** Keygen's `include=` entitlements + license expiry live INSIDE the Ed25519-signed `enc`
-  payload — the CI integration test now decodes `enc` and asserts it. Deleted the dead, unwired
-  `StowerKeygenClient.swift` (+ its test) — that surface is server-side now. Contract → v1.13, `Docs/Lifecycle.md`
-  reversed (brain = Edge Function), both diagrams updated. 55 Deno tests green; `swift build` green.
-  **Still open:** mint rate-limiting (risk #8), explicit outbound-fetch timeouts (item B), `pg_cron` orphan
-  sweep (item C), and the ops cutover (point the LS webhook at `…/ls-webhook`, set Plan B's base URL).
-- 2026-06-18: **License core — fingerprint, lease store, Keygen + mint clients, Supabase function (Bucket A, board-independent).**
-  Ships the trial-and-upgrade machinery as four injected, unit-tested seams plus a Deno Edge Function —
-  nothing wired into the app yet (the gate that composes them is Plan B). `StowerDeviceFingerprint`
-  (`IOPlatformUUID` via IOKit → SHA-256 hex; Keychain-UUID fallback; `nonisolated`, injected readers).
-  `StowerLicenseLeaseStore` (Keychain generic-password seam `StowerLeaseStorage`/`StowerKeychainItem`,
-  `kSecAttrAccessibleAfterFirstUnlock`, no iCloud) verifies a machine-file's Ed25519 signature over
-  `"machine/"+enc` against an embedded public key on every load — a tampered cache loads as `nil` (I7).
-  `StowerKeygenClient` (raw `URLSession` JSON:API to `api.keygen.sh`: activate / check-out(ttl) /
-  validate-key; `Authorization: License <key>`; transport throw surfaced, 5xx → `.server`).
-  `StowerTrialMintClient` (POST fingerprint → `mint-trial` → `.minted`/`.retryShortly`/`.unreachable`,
-  never `{null,null}`). `supabase/`: `device_trials` + `purchases` migrations and a `license` function
-  (`handlers.ts` pure logic + `index.ts` wiring) — `mint-trial` is row-idempotent with crash recovery
-  (I3) and `ls-webhook` verifies the LS HMAC (I9), validates variant, `PUT /policy` trial→paid, records
-  only on success, replay/forged-id safe (I8/I15). Hardened through a Codex ship loop: per-claim
-  token on `device_trials` (a stalled winner can't overwrite a reclaimed row), `created_at`-guarded
-  reclaim, orphan-storm guard (a post-create DB failure keeps the claim), paid upgrade also clears the
-  trial expiry (perpetual), DB-lookup errors 500 (never a silent ack), RLS on both tables, and
-  `config.toml verify_jwt=false` so the webhook + anonymous mint reach the function. 22 Swift tests +
-  20 Deno tests; `Scripts/precheck.sh` green (212 tests). **O2 resolved:** trial = 30d (function),
-  machine-file checkout TTL = 7d
-  (`StowerKeygenClient.machineFileTTL`, the single offline-validity boundary — the gate must read the
-  file's own expiry, not add a second window). **Still open (tracked, out of this slice):** B1 — the
-  `mint-trial` endpoint is unauthenticated; needs an abuse control (Supabase rate-limit / proof-of-work
-  / App Attest) before public launch. Embedded Keygen Ed25519 public key is an all-zero placeholder
-  until Plan B wires the real account key.
 - 2026-06-18: **Lemon Squeezy license-entry gate (activate-once, store, no recurring validate).**
   Stower is now paid from first launch. After the model-availability check and before the FDA gate,
   `StowerStartupModel` checks a new `StowerLicenseGating` seam: a stored license (`hasStoredLicense`,

@@ -65,10 +65,10 @@ authority as-built. **Precedence is "off wins"** — `reconcile(licenseOptOut:)`
 only ever turns the cache *off*, never back on, and only an explicit user opt-in
 re-enables. The license-scoped reconcile hook (JC8,
 `StowerDiagnostics.reconcileLicenseConsent(licenseOptOut:)`) has **no production
-caller today**: the deleted Keygen check-in that carried the license record's
-`diagnostics_opt_out` was its driver, and the Lemon Squeezy activate-once flow
-has no license record to reconcile against. The hook and its tests survive
-unwired.
+caller today**: the client-only Lemon Squeezy activate-once flow stores only a
+license key locally, with no server-side license record carrying a
+`diagnostics_opt_out` for the hook to reconcile against. The hook and its tests
+survive unwired.
 
 ## Event taxonomy (typed, PII-safe)
 
