@@ -193,12 +193,8 @@ internal final class StowerBoardViewModel {
     internal let settings: StowerSystemSettingsOpener
     private let opener: StowerMessagesLinkOpener
 
-    /// Whether the app is running against a demo database (DEBUG + `STOWER_MESSAGES_DB`).
-    ///
-    /// Injected (defaulting to the live launch-env signal) so the banner's demo-mode
-    /// suppression is hermetically testable — a unit test sets it explicitly instead of
-    /// depending on the ambient process environment. `internal` so the `+Contacts`
-    /// extension's `showsContactsAccessBanner` reads it across files.
+    /// Demo-mode flag (DEBUG + `STOWER_MESSAGES_DB`), injected so the banner's
+    /// suppression is hermetically testable, not read from the launch-env static.
     internal let isDemoMode: Bool
     // `internal` so the `+Load` state machine can route failures and pace retries.
     internal let onFailure: @MainActor (StowerStartupFailure) -> Void
@@ -379,12 +375,6 @@ internal final class StowerBoardViewModel {
             clock: clock
         )
     }
-
-    /// The in-flight load/refresh/contacts/triage tasks, exposed so tests can await them.
-    internal var loadTaskHandle: Task<Void, Never>? { loadTask }
-    internal var refreshTaskHandle: Task<Void, Never>? { refreshTask }
-    internal var contactsTaskHandle: Task<Void, Never>? { contactsTask }
-    internal var triageTaskHandle: Task<Void, Never>? { triageTask }
 
     /// Loads the cached board under a fresh generation token (I13).
     internal func load() {

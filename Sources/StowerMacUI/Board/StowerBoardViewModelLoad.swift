@@ -8,6 +8,12 @@ import Foundation
 /// triage surfaces) so the primary file holds the stored state and the user-facing
 /// entry points. These methods own the writes to `phase` / `board` / `isRefreshing`.
 extension StowerBoardViewModel {
+    /// The in-flight load/refresh/contacts/triage tasks, exposed so tests can await them.
+    internal var loadTaskHandle: Task<Void, Never>? { loadTask }
+    internal var refreshTaskHandle: Task<Void, Never>? { refreshTask }
+    internal var contactsTaskHandle: Task<Void, Never>? { contactsTask }
+    internal var triageTaskHandle: Task<Void, Never>? { triageTask }
+
     /// The debt-board config for the current preset.
     internal var config: StowerStartupDebtConfig {
         StowerStartupDebtConfig(
