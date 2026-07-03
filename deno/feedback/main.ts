@@ -61,12 +61,19 @@ async function handle(req: Request): Promise<Response> {
   const raw = await readCapped(req, MAX_BODY_BYTES);
   if (raw === null) return json(413, { error: "too large" });
 
-  let body: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    body = JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch {
     return json(400, { error: "invalid json" });
   }
+  // JSON.parse succeeds for non-object literals (`null`, `42`, `"x"`, `[]`) too;
+  // reading `.message` off those (esp. `null`) would throw and surface as an
+  // uncaught 500 instead of the documented 400. Require a plain object first.
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return json(400, { error: "invalid json" });
+  }
+  const body = parsed as Record<string, unknown>;
 
   const message = typeof body.message === "string" ? body.message.trim() : "";
   // Count graphemes, not UTF-16 code units: the Swift client caps on
