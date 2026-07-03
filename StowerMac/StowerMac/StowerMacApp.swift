@@ -75,6 +75,7 @@ struct StowerMacApp: App {
                     .tabItem {
                         Label("Updates", systemImage: "arrow.down.circle")
                     }
+                    .tag(StowerSettingsTab.updates)
             }
         }
         .commands {

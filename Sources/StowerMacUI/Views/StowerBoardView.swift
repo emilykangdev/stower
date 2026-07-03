@@ -70,6 +70,19 @@ internal struct StowerBoardView: View {
     /// After the first confirmation, Mute Sender acts without a dialog.
     @AppStorage("stower.board.hasConfirmedMute") internal var hasConfirmedMute = false
 
+    /// Presents the app's single `Settings` scene (macOS 14+).
+    ///
+    /// The gear menu's "Privacy…" item calls this after writing `selectedSettingsTab`;
+    /// `internal` so the `+Triage` extension's `licenseMenu` can invoke it.
+    @Environment(\.openSettings) internal var openSettings
+
+    /// The Settings tab the gear menu should force before presenting Settings.
+    ///
+    /// Shared with `StowerSettingsView`'s `TabView(selection:)` across scenes via
+    /// `@AppStorage`; `internal` so the `+Triage` extension's `licenseMenu` sets it.
+    @AppStorage(StowerSettingsTab.storageKey)
+    internal var selectedSettingsTab: StowerSettingsTab = .privacy
+
     internal var body: some View {
         NavigationStack {
             content

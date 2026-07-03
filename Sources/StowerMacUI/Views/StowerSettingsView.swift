@@ -11,6 +11,14 @@ import SwiftUI
 public struct StowerSettingsView<AdditionalPanes: View>: View {
     private let additionalPanes: AdditionalPanes
 
+    /// The selected tab, shared with the board's gear menu via `@AppStorage`.
+    ///
+    /// The board writes `.privacy` before `openSettings()` so "Privacy…" always
+    /// lands on the Privacy pane; the OS `⌘,` path restores the last-selected tab
+    /// from the same key. Each pane carries a `.tag(StowerSettingsTab...)` so the
+    /// binding can represent it.
+    @AppStorage(StowerSettingsTab.storageKey) private var selectedTab: StowerSettingsTab = .privacy
+
     /// Creates the settings view.
     ///
     /// - Parameter additionalPanes: extra preference tabs to render after Privacy.
@@ -21,11 +29,12 @@ public struct StowerSettingsView<AdditionalPanes: View>: View {
 
     /// The settings scene body: a tab view housing all preference panes.
     public var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             StowerPrivacySettingsView()
                 .tabItem {
                     Label("Privacy", systemImage: "hand.raised")
                 }
+                .tag(StowerSettingsTab.privacy)
             additionalPanes
         }
         .frame(width: 480, height: 320)
