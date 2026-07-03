@@ -23,6 +23,11 @@ extension StowerBoardView {
         }
         ToolbarItem(placement: .primaryAction) { presetPicker }
         ToolbarItem(placement: .primaryAction) { refreshButton }
+        // Always-visible feedback entry point (JC-A) — a labeled button
+        // independent of the gear licenseMenu, shown for trial and licensed users
+        // alike. On a narrow window it can collapse into the toolbar's ">>"
+        // overflow chevron; acceptable for v0.
+        ToolbarItem(placement: .primaryAction) { feedbackButton }
         // The permanent license home: always mounted so the Buy + Enter-key
         // paths are discoverable even after the banner is dismissed/changed.
         // Shows the trial end date + both actions only while on an active
@@ -54,6 +59,20 @@ extension StowerBoardView {
         .disabled(trial == nil)
         .help("License & settings")
         .accessibilityLabel("License and settings menu")
+    }
+
+    /// The always-visible feedback button (JC-A): opens the in-app feedback sheet.
+    ///
+    /// A labeled `exclamationmark.bubble` so it reads as "feedback," not settings —
+    /// the gear `licenseMenu` is unchanged (still trial-only).
+    internal var feedbackButton: some View {
+        Button {
+            isShowingFeedback = true
+        } label: {
+            Label("Feedback", systemImage: "exclamationmark.bubble")
+        }
+        .help("Send feedback")
+        .accessibilityLabel("Send feedback")
     }
 
     /// The clean at-rest row: a real Button opens the composer (so keyboard/VoiceOver

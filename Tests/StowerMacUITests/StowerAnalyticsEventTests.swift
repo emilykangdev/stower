@@ -74,6 +74,19 @@ import Testing
         )
     }
 
+    @Test internal func feedbackOpenedSignalName() {
+        #expect(
+            StowerAnalyticsEvent.feedbackOpened(licenseStatus: "trial").signalName
+                == "feedback_opened"
+        )
+    }
+
+    @Test internal func feedbackSentSignalName() {
+        #expect(
+            StowerAnalyticsEvent.feedbackSent(licenseStatus: "paid").signalName == "feedback_sent"
+        )
+    }
+
     // MARK: — Parameter contracts (PII-safe: no raw contact/message/path)
 
     @Test internal func hardwareCheckedSupportedParams() {
@@ -132,6 +145,24 @@ import Testing
             .parameters
         #expect(params["feature"] == "buy")
         #expect(params["surface"] == "trial_badge")
+    }
+
+    @Test(
+        "I-AnalyticsNoPII: feedback events carry only license_status, no message/email/instanceID"
+    )
+    internal func feedbackEventsParamsArePIISafe() {
+        for event: StowerAnalyticsEvent in [
+            .feedbackOpened(licenseStatus: "trial"),
+            .feedbackSent(licenseStatus: "paid")
+        ] {
+            let params = event.parameters
+            #expect(Set(params.keys) == ["license_status"])
+            #expect(params.count == 1)
+        }
+        #expect(
+            StowerAnalyticsEvent.feedbackSent(licenseStatus: "paid").parameters["license_status"]
+                == "paid"
+        )
     }
 
     @Test internal func emptyParamEventsHaveNoParams() {

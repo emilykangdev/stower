@@ -45,6 +45,17 @@ internal struct StowerBoardView: View {
     /// Called when the user taps the (pre-F3) trial badge's dismiss control.
     internal let onDismissTrial: () -> Void
 
+    /// The feedback sheet's state + send logic.
+    ///
+    /// Constructed once in `StowerRootView` and injected so an in-progress
+    /// message survives a re-render (JC2). The `Feedback` toolbar button presents
+    /// the `.sheet`.
+    internal let feedbackModel: StowerFeedbackModel
+
+    /// Whether the feedback sheet is presented (board-local, like the composer /
+    /// mute dialog). `internal` so the `+Triage` toolbar extension can set it.
+    @State internal var isShowingFeedback = false
+
     /// The row hovered right now, so only its trailing dismiss control is revealed
     /// (the list stays clean at rest). `internal` so the `+Triage` view extension reads it.
     @State internal var hoveredRowID: String?
@@ -66,6 +77,9 @@ internal struct StowerBoardView: View {
                 .overlay(alignment: .bottomTrailing) { composerOverlay }
                 .overlay(alignment: .bottom) { undoBarOverlay }
                 .safeAreaInset(edge: .top, spacing: 0) { trialBadgeOverlay }
+                .sheet(isPresented: $isShowingFeedback) {
+                    StowerFeedbackView(model: feedbackModel) { isShowingFeedback = false }
+                }
         }
         .animation(.easeInOut(duration: Self.undoBarFade), value: model.undoBar?.id)
         .confirmationDialog(

@@ -1,0 +1,139 @@
+import Foundation
+import Testing
+
+@testable import StowerMacUI
+
+/// The model's send behavior.
+///
+/// A failure preserves the typed text (I-FailurePreservesText), and
+/// `canSend`/`send` guard empty/whitespace/over-cap messages (I-EmptyGuard).
+/// Analytics fire only on success, carrying no PII.
+@MainActor
+@Suite internal struct StowerFeedbackModelTests {
+
+    private func metadata() -> StowerFeedbackMetadata {
+        StowerFeedbackMetadata(
+            instanceID: "inst-1",
+            licenseStatus: .paid,
+            appVersion: "1.0 (1)",
+            osVersion: "macOS 15.4"
+        )
+    }
+
+    /// A model whose client always returns `result`, wired to a spy reporter.
+    private func model(
+        result: StowerFeedbackSendResult,
+        reporter: StowerInMemoryAnalyticsReporter = StowerInMemoryAnalyticsReporter()
+    ) throws -> StowerFeedbackModel {
+        let url = try #require(URL(string: "https://relay.invalid/feedback"))
+        let status = result == .sent ? 200 : 500
+        let response = try #require(
+            HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil)
+        )
+        let client = StowerFeedbackClient(
+            endpointURL: "https://relay.invalid/feedback",
+            transport: { _ in (Data(), response) }
+        )
+        return StowerFeedbackModel(
+            client: client,
+            metadata: { self.metadata() },
+            analyticsReporter: reporter
+        )
+    }
+
+    @Test("I-FailurePreservesText: a failed send leaves message/email intact, phase == .failed")
+    internal func failurePreservesText() async throws {
+        let model = try model(result: .failed)
+        model.message = "Something's off"
+        model.email = "me@example.com"
+
+        await model.send()
+
+        #expect(model.phase == .failed)
+        #expect(model.message == "Something's off")
+        #expect(model.email == "me@example.com")
+    }
+
+    @Test("a successful send sets phase == .sent")
+    internal func successSetsSent() async throws {
+        let model = try model(result: .sent)
+        model.message = "Nice work"
+
+        await model.send()
+
+        #expect(model.phase == .sent)
+    }
+
+    @Test("I-EmptyGuard: canSend is false for empty and whitespace-only messages")
+    internal func emptyMessageBlocksSend() throws {
+        let model = try model(result: .sent)
+        model.message = ""
+        #expect(model.canSend == false)
+        model.message = "   \n  "
+        #expect(model.canSend == false)
+    }
+
+    @Test("I-EmptyGuard: canSend is false over the character cap")
+    internal func overCapBlocksSend() throws {
+        let model = try model(result: .sent)
+        model.message = String(repeating: "a", count: StowerFeedbackModel.messageCharLimit + 1)
+        #expect(model.canSend == false)
+        model.message = String(repeating: "a", count: StowerFeedbackModel.messageCharLimit)
+        #expect(model.canSend == true)
+    }
+
+    @Test("I-EmptyGuard: send() on an empty message no-ops, leaving phase == .idle")
+    internal func emptySendNoOps() async throws {
+        let model = try model(result: .sent)
+        model.message = "   "
+
+        await model.send()
+
+        #expect(model.phase == .idle)
+    }
+
+    @Test("I-AnalyticsNoPII: feedback_sent fires on success carrying only license_status")
+    internal func sentFiresAnalyticsNoPII() async throws {
+        let reporter = StowerInMemoryAnalyticsReporter()
+        let model = try model(result: .sent, reporter: reporter)
+        model.message = "Loving it"
+        model.email = "me@example.com"
+
+        await model.send()
+
+        let sent = reporter.recorded().filter { $0.signalName == "feedback_sent" }
+        #expect(sent.count == 1)
+        let params = try #require(sent.first?.parameters)
+        #expect(params["license_status"] == "paid")
+        // No PII leaked into the event.
+        #expect(params.count == 1)
+        #expect(!params.values.contains("me@example.com"))
+        #expect(!params.values.contains("Loving it"))
+        #expect(!params.values.contains("inst-1"))
+    }
+
+    @Test("a failed send fires no feedback_sent event")
+    internal func failureFiresNoSent() async throws {
+        let reporter = StowerInMemoryAnalyticsReporter()
+        let model = try model(result: .failed, reporter: reporter)
+        model.message = "hi"
+
+        await model.send()
+
+        #expect(reporter.recorded().filter { $0.signalName == "feedback_sent" }.isEmpty)
+    }
+
+    @Test("I-AnalyticsNoPII: markOpened fires feedback_opened carrying only license_status")
+    internal func markOpenedFiresNoPII() throws {
+        let reporter = StowerInMemoryAnalyticsReporter()
+        let model = try model(result: .sent, reporter: reporter)
+
+        model.markOpened()
+
+        let opened = reporter.recorded().filter { $0.signalName == "feedback_opened" }
+        #expect(opened.count == 1)
+        let params = try #require(opened.first?.parameters)
+        #expect(params["license_status"] == "paid")
+        #expect(params.count == 1)
+    }
+}

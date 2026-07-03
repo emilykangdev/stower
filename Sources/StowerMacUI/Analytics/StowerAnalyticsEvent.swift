@@ -117,6 +117,25 @@ internal enum StowerAnalyticsEvent: Sendable {
     ///   - surface: The surface the user triggered it from.
     case featureUsed(feature: String, surface: String)
 
+    // MARK: — Feedback
+
+    /// The user opened the in-app feedback sheet.
+    ///
+    /// Emitted from `StowerFeedbackView.onAppear` via `StowerFeedbackModel.markOpened()`.
+    /// **Per-occurrence.**
+    ///
+    /// - Parameter licenseStatus: The coarse license status (`"trial"`/`"paid"`/
+    ///   `"unlicensed"`). NEVER the message, email, or `instanceID`.
+    case feedbackOpened(licenseStatus: String)
+
+    /// The user's feedback was accepted by the relay (HTTP 2xx).
+    ///
+    /// Emitted from `StowerFeedbackModel.send()` on `.sent`. **Per-occurrence.**
+    ///
+    /// - Parameter licenseStatus: The coarse license status. NEVER the message,
+    ///   email, or `instanceID`.
+    case feedbackSent(licenseStatus: String)
+
     // MARK: — Signal mapping
 
     /// The TelemetryDeck signal name for this event (dot-separated namespace).
@@ -134,6 +153,8 @@ internal enum StowerAnalyticsEvent: Sendable {
         case .boardReached: return "board_reached"
         case .boardItemClicked: return "board_item_clicked"
         case .featureUsed: return "feature_used"
+        case .feedbackOpened: return "feedback_opened"
+        case .feedbackSent: return "feedback_sent"
         }
     }
 
@@ -165,6 +186,11 @@ internal enum StowerAnalyticsEvent: Sendable {
 
         case .featureUsed(let feature, let surface):
             return ["feature": feature, "surface": surface]
+
+        case .feedbackOpened(let licenseStatus), .feedbackSent(let licenseStatus):
+            // Only the coarse license status — NEVER the message, email, or
+            // instanceID (I-AnalyticsNoPII).
+            return ["license_status": licenseStatus]
         }
     }
 
