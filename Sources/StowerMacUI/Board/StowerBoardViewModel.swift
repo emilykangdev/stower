@@ -192,6 +192,14 @@ internal final class StowerBoardViewModel {
     internal let contacts: StowerContactsAccess
     internal let settings: StowerSystemSettingsOpener
     private let opener: StowerMessagesLinkOpener
+
+    /// Whether the app is running against a demo database (DEBUG + `STOWER_MESSAGES_DB`).
+    ///
+    /// Injected (defaulting to the live launch-env signal) so the banner's demo-mode
+    /// suppression is hermetically testable — a unit test sets it explicitly instead of
+    /// depending on the ambient process environment. `internal` so the `+Contacts`
+    /// extension's `showsContactsAccessBanner` reads it across files.
+    internal let isDemoMode: Bool
     // `internal` so the `+Load` state machine can route failures and pace retries.
     internal let onFailure: @MainActor (StowerStartupFailure) -> Void
     internal let clock: @Sendable () -> Date
@@ -246,6 +254,7 @@ internal final class StowerBoardViewModel {
             isAccessibilityTrusted: { false }
         ),
         contacts: StowerContactsAccess = .denied,
+        isDemoMode: Bool = StowerMessagesSourceOverride.isActive,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
         opener: StowerMessagesLinkOpener = StowerMessagesLinkOpener(),
         analyticsReporter: any StowerAnalyticsReporting = StowerNoOpAnalyticsReporter(),
@@ -262,6 +271,7 @@ internal final class StowerBoardViewModel {
         self.undoManager = undoManager
         self.dropper = dropper
         self.contacts = contacts
+        self.isDemoMode = isDemoMode
         self.settings = settings
         self.opener = opener
         self.analyticsReporter = analyticsReporter
