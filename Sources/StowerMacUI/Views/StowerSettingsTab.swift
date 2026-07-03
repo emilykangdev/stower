@@ -15,5 +15,7 @@ public enum StowerSettingsTab: String {
     ///
     /// One canonical string, referenced everywhere via `StowerSettingsTab.storageKey`
     /// so the board button and the Settings `TabView` can never drift apart.
-    public static let storageKey = "stower.settings.selectedTab"
+    /// `internal`: every reference lives inside `StowerMacUI` (the app target only tags
+    /// panes with the enum cases), so this is not part of the module's public API.
+    internal static let storageKey = "stower.settings.selectedTab"
 }
