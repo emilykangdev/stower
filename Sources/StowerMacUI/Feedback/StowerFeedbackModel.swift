@@ -37,10 +37,15 @@ internal final class StowerFeedbackModel {
     private let metadata: @MainActor () -> StowerFeedbackMetadata
     private let analyticsReporter: any StowerAnalyticsReporting
 
-    /// Bumped on every `reset()` so an in-flight `send()` whose sheet was
-    /// dismissed mid-request can detect it is stale and drop its result instead
-    /// of writing `.sent`/`.failed` onto a model the next open will reuse.
+    /// Bumped on every `reset()` so an in-flight send whose sheet was dismissed
+    /// mid-request can detect it is stale and drop its result instead of writing
+    /// `.sent`/`.failed` onto a model the next open will reuse.
     private var sendGeneration = 0
+
+    /// The in-flight send, retained so `reset()` can cancel it — which aborts the
+    /// underlying `URLSession` request rather than letting a cancelled send
+    /// silently complete on the server.
+    private var sendTask: Task<Void, Never>?
 
     /// Creates the model.
     ///
@@ -89,20 +94,34 @@ internal final class StowerFeedbackModel {
     /// message.
     internal func reset() {
         sendGeneration += 1
+        sendTask?.cancel()
+        sendTask = nil
         message = ""
         email = ""
         phase = .idle
     }
 
-    /// Sends the current message + optional email, classifying the result.
+    /// Launches a send of the current message + optional email.
     ///
-    /// No-ops unless `canSend`. A blank email is mapped to `nil` so it encodes as
-    /// JSON `null`. On `.sent`, fires `feedback_sent`; on `.failed`, leaves
-    /// `message`/`email` intact so the user's text is never lost (I-FailurePreservesText).
-    internal func send() async {
+    /// No-ops unless `canSend`. Retains the send `Task` so `reset()` can cancel
+    /// it (aborting the request). The awaited work runs in `performSend`.
+    internal func send() {
         guard canSend else { return }
         let generation = sendGeneration
         phase = .sending
+        sendTask = Task { [weak self] in
+            await self?.performSend(generation: generation)
+        }
+    }
+
+    /// The awaited send body: encodes the submission, posts it, and — only if this
+    /// send is still current — classifies the result.
+    ///
+    /// A blank email is mapped to `nil` so it encodes as JSON `null`. On `.sent`,
+    /// fires `feedback_sent`; on `.failed`, leaves `message`/`email` intact so the
+    /// user's text is never lost (I-FailurePreservesText). A `reset()` mid-request
+    /// (dismiss) bumps the generation, so a stale result is dropped.
+    private func performSend(generation: Int) async {
         let meta = metadata()
         let submission = StowerFeedbackSubmission(
             message: trimmedMessage,
@@ -113,14 +132,17 @@ internal final class StowerFeedbackModel {
             licenseStatus: meta.licenseStatus
         )
         let result = await client.send(submission)
-        // The sheet was dismissed (reset) while this request was in flight — drop
-        // the result so it can't stamp .sent/.failed onto the reused model.
         guard generation == sendGeneration else { return }
+        sendTask = nil
         phase = result == .sent ? .sent : .failed
         if result == .sent {
             analyticsReporter.report(.feedbackSent(licenseStatus: meta.licenseStatus.rawValue))
         }
     }
+
+    /// The in-flight send task, exposed so tests can `await` its completion
+    /// (mirrors `StowerBoardViewModel.loadTaskHandle`). `nil` when idle.
+    internal var sendTaskHandle: Task<Void, Never>? { sendTask }
 
     /// The hard message-length ceiling; Send is disabled over this (JC4), and the
     /// Deno relay's size cap can't bounce a long message after a round-trip.

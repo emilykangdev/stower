@@ -93,7 +93,7 @@ internal struct StowerFeedbackView: View {
                     .controlSize(.small)
             }
             Button(model.phase == .failed ? "Retry" : "Send") {
-                Task { await model.send() }
+                model.send()
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)

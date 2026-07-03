@@ -52,15 +52,11 @@ async function handle(req: Request): Promise<Response> {
   recent.push(now);
   hits.set(ip, recent);
 
-  // Reject an oversized body by its declared Content-Length BEFORE buffering it,
-  // so an attacker can't force us to read a huge payload into memory. The
-  // post-read check stays as the backstop for a missing/lying header.
-  const declaredLength = Number(req.headers.get("content-length") ?? "0");
-  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
-    return json(413, { error: "too large" });
-  }
-  const raw = await req.text();
-  if (raw.length > MAX_BODY_BYTES) return json(413, { error: "too large" });
+  // Read the body as a byte-counting stream and abort the moment it exceeds
+  // MAX_BODY_BYTES — so a request WITHOUT (or lying about) Content-Length can't
+  // force us to buffer an unbounded payload into memory before we'd reject it.
+  const raw = await readCapped(req, MAX_BODY_BYTES);
+  if (raw === null) return json(413, { error: "too large" });
 
   let body: Record<string, unknown>;
   try {
@@ -112,6 +108,32 @@ async function handle(req: Request): Promise<Response> {
 
   if (!res.ok) return json(502, { error: "send failed" });
   return json(200, { ok: true, build: "env-v2" });
+}
+
+// Reads the request body, aborting (returns null) as soon as it exceeds `cap`
+// bytes — bounding memory for a body with a missing or dishonest Content-Length.
+async function readCapped(req: Request, cap: number): Promise<string | null> {
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
 }
 
 function str(value: unknown, fallback: string): string {

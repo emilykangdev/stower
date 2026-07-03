@@ -47,7 +47,8 @@ import Testing
         model.message = "Something's off"
         model.email = "me@example.com"
 
-        await model.send()
+        model.send()
+        await model.sendTaskHandle?.value
 
         #expect(model.phase == .failed)
         #expect(model.message == "Something's off")
@@ -59,7 +60,8 @@ import Testing
         let model = try model(result: .sent)
         model.message = "Nice work"
 
-        await model.send()
+        model.send()
+        await model.sendTaskHandle?.value
 
         #expect(model.phase == .sent)
     }
@@ -85,12 +87,15 @@ import Testing
         )
         model.message = "In flight"
 
-        let sending = Task { await model.send() }
-        // Let send() reach .sending and block in the transport, then dismiss.
+        model.send()
+        let sending = model.sendTaskHandle
+        // Let send() reach .sending and block in the transport, then dismiss —
+        // reset() cancels the task and bumps the generation.
         try await Task.sleep(nanoseconds: 10_000_000)
+        #expect(model.phase == .sending)
         model.reset()
         await gate.open()
-        await sending.value
+        await sending?.value
 
         // The stale 200 must NOT have stamped .sent onto the reused model.
         #expect(model.phase == .idle)
@@ -101,7 +106,8 @@ import Testing
         let model = try model(result: .sent)
         model.message = "First note"
         model.email = "me@example.com"
-        await model.send()
+        model.send()
+        await model.sendTaskHandle?.value
         #expect(model.phase == .sent)
 
         model.reset()
@@ -135,7 +141,8 @@ import Testing
         let model = try model(result: .sent)
         model.message = "   "
 
-        await model.send()
+        model.send()
+        await model.sendTaskHandle?.value
 
         #expect(model.phase == .idle)
     }
@@ -147,7 +154,8 @@ import Testing
         model.message = "Loving it"
         model.email = "me@example.com"
 
-        await model.send()
+        model.send()
+        await model.sendTaskHandle?.value
 
         let sent = reporter.recorded().filter { $0.signalName == "feedback_sent" }
         #expect(sent.count == 1)
@@ -166,7 +174,8 @@ import Testing
         let model = try model(result: .failed, reporter: reporter)
         model.message = "hi"
 
-        await model.send()
+        model.send()
+        await model.sendTaskHandle?.value
 
         #expect(reporter.recorded().filter { $0.signalName == "feedback_sent" }.isEmpty)
     }
