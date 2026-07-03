@@ -83,6 +83,9 @@ internal struct StowerDraftComposer: View {
                 message: "Stower reached your Messages data but couldn't read this conversation."
             )
         case .loaded:
+            // `lines` is oldest-first, so anchor to the bottom: the composer opens
+            // showing the most recent messages (iMessage-style) instead of scrolled
+            // to the top at the oldest message.
             ScrollView {
                 LazyVStack(spacing: StowerBoardTheme.threadSpacing) {
                     ForEach(thread.lines) { line in
@@ -90,6 +93,7 @@ internal struct StowerDraftComposer: View {
                     }
                 }
             }
+            .defaultScrollAnchor(.bottom)
         }
     }
 
