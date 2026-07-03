@@ -66,7 +66,11 @@ async function handle(req: Request): Promise<Response> {
   }
 
   const message = typeof body.message === "string" ? body.message.trim() : "";
-  if (!message || message.length > MAX_MESSAGE_CHARS) {
+  // Count graphemes, not UTF-16 code units: the Swift client caps on
+  // `String.count` (extended grapheme clusters), so a 5000-emoji message the app
+  // accepts must not be rejected here just because `.length` double-counts each
+  // surrogate pair. The 32 KB body cap is the real abuse guard.
+  if (!message || graphemeCount(message) > MAX_MESSAGE_CHARS) {
     return json(400, { error: "invalid message" });
   }
 
@@ -134,6 +138,19 @@ async function readCapped(req: Request, cap: number): Promise<string | null> {
     offset += chunk.byteLength;
   }
   return new TextDecoder().decode(merged);
+}
+
+// Counts extended grapheme clusters, matching Swift's `String.count`, so the
+// relay's message-length check agrees with the client cap. Falls back to
+// `.length` on a runtime without Intl.Segmenter (Deno Deploy has it).
+function graphemeCount(text: string): number {
+  if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    let count = 0;
+    for (const _ of segmenter.segment(text)) count++;
+    return count;
+  }
+  return text.length;
 }
 
 function str(value: unknown, fallback: string): string {
