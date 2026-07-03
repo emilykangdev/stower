@@ -68,8 +68,13 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          # `-s` only checks size > 0, so a whitespace-only file (e.g. a lone
+          # newline) would pass here but still be rejected as empty by
+          # render_notes_html.py's `markdown.strip()` check later — after the
+          # GitHub Release has already been published. Require at least one
+          # non-whitespace character so both checks agree on "empty".
           NOTES_MD="Docs/release-notes/${VERSION}.md"
-          if [ ! -s "$NOTES_MD" ]; then
+          if [ ! -s "$NOTES_MD" ] || ! grep -q '[^[:space:]]' "$NOTES_MD"; then
             echo "ERROR: release notes missing or empty at $NOTES_MD." >&2
             echo "Author the notes for $VERSION before tagging (see Docs/release-notes/README.md)." >&2
             exit 1
@@ -328,7 +333,7 @@ jobs:
           # guaranteed this file exists and is non-empty; re-check defensively so
           # this step never publishes an empty-notes Release on its own.
           NOTES_FILE="Docs/release-notes/${VERSION}.md"
-          if [ ! -s "$NOTES_FILE" ]; then
+          if [ ! -s "$NOTES_FILE" ] || ! grep -q '[^[:space:]]' "$NOTES_FILE"; then
             echo "ERROR: release notes missing or empty at $NOTES_FILE." >&2
             exit 1
           fi

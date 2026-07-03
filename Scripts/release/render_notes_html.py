@@ -43,12 +43,36 @@ if not os.path.isfile(notes_md_path):
     print("Author Docs/release-notes/<VERSION>.md before tagging this release.", file=sys.stderr)
     sys.exit(1)
 
-with open(notes_md_path) as f:
+with open(notes_md_path, encoding="utf-8") as f:
     markdown = f.read()
 
 if not markdown.strip():
     print("ERROR: release notes at " + notes_md_path + " are empty.", file=sys.stderr)
     sys.exit(1)
+
+
+_ALLOWED_LINK_SCHEMES = {"http", "https", "mailto"}
+_LINK_SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*):")
+
+
+def _link_href(url):
+    """Return an attribute-safe href for a Markdown link's URL, or fail loudly.
+
+    ``url`` has already passed through the ``html.escape(text, quote=False)``
+    call in ``render_inline`` (it's a substring of the whole-line escape), so
+    ``&``/``<``/``>`` are already correctly escaped for attribute context —
+    re-escaping with ``html.escape(url, quote=True)`` here would double-encode
+    those (e.g. a query string's ``&`` becomes ``&amp;amp;`` and the link
+    breaks). Only quote characters were left unescaped upstream (attribute
+    breakout risk), so only quotes need handling here. Disallowed schemes
+    (e.g. ``javascript:``) are rejected outright rather than escaped, since
+    this page renders inside Sparkle's WKWebView on every user's machine.
+    """
+    scheme = _LINK_SCHEME_RE.match(url)
+    if scheme and scheme.group(1).lower() not in _ALLOWED_LINK_SCHEMES:
+        print("ERROR: disallowed link scheme '" + scheme.group(1) + "' in release notes: " + url, file=sys.stderr)
+        sys.exit(1)
+    return url.replace('"', "&quot;").replace("'", "&#x27;")
 
 
 def render_inline(text):
@@ -58,7 +82,7 @@ def render_inline(text):
     text = re.sub(r"\*\*([^*]+)\*\*", lambda m: "<strong>" + m.group(1) + "</strong>", text)
     text = re.sub(
         r"\[([^\]]+)\]\(([^)]+)\)",
-        lambda m: '<a href="' + m.group(2) + '">' + m.group(1) + "</a>",
+        lambda m: '<a href="' + _link_href(m.group(2)) + '">' + m.group(1) + "</a>",
         text,
     )
     return text
@@ -167,6 +191,6 @@ page = """<!DOCTYPE html>
 </html>
 """.format(version=escaped_version, body=body)
 
-with open(notes_html_path, "w") as f:
+with open(notes_html_path, "w", encoding="utf-8") as f:
     f.write(page)
 print("Rendered release notes HTML to " + notes_html_path)
