@@ -75,6 +75,18 @@ internal final class StowerFeedbackModel {
         analyticsReporter.report(.feedbackOpened(licenseStatus: metadata().licenseStatus.rawValue))
     }
 
+    /// Resets the sheet to a fresh `.idle` state with cleared fields.
+    ///
+    /// The model is injected once and reused, so a dismiss (Done after a
+    /// successful send, or Cancel) must clear the phase and text — otherwise the
+    /// next open would still show the `.sent` confirmation and refuse a second
+    /// message.
+    internal func reset() {
+        message = ""
+        email = ""
+        phase = .idle
+    }
+
     /// Sends the current message + optional email, classifying the result.
     ///
     /// No-ops unless `canSend`. A blank email is mapped to `nil` so it encodes as

@@ -19,10 +19,18 @@
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
 const FROM = Deno.env.get("FROM"); // e.g. "Stower Feedback <feedback@send.stower.app>"
 const TO = Deno.env.get("TO"); // e.g. "emily@stower.app"
-const MAX_BODY_BYTES = 4096; // hard size cap — abuse/cost guard
+// Hard size cap — abuse/cost guard. Must exceed the worst-case encoded payload
+// for a MAX_MESSAGE_CHARS message: 5000 chars can be up to 4 bytes each in UTF-8,
+// plus JSON escaping and the small metadata fields — so a legit max-length message
+// never bounces with 413 (which the client would surface as a false "couldn't send").
+const MAX_BODY_BYTES = 32_768;
 const MAX_MESSAGE_CHARS = 5000; // mirrors the client-side cap
 const RATE_LIMIT = 5; // sends per IP per rolling minute (best-effort)
 const RATE_WINDOW_MS = 60_000;
+// A deliberately loose sanity check (not RFC-perfect): non-space, one @, a dotted
+// domain. Just enough to keep a clearly-malformed reply address out of Resend's
+// reply_to so a typo can't fail the whole send.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Best-effort in-memory per-IP limiter: per-isolate, resets on cold start.
 // Good enough for a low-traffic v0. To make it cross-isolate, provision a Deno KV
@@ -60,6 +68,10 @@ async function handle(req: Request): Promise<Response> {
   }
 
   const email = typeof body.email === "string" && body.email.length > 0 ? body.email : null;
+  // Only set Resend reply_to when the address looks valid — a typo'd email must
+  // NOT make otherwise-good feedback fail with a 502 (which the app shows as
+  // "couldn't send"). The message body still records whatever was typed.
+  const replyTo = email && EMAIL_PATTERN.test(email) ? email : null;
   const status = str(body.licenseStatus, "unknown");
   const version = str(body.appVersion, "unknown");
 
@@ -87,7 +99,7 @@ async function handle(req: Request): Promise<Response> {
       // submissions don't collide into one thread.
       subject: `Stower feedback ${new Date().toISOString().slice(0, 19).replace("T", " ")} — ${status}`,
       text,
-      ...(email ? { reply_to: email } : {}),
+      ...(replyTo ? { reply_to: replyTo } : {}),
     }),
   });
 

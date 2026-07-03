@@ -77,9 +77,13 @@ internal struct StowerBoardView: View {
                 .overlay(alignment: .bottomTrailing) { composerOverlay }
                 .overlay(alignment: .bottom) { undoBarOverlay }
                 .safeAreaInset(edge: .top, spacing: 0) { trialBadgeOverlay }
-                .sheet(isPresented: $isShowingFeedback) {
-                    StowerFeedbackView(model: feedbackModel) { isShowingFeedback = false }
-                }
+                .sheet(
+                    isPresented: $isShowingFeedback,
+                    onDismiss: { feedbackModel.reset() },
+                    content: {
+                        StowerFeedbackView(model: feedbackModel) { isShowingFeedback = false }
+                    }
+                )
         }
         .animation(.easeInOut(duration: Self.undoBarFade), value: model.undoBar?.id)
         .confirmationDialog(

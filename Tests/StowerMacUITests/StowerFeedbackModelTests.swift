@@ -64,6 +64,22 @@ import Testing
         #expect(model.phase == .sent)
     }
 
+    @Test("reset() clears text and returns to .idle so the reused model sends again")
+    internal func resetClearsStateAfterSend() async throws {
+        let model = try model(result: .sent)
+        model.message = "First note"
+        model.email = "me@example.com"
+        await model.send()
+        #expect(model.phase == .sent)
+
+        model.reset()
+
+        #expect(model.phase == .idle)
+        #expect(model.message == "")
+        #expect(model.email == "")
+        #expect(model.canSend == false)
+    }
+
     @Test("I-EmptyGuard: canSend is false for empty and whitespace-only messages")
     internal func emptyMessageBlocksSend() throws {
         let model = try model(result: .sent)
