@@ -38,6 +38,10 @@ internal struct StowerNoReplyRowView: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, StowerBoardTheme.rowVerticalPadding)
+        // Make the whole row rectangle a hit target: SwiftUI only hit-tests drawn
+        // content, so without this the Spacer, inter-element spacing, and padding
+        // fall through and only taps on the text/avatar open the composer.
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
     }
 
