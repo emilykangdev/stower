@@ -63,8 +63,9 @@ are not collected.
 - License opt-out: `StowerDiagnostics.reconcileLicenseConsent(licenseOptOut:)` →
   `StowerCrashReporting.stop()` when called with `licenseOptOut = true`. "Off wins"
   — this never auto-re-enables. As-built this hook has **no production caller**:
-  the deleted Keygen check-in that carried the license record's
-  `diagnostics_opt_out` was its driver (see `Docs/Analytics.md` §Consent).
+  the client-only Lemon Squeezy activate-once flow has no server-side license
+  record carrying a `diagnostics_opt_out` to drive it (see `Docs/Analytics.md`
+  §Consent).
 
 **Re-enable note:** `SentrySDK.start` is one-shot per process and cannot be re-called
 after `close()`. Re-enabling mid-session restores analytics but does NOT restart the

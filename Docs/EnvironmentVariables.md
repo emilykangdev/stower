@@ -1,14 +1,9 @@
 # Stower — Environment Variables (Licensing)
 
-> **Note (2026-07-01):** this file previously documented env vars for the
-> deleted Keygen/Supabase Edge Function backend
-> (`STOWER_FUNCTION_URL`/`STOWER_KEYGEN_PUBLIC_KEY`, `KEYGEN_*`,
-> `SUPABASE_*`, `LS_WEBHOOK_SECRET`, `LS_PAID_VARIANT_ID`, etc.). That backend
-> — `supabase/functions/license/`, `Scripts/Keygen/`, and every DB migration —
-> has been deleted. There is no server of any kind anymore: Lemon Squeezy is
-> the merchant of record and the app's only network call is a direct,
-> keyless `POST` to `https://api.lemonsqueezy.com/v1/licenses/activate`. This
-> file now documents the as-built, app-only config surface.
+> **What this file is.** The complete app-side config surface for licensing.
+> There is no server of any kind: Lemon Squeezy is the merchant of record and
+> the app's only network call is a direct, keyless `POST` to
+> `https://api.lemonsqueezy.com/v1/licenses/activate`.
 
 The licensing system reads **no OS environment variables in Release** and no
 server-side env vars at all — there is no server. In a **DEBUG** build only,
@@ -58,15 +53,13 @@ open input, not a bug — see `licensing-contract.md` §"Open questions."
 
 ---
 
-## 2. Why there is no test/prod split table anymore
+## 2. Why there is no test/prod split table
 
-The old Keygen/Supabase backend needed separate test and prod values for
-~9 required env vars plus several optional ones (Supabase project URL/key,
-Keygen account/token/policy ids, LS webhook secret/variant id, GitHub token,
-trial-duration override). None of that exists anymore:
+Licensing has no server, so there is almost nothing to configure per
+environment:
 
-- There is no server, so there is nothing to deploy to a "staging" vs "prod"
-  project.
+- There is no backend, so there is nothing to deploy to a "staging" vs "prod"
+  project — no service URLs, secrets, or webhook config exist.
 - The 7-day trial length (`StowerTrialClock.trialDuration`) is a compiled
   Swift constant, not an env-var-overridable duration — there is no
   `TRIAL_DURATION_SECONDS` smoke-test lever. Shortening the trial for manual
@@ -98,18 +91,8 @@ unrelated to the `STOWER_*` config overrides in §1.
 
 ---
 
-## 4. What used to be here (historical — deleted backend)
-
-The following env vars belonged to the deleted Supabase Edge Function
-(`supabase/functions/license/`) and Keygen integration and **no longer exist
-anywhere in this repo**: `STOWER_FUNCTION_URL`, `STOWER_KEYGEN_PUBLIC_KEY`,
-`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `KEYGEN_ACCOUNT`, `KEYGEN_TOKEN`,
-`KEYGEN_V0_ENTITLEMENT`, `KEYGEN_TRIAL_POLICY`, `KEYGEN_PAID_POLICY`,
-`LS_WEBHOOK_SECRET`, `LS_PAID_VARIANT_ID`, `TRIAL_DURATION_SECONDS`,
-`GITHUB_REPO`, `GITHUB_API_BASE`, `GITHUB_TOKEN`. `Scripts/precheck.sh`'s `6o`
-guard asserts none of these systems' hostnames/routes (`supabase`, `keygen`,
-`/check-in`, `mint-trial`, `mint_trial`) can reappear in `Sources/`, and that
-`api.lemonsqueezy.com` still does.
-
 See [`licensing-contract.md`](./licensing-contract.md) for the full seam
 contract and [`licensing.md`](./licensing.md) for the customer-facing terms.
+`Scripts/precheck.sh`'s `6o` guard keeps any server-backed licensing config
+from reappearing in `Sources/` and asserts `api.lemonsqueezy.com` stays the
+sole licensing egress.

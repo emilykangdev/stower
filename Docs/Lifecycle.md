@@ -7,18 +7,10 @@
 > in [`licensing-contract.md`](./licensing-contract.md). This doc is the
 > **topology + lifecycle** view that sits above both, and is consistent with
 > the contract (≥ v2.0) — it does not introduce a different model, it draws
-> the picture.
->
-> **Note (2026-07-01): full rewrite.** Every earlier version of this doc
-> described the Keygen + Supabase Edge Function backend (`/mint-trial`,
-> `/check-in`, `/ls-webhook`, `/health`, `StowerLicenseGate`). That backend —
-> `supabase/functions/license/`, `Scripts/Keygen/`, every DB migration, and
-> every Swift client that talked to them — has been **deleted**. There is no
-> server of any kind anymore. This doc now draws the real, much smaller
-> topology: the app talks directly to Lemon Squeezy, once, to activate a key;
-> everything else is a local read.
+> the picture: the app talks directly to Lemon Squeezy, once, to activate a
+> key; everything else is a local read. There is no server of any kind.
 
-**Version:** 2.0 · **Last updated:** 2026-07-01 · **Status:** As-built (client-only Lemon Squeezy activate-once flow).
+**Version:** 2.0 · **Last updated:** 2026-07-02 · **Status:** As-built (client-only Lemon Squeezy activate-once flow).
 
 ---
 
@@ -81,9 +73,8 @@ receiving the key by email). Nothing fans out anywhere else.
 
 ## 4. Purchase → paid: no webhook, the user pastes the key
 
-Unlike the deleted Keygen design (which flipped a license to "paid" via a
-server-side webhook), the Lemon Squeezy model has **no webhook the app ever
-sees**:
+The Lemon Squeezy model has **no webhook the app ever sees** — buying doesn't
+flip anything on a server; the user pastes the key themselves:
 
 1. Customer clicks Buy (gear menu, F3 banner, or the paywall) → the app opens
    the static Lemon Squeezy checkout URL (`StowerLicenseConfig.resolved.checkoutURL`)
@@ -154,6 +145,6 @@ seam shape the contract doesn't already state; it only draws the picture.
   the app and pre-fill the key is a possible future improvement, not built.
 
 > **Diagrams.** The mermaid sources above are current. If stale rendered
-> `.excalidraw`/`.png` exports of the OLD (Keygen-era) diagrams exist,
+> `.excalidraw`/`.png` exports of the OLD (pre-2.0) diagrams exist,
 > regenerate fresh ones from the updated mermaid via `/diagram` — do not
 > hand-edit the binaries.

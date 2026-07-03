@@ -15,6 +15,13 @@ public struct StowerRootView: View {
     @State internal var model: StowerStartupModel
     @State private var boardModel: StowerBoardViewModel
 
+    /// The feedback sheet's model.
+    ///
+    /// Constructed once here and injected into the board so an in-progress
+    /// message survives a re-render (JC2). Reads live trial state at send time
+    /// via the startup model.
+    @State private var feedbackModel: StowerFeedbackModel
+
     /// The typed text in the key-entry screen; a `@State` on the stable root so
     /// it survives an in-flight activate and any error re-render.
     @State internal var licenseKey = ""
@@ -163,6 +170,16 @@ public struct StowerRootView: View {
             onFailure: { failure in startupModel.handleBoardFailure(failure) }
         )
         _boardModel = State(initialValue: boardModel)
+        let feedbackModel = StowerFeedbackModel(
+            client: StowerFeedbackClient(
+                endpointURL: StowerFeedbackConfig.resolved.endpointURL
+            ),
+            metadata: { [weak startupModel] in
+                StowerFeedbackMetadata.current(isOnTrial: startupModel?.trialBadge() != nil)
+            },
+            analyticsReporter: analyticsReporter
+        )
+        _feedbackModel = State(initialValue: feedbackModel)
         flusher?.onFlush { [weak boardModel] in await boardModel?.flushAll() }
         self.settings = settings
         self.badgeDismissal = badgeDismissal
@@ -221,7 +238,8 @@ public struct StowerRootView: View {
                     onDismissTrial: {
                         badgeDismissal.dismiss()
                         trialBannerDismissed = true
-                    }
+                    },
+                    feedbackModel: feedbackModel
                 )
                 if showConsentCard {
                     StowerAnalyticsConsentCard { enabled in
