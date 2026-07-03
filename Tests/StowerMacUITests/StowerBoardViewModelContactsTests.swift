@@ -58,11 +58,15 @@ import Testing
         _ spy: StowerSpyBoardDataSource,
         contacts: StowerContactsAccess,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(open: { _ in true }),
+        isDemoMode: Bool = false,
         recorder: FailureRecorder
     ) -> StowerBoardViewModel {
+        // Pin `isDemoMode` explicitly (never the ambient-env default) so these banner
+        // assertions stay hermetic regardless of a stray `STOWER_MESSAGES_DB`.
         StowerBoardViewModel(
             dataSource: spy,
             contacts: contacts,
+            isDemoMode: isDemoMode,
             settings: settings,
             onFailure: { recorder.failures.append($0) },
             sleep: { _ in }
@@ -81,6 +85,27 @@ import Testing
 
         #expect(model.phase == .rows)
         #expect(model.showsContactsAccessBanner)
+    }
+
+    @Test("the banner is suppressed in demo mode even with rows and unauthorized Contacts")
+    internal func bannerHiddenInDemoMode() async {
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [oneRowBoard()]
+        let denied = StowerContactsAccess(status: { .denied }, request: { false })
+        let model = makeViewModel(
+            spy,
+            contacts: denied,
+            isDemoMode: true,
+            recorder: FailureRecorder()
+        )
+
+        model.load()
+        await model.loadTaskHandle?.value
+
+        // Same rows-and-unauthorized state that shows the banner above, but the demo
+        // resolver already fills names, so the prompt is suppressed.
+        #expect(model.phase == .rows)
+        #expect(model.showsContactsAccessBanner == false)
     }
 
     @Test("the banner is hidden once Contacts is authorized")

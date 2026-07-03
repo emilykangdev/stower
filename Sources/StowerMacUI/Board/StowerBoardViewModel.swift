@@ -192,6 +192,10 @@ internal final class StowerBoardViewModel {
     internal let contacts: StowerContactsAccess
     internal let settings: StowerSystemSettingsOpener
     private let opener: StowerMessagesLinkOpener
+
+    /// Demo-mode flag (DEBUG + `STOWER_MESSAGES_DB`), injected so the banner's
+    /// suppression is hermetically testable, not read from the launch-env static.
+    internal let isDemoMode: Bool
     // `internal` so the `+Load` state machine can route failures and pace retries.
     internal let onFailure: @MainActor (StowerStartupFailure) -> Void
     internal let clock: @Sendable () -> Date
@@ -258,6 +262,7 @@ internal final class StowerBoardViewModel {
             isAccessibilityTrusted: { false }
         ),
         contacts: StowerContactsAccess = .denied,
+        isDemoMode: Bool = StowerMessagesSourceOverride.isActive,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
         opener: StowerMessagesLinkOpener = StowerMessagesLinkOpener(),
         analyticsReporter: any StowerAnalyticsReporting = StowerNoOpAnalyticsReporter(),
@@ -274,6 +279,7 @@ internal final class StowerBoardViewModel {
         self.undoManager = undoManager
         self.dropper = dropper
         self.contacts = contacts
+        self.isDemoMode = isDemoMode
         self.settings = settings
         self.opener = opener
         self.analyticsReporter = analyticsReporter
@@ -369,12 +375,6 @@ internal final class StowerBoardViewModel {
             clock: clock
         )
     }
-
-    /// The in-flight load/refresh/contacts/triage tasks, exposed so tests can await them.
-    internal var loadTaskHandle: Task<Void, Never>? { loadTask }
-    internal var refreshTaskHandle: Task<Void, Never>? { refreshTask }
-    internal var contactsTaskHandle: Task<Void, Never>? { contactsTask }
-    internal var triageTaskHandle: Task<Void, Never>? { triageTask }
 
     /// Loads the cached board under a fresh generation token (I13).
     internal func load() {

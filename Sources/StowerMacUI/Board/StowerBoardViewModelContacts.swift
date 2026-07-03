@@ -15,8 +15,16 @@ extension StowerBoardViewModel {
     /// Visible exactly when the board has rows to label and Contacts is not
     /// authorized, so an unmatched board always carries a durable way to grant
     /// access. Empty / caught-up / preparing boards show nothing.
+    ///
+    /// Suppressed in demo mode (DEBUG + `STOWER_MESSAGES_DB`): the injected demo
+    /// resolver already fills names in, so the "showing phone numbers" prompt would
+    /// contradict the visibly-named rows. `isDemoMode` is injected (live default) so
+    /// this stays hermetic — the outcome never depends on the ambient process env.
+    /// Always shows normally in Release.
     internal var showsContactsAccessBanner: Bool {
-        phase == .rows && contactsAuthorization != .authorized
+        phase == .rows
+            && contactsAuthorization != .authorized
+            && !isDemoMode
     }
 
     /// The banner button's label, matched to the action `resolveContactsAccess` will
