@@ -100,7 +100,17 @@ internal struct StowerBoardView: View {
             )
         }
         .task { model.onAppear() }
-        .onDisappear { model.cancel() }
+        .onDisappear {
+            model.cancel()
+            // Leaving the board (trial expiry, a board failure, paywall) tears
+            // down this view without the `.sheet`'s `onDismiss` firing, so reset
+            // the injected feedback model here too — otherwise a stale `.sent`
+            // confirmation / stuck `.sending` (and its in-flight send) would
+            // survive to the next board re-entry. `reset()` also cancels the
+            // in-flight request. A pure re-render never calls `.onDisappear`, so
+            // the in-progress-message-survives-re-render intent (JC2) is intact.
+            feedbackModel.reset()
+        }
         .onReceive(Self.didBecomeActive) { _ in model.onAppBecameActive() }
     }
 
