@@ -72,10 +72,14 @@ internal final class StowerFeedbackModel {
 
     /// Whether Send is enabled: not already sending, a non-empty trimmed message,
     /// and within the character cap.
+    ///
+    /// The cap is checked against `trimmedMessage` — the exact string `performSend`
+    /// submits and the Deno relay caps — so leading/trailing whitespace can't push
+    /// an otherwise-acceptable message over the limit and disable Send.
     internal var canSend: Bool {
         phase != .sending
             && !trimmedMessage.isEmpty
-            && message.count <= Self.messageCharLimit
+            && trimmedMessage.count <= Self.messageCharLimit
     }
 
     /// Reports `feedback_opened` — called from the sheet's `onAppear`.

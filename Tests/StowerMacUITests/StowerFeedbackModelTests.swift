@@ -136,6 +136,17 @@ import Testing
         #expect(model.canSend == true)
     }
 
+    @Test("I-EmptyGuard: the cap is measured against the trimmed message, not the raw one")
+    internal func capMeasuresTrimmedMessage() throws {
+        let model = try model(result: .sent)
+        // At the cap after trimming, but over it raw (surrounding whitespace).
+        // The trimmed string is exactly what performSend submits, so this must send.
+        let atCap = String(repeating: "a", count: StowerFeedbackModel.messageCharLimit)
+        model.message = "  \n\(atCap)\n  "
+        #expect(model.message.count > StowerFeedbackModel.messageCharLimit)
+        #expect(model.canSend == true)
+    }
+
     @Test("I-EmptyGuard: send() on an empty message no-ops, leaving phase == .idle")
     internal func emptySendNoOps() async throws {
         let model = try model(result: .sent)
