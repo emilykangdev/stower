@@ -35,16 +35,22 @@ extension StowerBoardView {
         ToolbarItem(placement: .primaryAction) { licenseMenu }
     }
 
-    /// A gear menu that surfaces the license status and the buy/enter-key actions.
+    /// A gear menu that surfaces Privacy plus the license status and buy/enter-key actions.
     ///
-    /// The trial date label is non-actionable (status only); "Buy Stower" opens the
-    /// checkout and "Enter license key…" (JC5) jumps to the key-entry screen so a
-    /// mid-trial purchaser isn't forced to wait until expiry to activate. The gear
-    /// is always visible so users can find these paths even after the banner
-    /// changes/dismisses. Licensed / no-trial → the menu renders with no items.
+    /// "Privacy…" is always the first item, for every trial/license state: it writes
+    /// `selectedSettingsTab = .privacy` and calls `openSettings()` so the Settings
+    /// window lands on the Privacy pane even if Updates was last viewed. Below it (only
+    /// on an active trial) the non-actionable trial date label, "Buy Stower" (checkout),
+    /// and "Enter license key…" (JC5) give a mid-trial purchaser an activation path. The
+    /// gear is always enabled because Privacy… is unconditional.
     internal var licenseMenu: some View {
         Menu {
+            Button("Privacy…") {
+                selectedSettingsTab = .privacy
+                openSettings()
+            }
             if let badge = trial {
+                Divider()
                 Section {
                     Text(StowerTrialBadgeView.endLabel(for: badge.expiry))
                 }
@@ -54,9 +60,6 @@ extension StowerBoardView {
         } label: {
             Image(systemName: "gearshape")
         }
-        // Licensed / no-trial has no menu items, so disable the control rather than
-        // open an empty dead-end; the anchor stays visible for when a trial is active.
-        .disabled(trial == nil)
         .help("License & settings")
         .accessibilityLabel("License and settings menu")
     }
@@ -64,7 +67,7 @@ extension StowerBoardView {
     /// The always-visible feedback button (JC-A): opens the in-app feedback sheet.
     ///
     /// A labeled `exclamationmark.bubble` so it reads as "feedback," not settings —
-    /// the gear `licenseMenu` is unchanged (still trial-only).
+    /// distinct from the gear `licenseMenu` (which now leads with Privacy…).
     internal var feedbackButton: some View {
         Button {
             isShowingFeedback = true
