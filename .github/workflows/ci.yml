@@ -1,5 +1,14 @@
 name: CI
-on: [push, pull_request]
+# Run on branch pushes and PRs — NOT on tag pushes. A `branches:` filter under
+# `push` excludes tags, so a `messages-v*` release tag no longer triggers CI.
+# The tagged commit is already-merged, already-green main (it passed this same CI
+# when its PR landed), so CI-on-tag adds no signal and only steals the single
+# macos-26 runner that release.yml needs — leaving the Release job stuck Waiting.
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
 jobs:
   build:
     # macos-26 (NOT macos-15): StowerMac requires macOS 26 (it uses FoundationModels /
