@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// The observable state behind the feedback sheet: the typed message/email, the
 /// send phase, and the send + analytics wiring.
@@ -35,6 +36,11 @@ internal final class StowerFeedbackModel {
     private let client: StowerFeedbackClient
     private let metadata: @MainActor () -> StowerFeedbackMetadata
     private let analyticsReporter: any StowerAnalyticsReporting
+
+    /// Bumped on every `reset()` so an in-flight `send()` whose sheet was
+    /// dismissed mid-request can detect it is stale and drop its result instead
+    /// of writing `.sent`/`.failed` onto a model the next open will reuse.
+    private var sendGeneration = 0
 
     /// Creates the model.
     ///
@@ -82,6 +88,7 @@ internal final class StowerFeedbackModel {
     /// next open would still show the `.sent` confirmation and refuse a second
     /// message.
     internal func reset() {
+        sendGeneration += 1
         message = ""
         email = ""
         phase = .idle
@@ -94,6 +101,7 @@ internal final class StowerFeedbackModel {
     /// `message`/`email` intact so the user's text is never lost (I-FailurePreservesText).
     internal func send() async {
         guard canSend else { return }
+        let generation = sendGeneration
         phase = .sending
         let meta = metadata()
         let submission = StowerFeedbackSubmission(
@@ -105,6 +113,9 @@ internal final class StowerFeedbackModel {
             licenseStatus: meta.licenseStatus
         )
         let result = await client.send(submission)
+        // The sheet was dismissed (reset) while this request was in flight — drop
+        // the result so it can't stamp .sent/.failed onto the reused model.
+        guard generation == sendGeneration else { return }
         phase = result == .sent ? .sent : .failed
         if result == .sent {
             analyticsReporter.report(.feedbackSent(licenseStatus: meta.licenseStatus.rawValue))

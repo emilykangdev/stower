@@ -52,6 +52,13 @@ async function handle(req: Request): Promise<Response> {
   recent.push(now);
   hits.set(ip, recent);
 
+  // Reject an oversized body by its declared Content-Length BEFORE buffering it,
+  // so an attacker can't force us to read a huge payload into memory. The
+  // post-read check stays as the backstop for a missing/lying header.
+  const declaredLength = Number(req.headers.get("content-length") ?? "0");
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    return json(413, { error: "too large" });
+  }
   const raw = await req.text();
   if (raw.length > MAX_BODY_BYTES) return json(413, { error: "too large" });
 

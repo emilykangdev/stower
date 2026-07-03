@@ -64,6 +64,38 @@ import Testing
         #expect(model.phase == .sent)
     }
 
+    @Test("a reset during an in-flight send drops the stale result, leaving phase == .idle")
+    internal func resetDuringSendDropsStaleResult() async throws {
+        let gate = StowerSendGate()
+        let url = try #require(URL(string: "https://relay.invalid/feedback"))
+        let response = try #require(
+            HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)
+        )
+        let client = StowerFeedbackClient(
+            endpointURL: "https://relay.invalid/feedback",
+            transport: { _ in
+                await gate.wait()
+                return (Data(), response)
+            }
+        )
+        let model = StowerFeedbackModel(
+            client: client,
+            metadata: { self.metadata() },
+            analyticsReporter: StowerInMemoryAnalyticsReporter()
+        )
+        model.message = "In flight"
+
+        let sending = Task { await model.send() }
+        // Let send() reach .sending and block in the transport, then dismiss.
+        try await Task.sleep(nanoseconds: 10_000_000)
+        model.reset()
+        await gate.open()
+        await sending.value
+
+        // The stale 200 must NOT have stamped .sent onto the reused model.
+        #expect(model.phase == .idle)
+    }
+
     @Test("reset() clears text and returns to .idle so the reused model sends again")
     internal func resetClearsStateAfterSend() async throws {
         let model = try model(result: .sent)
@@ -151,5 +183,24 @@ import Testing
         let params = try #require(opened.first?.parameters)
         #expect(params["license_status"] == "paid")
         #expect(params.count == 1)
+    }
+}
+
+/// A one-shot gate so a test can hold a stub transport mid-request, dismiss the
+/// sheet, then release it — reproducing the send-then-reset race.
+private actor StowerSendGate {
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending { waiter.resume() }
     }
 }
