@@ -64,12 +64,14 @@ internal struct StowerFeedbackView: View {
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(Self.messageLineLimit, reservesSpace: true)
                 .focused($messageFocused)
+                .disabled(model.phase == .sending)
                 .accessibilityLabel("Feedback message")
-            if model.message.count > Self.counterThreshold {
-                Text("\(model.message.count) / \(StowerFeedbackModel.messageCharLimit)")
+            let messageCount = model.trimmedMessage.count
+            if messageCount > Self.counterThreshold {
+                Text("\(messageCount) / \(StowerFeedbackModel.messageCharLimit)")
                     .font(.caption2)
                     .foregroundStyle(
-                        model.message.count > StowerFeedbackModel.messageCharLimit
+                        messageCount > StowerFeedbackModel.messageCharLimit
                             ? .red : .secondary
                     )
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -81,6 +83,7 @@ internal struct StowerFeedbackView: View {
         TextField("Email (optional, if you'd like a reply)", text: $model.email)
             .textFieldStyle(.roundedBorder)
             .autocorrectionDisabled()
+            .disabled(model.phase == .sending)
             .accessibilityLabel("Reply email, optional")
     }
 
