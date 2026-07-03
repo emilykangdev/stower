@@ -58,6 +58,29 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
+      - name: Verify authored release notes present
+        # Real releases MUST ship human-authored notes. Fail here — before the
+        # ~15-minute archive/notarize — if Docs/release-notes/<VERSION>.md is
+        # missing or empty, so a tag push with no notes fails in seconds. Gated
+        # on `push` only: workflow_dispatch dry-runs use throwaway versions (e.g.
+        # 0.1.0-dry) that intentionally have no authored notes file.
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # `-s` only checks size > 0, so a whitespace-only file (e.g. a lone
+          # newline) would pass here but still be rejected as empty by
+          # render_notes_html.py's `markdown.strip()` check later — after the
+          # GitHub Release has already been published. Require at least one
+          # non-whitespace character so both checks agree on "empty".
+          NOTES_MD="Docs/release-notes/${VERSION}.md"
+          if [ ! -s "$NOTES_MD" ] || ! grep -q '[^[:space:]]' "$NOTES_MD"; then
+            echo "ERROR: release notes missing or empty at $NOTES_MD." >&2
+            echo "Author the notes for $VERSION before tagging (see Docs/release-notes/README.md)." >&2
+            exit 1
+          fi
+          echo "Release notes present: $NOTES_MD"
+
       - name: Derive build number
         id: build
         env:
@@ -305,10 +328,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          NOTES_FILE="$RUNNER_TEMP/release_notes.md"
-          echo "## Stower ${VERSION}" > "$NOTES_FILE"
-          echo "" >> "$NOTES_FILE"
-          echo "See [release notes](https://updates.stower.app/messages/notes/${VERSION}.html) for details." >> "$NOTES_FILE"
+          # The GitHub Release body IS the authored Markdown, rendered natively
+          # by GitHub. The "Verify authored release notes present" step already
+          # guaranteed this file exists and is non-empty; re-check defensively so
+          # this step never publishes an empty-notes Release on its own.
+          NOTES_FILE="Docs/release-notes/${VERSION}.md"
+          if [ ! -s "$NOTES_FILE" ] || ! grep -q '[^[:space:]]' "$NOTES_FILE"; then
+            echo "ERROR: release notes missing or empty at $NOTES_FILE." >&2
+            exit 1
+          fi
           gh release create "$GITHUB_REF_NAME" \
             "$ZIP_PATH" \
             --title "Stower $VERSION" \
@@ -395,16 +423,14 @@ jobs:
           fi
           echo "Appcast item count: $NEW_ITEM_COUNT (previous: $PREV_ITEM_COUNT)"
 
+          # Render the SAME authored Markdown the GitHub Release carries into the
+          # Sparkle "what's new" HTML page (loaded via <sparkle:releaseNotesLink>),
+          # so both surfaces show identical content. render_notes_html.py fails
+          # loudly if the notes file is missing or empty.
           NOTES_HTML="$NOTES_DIR/${VERSION}.html"
-          printf '%s\n' \
-            '<!DOCTYPE html>' \
-            '<html lang="en">' \
-            "<head><meta charset=\"utf-8\"><title>Stower ${VERSION}</title></head>" \
-            '<body>' \
-            "<h2>Stower ${VERSION}</h2>" \
-            "<p>See the <a href=\"https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}\">GitHub Release</a> for details.</p>" \
-            '</body>' \
-            '</html>' > "$NOTES_HTML"
+          NOTES_MD="$GITHUB_WORKSPACE/Docs/release-notes/${VERSION}.md" \
+            NOTES_HTML="$NOTES_HTML" VERSION="$VERSION" \
+            python3 "$GITHUB_WORKSPACE/Scripts/release/render_notes_html.py"
 
           cd "$RUNNER_TEMP/pages"
           git add messages/appcast.xml "messages/notes/${VERSION}.html"

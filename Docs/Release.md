@@ -132,15 +132,33 @@ All secrets live in the `release` environment, not repository-level secrets.
 Every Action in `release.yml` is SHA-pinned (not a moving `@vN` tag) to prevent
 supply-chain poisoning of the signing/notarization/EdDSA flow.
 
+## Release notes (authored, not auto-generated)
+
+Each release ships human-authored notes from `Docs/release-notes/<VERSION>.md`
+(one file per version — see `Docs/release-notes/README.md`). The pipeline reads
+that one file and publishes it to both surfaces so they show identical content:
+
+- **GitHub Release body** — GitHub renders the Markdown natively
+  (`gh release create --notes-file`).
+- **Sparkle in-app "what's new"** — `Scripts/release/render_notes_html.py`
+  renders the same Markdown to `messages/notes/<VERSION>.html` on `gh-pages`;
+  Sparkle loads it via `<sparkle:releaseNotesLink>`.
+
+The "Verify authored release notes present" step runs before the archive, so a
+tag push with a missing or empty notes file fails in seconds — a release can
+never publish empty notes. Dry-runs (`workflow_dispatch`) skip this check
+because their throwaway versions have no authored file.
+
 ## Shipping a release
 
 ```bash
-# 1. Ensure all changes are committed and CI is green.
+# 1. Author Docs/release-notes/<VERSION>.md for the version you're tagging.
+# 2. Ensure all changes are committed and CI is green.
 git tag messages-v0.1.0
 git push origin messages-v0.1.0
 # The release.yml workflow runs automatically.
 
-# 2. Dry-run before the first real tag (workflow_dispatch):
+# 3. Dry-run before the first real tag (workflow_dispatch):
 #    GitHub Actions → Release → Run workflow → enter version "0.1.0-dry"
 #    A dry-run runs the FULL signing path — archive, export, signing gates,
 #    notarize, staple, and the Gatekeeper/spctl gate — and stops before the
@@ -201,5 +219,7 @@ Sparkle cannot downgrade. The rollback path is always forward:
 | CFBundleVersion strictly increases | build = (prev appcast build) + 1 |
 | Appcast item count never decreases | item count assertion post-amend |
 | Temp keychain deleted on job exit | `if: always()` cleanup step |
+| Release ships authored notes (never empty) | `Docs/release-notes/<VERSION>.md` non-empty check before archive |
+| GitHub Release + Sparkle "what's new" show the same notes | both read `Docs/release-notes/<VERSION>.md` |
 | Dry-run does NOT create a GitHub Release | publish steps gate on `github.event_name == 'push'` |
 | Dry-run DOES notarize + staple (validation, no publish) | notarize/staple/Gatekeeper run on both events; only publish gates on `push` |
