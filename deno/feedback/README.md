@@ -26,8 +26,9 @@ It is the only place the Resend API key lives (never in the app binary).
 ```
 
 Responses: `200 {ok:true}` = delivered. `400` bad/empty/oversized message or JSON.
-`405` non-POST. `413` body > 32 KB (comfortably above a max 5000-char message so a
-legit message never bounces). `429` rate-limited (5/min/IP, best-effort in-memory). `500`
+`405` non-POST. `413` body > 256 KB (a memory/DoS bound, not the content limit —
+message content is capped at 5000 graphemes so a legit message never bounces).
+`429` rate-limited (5/min/IP, best-effort in-memory). `500`
 missing `RESEND_API_KEY`. `502` Resend rejected the send. The app treats any non-2xx
 as failure and shows Retry.
 

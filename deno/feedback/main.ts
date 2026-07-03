@@ -19,12 +19,15 @@
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
 const FROM = Deno.env.get("FROM"); // e.g. "Stower Feedback <feedback@send.stower.app>"
 const TO = Deno.env.get("TO"); // e.g. "emily@stower.app"
-// Hard size cap — abuse/cost guard. Must exceed the worst-case encoded payload
-// for a MAX_MESSAGE_CHARS message: 5000 chars can be up to 4 bytes each in UTF-8,
-// plus JSON escaping and the small metadata fields — so a legit max-length message
-// never bounces with 413 (which the client would surface as a false "couldn't send").
-const MAX_BODY_BYTES = 32_768;
-const MAX_MESSAGE_CHARS = 5000; // mirrors the client-side cap
+// Hard body-size bound — a MEMORY/DoS guard, NOT the message-content limit.
+// Content is capped by grapheme count (MAX_MESSAGE_CHARS) below, which mirrors the
+// Swift client. This bound is set generously so a legit 5000-grapheme message
+// never 413s even when its graphemes are byte-heavy (4-byte scalars, long ZWJ
+// emoji sequences); 256 KB still bounds memory for the streaming read. A false 413
+// would surface in the app as "couldn't send," so the two caps must not disagree
+// on realistic input.
+const MAX_BODY_BYTES = 262_144;
+const MAX_MESSAGE_CHARS = 5000; // grapheme cap; mirrors the Swift client's String.count
 const RATE_LIMIT = 5; // sends per IP per rolling minute (best-effort)
 const RATE_WINDOW_MS = 60_000;
 // A deliberately loose sanity check (not RFC-perfect): non-space, one @, a dotted
