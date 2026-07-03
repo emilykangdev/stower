@@ -7,7 +7,7 @@ import Testing
 /// semantics, the `wasAwaitingFDA` latch, and a Check-Again sequence (Eng F1/F2).
 ///
 /// Uses `StowerFakeStartupProvider` and `StowerInMemoryAnalyticsReporter` so no
-/// engine or real Keychain is involved.
+/// engine or real UserDefaults is involved.
 @Suite @MainActor internal struct StowerAnalyticsFunnelTests {
 
     private func makeModel(
