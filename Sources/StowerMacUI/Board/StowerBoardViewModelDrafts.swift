@@ -79,7 +79,10 @@ extension StowerBoardViewModel {
     /// the undo bar's Undo could be silently re-hidden by a stale reload. The
     /// in-flight key set is snapshotted BEFORE the store read so a write that
     /// completes during the read's suspension can't slip a stale row past the
-    /// guard (**Codex P2**).
+    /// guard (**Codex P2**). That same snapshot also protects the prune below:
+    /// a key whose write was in flight at read start is never pruned even when
+    /// absent from `fresh`, so a just-`markSent` draft whose upsert/markSent
+    /// hasn't landed yet isn't wiped out from under a pending Undo (**cursor**).
     internal func mergeDrafts(generation: Int) async {
         // Snapshot the in-flight write keys BEFORE the await: a write task clears its
         // own `inflightWrites[key]` on the main actor, so it can complete AND remove
@@ -105,7 +108,15 @@ extension StowerBoardViewModel {
             }
             drafts[key] = entry
         }
-        let removed = drafts.keys.filter { fresh[$0] == nil && $0 != composerKey }
+        // Prune only keys the store genuinely no longer has — but NOT a key whose
+        // durable write was still in flight when we read (`inflightAtReadStart`): a
+        // just-optimistically-`markSent` draft whose upsert/markSent hasn't landed can
+        // be absent from this stale `fresh`, and pruning it would wipe the in-memory
+        // entry, so a later Undo/`unmarkSent` early-returns (`guard let entry`) and
+        // never enqueues the reversal while the pending resolve still lands on disk.
+        let removed = drafts.keys.filter {
+            fresh[$0] == nil && $0 != composerKey && !inflightAtReadStart.contains($0)
+        }
         for key in removed {
             drafts[key] = nil
         }

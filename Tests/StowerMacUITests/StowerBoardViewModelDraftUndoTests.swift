@@ -233,4 +233,48 @@ import Testing
         await model.flushAll()
         #expect(try await store.all()[row.draftKey]?.resolvedAt == nil)
     }
+
+    @Test(
+        "a reload's prune skips a key whose write is in flight, so Undo still reverses it (I10)"
+    )
+    internal func inFlightKeyNotPrunedSoUndoStillReverses() async throws {
+        // Regression test for a cursor flag: the I10 divergence guard snapshots the
+        // in-flight keys before the store read, but the PRUNE below it originally did
+        // NOT consult that snapshot. So a just-optimistically-`markSent` draft whose
+        // durable upsert/markSent hadn't landed — and was thus absent from a racing
+        // `fresh` read — got pruned from `drafts`. A later Undo/`unmarkSent` then
+        // early-returned (`guard let entry`) without enqueueing the reversal, while the
+        // pending resolve still landed on disk: the undo silently did nothing.
+        let row = draftRow(chatID: "c1", handle: "alice")
+        // Store starts WITHOUT the row, so a reload's `all()` genuinely omits the key
+        // while its create-upsert is still queued (the real race, deterministically).
+        let store = StowerFlakyDraftStore(entries: [:])
+        let spy = StowerSpyBoardDataSource()
+        let oneRow = StowerBoardModel(neglected: [row], ghosted: [])
+        spy.loadModels = [oneRow, oneRow]
+        let model = makeViewModel(spy, draftStore: store)
+        model.load()
+        await model.loadTaskHandle?.value
+
+        // Type the draft (queues the create-upsert), then arm THAT upsert to fail once
+        // so it stays queued in inflightWrites; markSent then chains behind it. At the
+        // reload below, the store's `all()` still omits the key.
+        await store.setFailNextWrites(1)
+        model.draftBinding(for: row.draftKey).wrappedValue = "call back"
+        model.markSent(row)
+        #expect(model.drafts[row.draftKey]?.resolvedAt != nil)
+
+        // Reload races ahead of the queued writes landing — fresh omits the key.
+        model.load()
+        await model.loadTaskHandle?.value
+
+        // The prune must NOT have wiped the in-flight key's local entry.
+        #expect(model.drafts[row.draftKey] != nil)
+
+        // Undo now finds the entry and enqueues the reversal, so disk ends active.
+        model.unmarkSent(row)
+        await model.flushAll()
+        #expect(model.drafts[row.draftKey]?.resolvedAt == nil)
+        #expect(try await store.all()[row.draftKey]?.resolvedAt == nil)
+    }
 }
