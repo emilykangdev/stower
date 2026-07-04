@@ -11,31 +11,23 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# shellcheck source=Scripts/lib/derive-app-paths.sh
+source "$REPO_ROOT/Scripts/lib/derive-app-paths.sh"
+
 PROJECT="StowerMac/StowerMac.xcodeproj"
 SCHEME="StowerMac"
 CONFIG="Debug"
 
-echo "==> Building $SCHEME ($CONFIG) from $REPO_ROOT"
-xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration "$CONFIG" \
-  -destination 'platform=macOS' build
+# Builds, then sets APP / EXECUTABLE_NAME / BIN (or exits with a specific error).
+stower_build_and_derive_paths "$PROJECT" "$SCHEME" "$CONFIG"
 
-APP="$(xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration "$CONFIG" \
-  -showBuildSettings 2>/dev/null \
-  | awk '/ BUILT_PRODUCTS_DIR =/{d=$3} / FULL_PRODUCT_NAME =/{n=$3} END{print d"/"n}')"
-
-if [ ! -d "$APP" ]; then
-  echo "ERROR: built app not found at: $APP" >&2
-  exit 1
-fi
-
-BIN="$APP/Contents/MacOS/StowerMac"
 echo ""
 echo "==> Built binary: $BIN"
 echo "==> Binary built at: $(stat -f '%Sm' "$BIN")"
 echo "==> Latest commit:  $(git log -1 --format='%cd %h %s' --date=local)"
 echo ""
 echo "==> Quitting any running copy and launching the fresh build standalone…"
-pkill -x StowerMac 2>/dev/null || true
+pkill -x "$EXECUTABLE_NAME" 2>/dev/null || true
 sleep 1
 open "$APP"
 echo "==> Launched. In the app: grant Full Disk Access if asked, then on the board"

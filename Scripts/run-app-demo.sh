@@ -7,7 +7,7 @@
 # relationship-debt board can be demoed/recorded WITHOUT swapping — and risking —
 # your real Messages history.
 #
-# Unlike run-mac.sh (which uses `open`, whose launchd path does not forward env
+# Unlike run-app.sh (which uses `open`, whose launchd path does not forward env
 # vars), this launches the built binary directly so the env override reaches the
 # app. The demo db lives under Application Support, which needs no Full Disk Access,
 # so the direct launch raises no TCC/FDA prompt.
@@ -19,6 +19,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
+
+# shellcheck source=Scripts/lib/derive-app-paths.sh
+source "$REPO_ROOT/Scripts/lib/derive-app-paths.sh"
 
 PROJECT="StowerMac/StowerMac.xcodeproj"
 SCHEME="StowerMac"
@@ -39,27 +42,16 @@ elif [ ! -f "$DEMO_DB" ]; then
   exit 1
 fi
 
-echo "==> Building $SCHEME ($CONFIG) from $REPO_ROOT"
-xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration "$CONFIG" \
-  -destination 'platform=macOS' build
+# Builds, then sets APP / EXECUTABLE_NAME / BIN (or exits with a specific error).
+stower_build_and_derive_paths "$PROJECT" "$SCHEME" "$CONFIG"
 
-APP="$(xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration "$CONFIG" \
-  -showBuildSettings 2>/dev/null \
-  | awk '/ BUILT_PRODUCTS_DIR =/{d=$3} / FULL_PRODUCT_NAME =/{n=$3} END{print d"/"n}')"
-
-if [ ! -d "$APP" ]; then
-  echo "ERROR: built app not found at: $APP" >&2
-  exit 1
-fi
-
-BIN="$APP/Contents/MacOS/StowerMac"
 echo ""
 echo "==> Built binary: $BIN"
 echo "==> Binary built at: $(stat -f '%Sm' "$BIN")"
 echo "==> Demo source:   $DEMO_DB"
 echo ""
 echo "==> Quitting any running copy and launching the fresh build against the demo db…"
-pkill -x StowerMac 2>/dev/null || true
+pkill -x "$EXECUTABLE_NAME" 2>/dev/null || true
 sleep 1
 STOWER_MESSAGES_DB="$DEMO_DB" "$BIN" &
 echo "==> Launched against the demo db (your real Messages history is untouched)."

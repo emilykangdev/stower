@@ -52,13 +52,27 @@ and the failure was the system call itself = a signing/entitlement rejection.
    `com.apple.security.files.user-selected.read-only` from `ENABLE_USER_SELECTED_FILES`).
 2. Set `CODE_SIGN_ENTITLEMENTS = StowerMac/StowerMac.entitlements` on both Debug and
    Release configs.
-3. Reset the stale denied state once: `tccutil reset AddressBook emilykangdev.StowerMac`
+3. Reset the stale denied state once: `tccutil reset AddressBook emilykangdev.Stower`
    (a failed request had marked it `.denied`, and macOS never re-prompts a denied app).
+   This intentionally targets **prod** (`emilykangdev.Stower`) — see the scoping rule below.
 4. Rebuild → one click on "Show names" → prompt → Allow → **all names populate instantly.**
 
-**Verify the entitlement actually made it into the signed app:**
+**`tccutil reset` scoping rule (read before running this on your own machine):** the
+dev build (`StowerTest.app`, bundle id `emilykangdev.Stower.debug`) and the prod build
+(`Stower.app`, bundle id `emilykangdev.Stower`) hold **separate** TCC grant rows keyed
+by bundle id. Never run `tccutil reset <service>` unscoped (no bundle id) — always pass
+the bundle id of the build you actually mean to reset: `emilykangdev.Stower.debug` when
+clearing the dev build's grant, `emilykangdev.Stower` only when deliberately fixing prod
+(as in step 3 above). An unscoped reset, or resetting the wrong id, wipes a grant you
+didn't mean to touch. Relatedly: never sign the two bundle ids with different signing
+identities — that would break the very isolation this split relies on (each grant's
+`csreq` pins the signing identity as well as the bundle id).
+
+**Verify the entitlement actually made it into the signed app** (the `.app`
+filename follows `PRODUCT_NAME` — `StowerTest.app` for a Debug build, `Stower.app`
+for Release; the internal project stays `StowerMac.xcodeproj`, see `AGENTS.md`):
 ```bash
-codesign -d --entitlements - --xml "<path>/StowerMac.app" | plutil -p - | grep addressbook
+codesign -d --entitlements - --xml "<path>/StowerTest.app" | plutil -p - | grep addressbook
 # expect: "com.apple.security.personal-information.addressbook" => 1
 ```
 
@@ -67,7 +81,7 @@ codesign -d --entitlements - --xml "<path>/StowerMac.app" | plutil -p - | grep a
   not `/usr/bin/log`. Always call **`/usr/bin/log`** with an absolute path when
   querying the unified log from a tooling shell.
 - We chased "stale build" for a while: the running binary lagged the source. Use
-  `Scripts/run-mac.sh`, which prints the binary's build time vs the last commit.
+  `Scripts/run-app.sh`, which prints the binary's build time vs the last commit.
 
 ## A second bug: `requestAccess` can hang forever with no error at all
 
@@ -139,17 +153,17 @@ regresses back to a `TaskGroup`/`async let` shape.
 
 ## Deterministic build-and-run workflow
 
-Use `Scripts/run-mac.sh` (below) — never eyeball it. It rebuilds, prints the binary
+Use `Scripts/run-app.sh` (below) — never eyeball it. It rebuilds, prints the binary
 timestamp, and launches *that exact* binary standalone:
 
 ```bash
-./Scripts/run-mac.sh
+./Scripts/run-app.sh
 ```
 
 It does:
 1. `xcodebuild -project StowerMac/StowerMac.xcodeproj -scheme StowerMac -configuration Debug build`
 2. Prints the built binary's mtime (so you can confirm it's newer than your last edit).
-3. `open`s the DerivedData `Debug/StowerMac.app` (launchd, not under Xcode's
+3. `open`s the DerivedData `Debug/StowerTest.app` (launchd, not under Xcode's
    debugger — avoids TCC attribution quirks).
 
 Then, in the app:
@@ -162,10 +176,10 @@ Then, in the app:
 
 ```bash
 # Did tccd see a Contacts request from the app? (empty = it never asked)
-/usr/bin/log show --last 10m --predicate 'process == "tccd"' --info | grep -iE "StowerMac|AddressBook"
+/usr/bin/log show --last 10m --predicate 'process == "tccd"' --info | grep -iE "StowerTest|AddressBook"
 
 # Which binary is actually running, and when was it built?
-for pid in $(pgrep -x StowerMac); do ps -o comm= -p "$pid"; done
+for pid in $(pgrep -x StowerTest); do ps -o comm= -p "$pid"; done
 ```
 
 If `tccd` shows the request and the prompt appeared, the wiring works. If it shows

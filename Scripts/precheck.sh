@@ -345,3 +345,93 @@ if ! grep -RIlE --include="*.swift" -q 'api\.lemonsqueezy\.com' Sources/ 2>/dev/
     echo "       vacuously if the activate client's host literal ever moved/vanished." >&2
     exit 1
 fi
+
+# 6p — Locks the product-vs-internal naming split (INV1-INV4, dev/prod TCC isolation):
+#      the pbxproj's Debug/Release identity (bundle id, PRODUCT_NAME, display name)
+#      must stay exactly as decided, and the internal StowerMac scheme/target must
+#      never be swept away by a "consistency" rename. Two independently-checked facts.
+#
+#      Fact 1 — pbxproj identity split. The pbxproj has TWO Debug + TWO Release
+#      XCBuildConfiguration blocks: a project-level pair (no PRODUCT_NAME/bundle-id/
+#      display-name at all) and a target-level pair (carries all three). A guard
+#      that requires "every Debug block has PRODUCT_NAME=StowerTest" false-positives
+#      on the empty project-level block and blocks every commit — so this uses
+#      EXISTENCE semantics: classify a config as an "identity config" iff it carries
+#      a PRODUCT_NAME line, then require exactly ONE identity Debug config and
+#      exactly ONE identity Release config, each fully correct. The display name is
+#      matched as the FULL quoted literal ("Stower Test") — never via a $-positional
+#      field split, which would truncate at the space.
+if ! awk '
+        /isa = XCBuildConfiguration;/ { has_pn=0; pn_ok=0; bundle_ok=0; display_ok=0; next }
+        /^\t+PRODUCT_NAME = / {
+            has_pn=1
+            if ($0 ~ /^\t+PRODUCT_NAME = StowerTest;/) pn_ok="debug"
+            else if ($0 ~ /^\t+PRODUCT_NAME = Stower;/) pn_ok="release"
+            next
+        }
+        /^\t+PRODUCT_BUNDLE_IDENTIFIER = / {
+            if ($0 ~ /= emilykangdev\.Stower\.debug;/) bundle_ok="debug"
+            else if ($0 ~ /= emilykangdev\.Stower;/) bundle_ok="release"
+            next
+        }
+        /^\t+INFOPLIST_KEY_CFBundleDisplayName = / {
+            if ($0 ~ /^\t+INFOPLIST_KEY_CFBundleDisplayName = "Stower Test";/) display_ok="debug"
+            else if ($0 ~ /^\t+INFOPLIST_KEY_CFBundleDisplayName = Stower;/) display_ok="release"
+            next
+        }
+        /name = Debug;/ {
+            if (has_pn) {
+                debug_ident++
+                if (pn_ok=="debug" && bundle_ok=="debug" && display_ok=="debug") debug_good++
+            }
+            next
+        }
+        /name = Release;/ {
+            if (has_pn) {
+                rel_ident++
+                if (pn_ok=="release" && bundle_ok=="release" && display_ok=="release") rel_good++
+            }
+            next
+        }
+        END { exit (debug_ident==1 && debug_good==1 && rel_ident==1 && rel_good==1) ? 0 : 1 }
+    ' StowerMac/StowerMac.xcodeproj/project.pbxproj; then
+    echo "ERROR: project.pbxproj Debug/Release identity config is wrong or missing —" >&2
+    echo "       expected exactly one Debug identity config with PRODUCT_NAME=StowerTest," >&2
+    echo "       PRODUCT_BUNDLE_IDENTIFIER=emilykangdev.Stower.debug, and" >&2
+    echo "       INFOPLIST_KEY_CFBundleDisplayName=\"Stower Test\" (quoted); and exactly" >&2
+    echo "       one Release identity config with PRODUCT_NAME=Stower," >&2
+    echo "       PRODUCT_BUNDLE_IDENTIFIER=emilykangdev.Stower, and" >&2
+    echo "       INFOPLIST_KEY_CFBundleDisplayName=Stower. If you INTENDED to change the" >&2
+    echo "       product identity, update BOTH the pbxproj AND this guard's expected" >&2
+    echo "       literals here (precheck.sh) — do NOT rename the internal StowerMac" >&2
+    echo "       scheme/target/modules (see AGENTS.md naming-map). (6p)" >&2
+    exit 1
+fi
+
+#      Fact 2 — internal scheme/target survives. A bare `grep -q -- -scheme StowerMac`
+#      alone would pass on a stale comment, so this asserts THREE facts: the shared
+#      scheme file exists, the PBXNativeTarget still carries `name = StowerMac;`, and
+#      at least one ACTIVE (non-comment) workflow line still invokes `-scheme StowerMac`.
+if [ ! -f "StowerMac/StowerMac.xcodeproj/xcshareddata/xcschemes/StowerMac.xcscheme" ]; then
+    echo "ERROR: StowerMac.xcscheme is missing — the internal StowerMac scheme must never" >&2
+    echo "       be renamed/removed as part of a product-identity change (see AGENTS.md" >&2
+    echo "       naming-map). If this is an intentional internal rename, update this" >&2
+    echo "       guard's expected path here (precheck.sh). (6p)" >&2
+    exit 1
+fi
+if ! grep -RInE '^\t\t\tname = StowerMac;' StowerMac/StowerMac.xcodeproj/project.pbxproj 2>/dev/null | grep -q .; then
+    echo "ERROR: PBXNativeTarget name = StowerMac; not found in project.pbxproj — the" >&2
+    echo "       internal target name must never be swept to match the product identity" >&2
+    echo "       (see AGENTS.md naming-map). If this is an intentional internal rename," >&2
+    echo "       update this guard's expected name here (precheck.sh). (6p)" >&2
+    exit 1
+fi
+if ! grep -RInE -- '-scheme StowerMac' .github/workflows/release.yml .github/workflows/ci.yml 2>/dev/null \
+    | grep -vE ':[0-9]+:[[:space:]]*#' | grep -q .; then
+    echo "ERROR: no active (non-comment) '-scheme StowerMac' line found in" >&2
+    echo "       .github/workflows/release.yml or ci.yml — the internal scheme name must" >&2
+    echo "       never be swept to match the product identity (see AGENTS.md naming-map)." >&2
+    echo "       If this is an intentional internal rename, update this guard's expected" >&2
+    echo "       scheme name here (precheck.sh). (6p)" >&2
+    exit 1
+fi
