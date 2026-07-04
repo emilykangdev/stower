@@ -11,39 +11,15 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# shellcheck source=Scripts/lib/derive-app-paths.sh
+source "$REPO_ROOT/Scripts/lib/derive-app-paths.sh"
+
 PROJECT="StowerMac/StowerMac.xcodeproj"
 SCHEME="StowerMac"
 CONFIG="Debug"
 
-echo "==> Building $SCHEME ($CONFIG) from $REPO_ROOT"
-xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration "$CONFIG" \
-  -destination 'platform=macOS' build
-
-# Capture -showBuildSettings ONCE, then derive both the app path and the
-# executable/process name from that same text — never re-run xcodebuild.
-SETTINGS="$(xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration "$CONFIG" \
-  -showBuildSettings 2>/dev/null)"
-
-# Split on ' = ' (not $3) so a future space-containing value wouldn't truncate.
-APP="$(printf '%s\n' "$SETTINGS" | awk -F ' = ' '/ BUILT_PRODUCTS_DIR = /{d=$2} / FULL_PRODUCT_NAME = /{n=$2} END{print d"/"n}')"
-EXECUTABLE_NAME="$(printf '%s\n' "$SETTINGS" | awk -F ' = ' '/ EXECUTABLE_NAME = /{print $2; exit}')"
-
-if [ ! -d "$APP" ]; then
-  echo "ERROR: built app not found at: $APP" >&2
-  exit 1
-fi
-
-if [ -z "$EXECUTABLE_NAME" ]; then
-  echo "ERROR: could not derive EXECUTABLE_NAME from -showBuildSettings" >&2
-  exit 1
-fi
-
-BIN="$APP/Contents/MacOS/$EXECUTABLE_NAME"
-
-if [ ! -x "$BIN" ]; then
-  echo "ERROR: executable missing: $BIN" >&2
-  exit 1
-fi
+# Builds, then sets APP / EXECUTABLE_NAME / BIN (or exits with a specific error).
+stower_build_and_derive_paths "$PROJECT" "$SCHEME" "$CONFIG"
 
 echo ""
 echo "==> Built binary: $BIN"
