@@ -10,6 +10,19 @@ internal struct StowerDraftEntry: Sendable, Equatable {
 
     /// When the draft was last written (drives the Drafts tab's "edited …" label).
     internal let updatedAt: Date
+
+    /// When the user marked this draft sent, or `nil` while still active.
+    ///
+    /// `nil` = active (shown in the Drafts tab, the composer, and the inline
+    /// preview); set = resolved (hidden from all three, row kept for D2's undo).
+    internal let resolvedAt: Date?
+
+    /// Creates a draft entry.
+    internal init(body: String, updatedAt: Date, resolvedAt: Date? = nil) {
+        self.body = body
+        self.updatedAt = updatedAt
+        self.resolvedAt = resolvedAt
+    }
 }
 
 /// One Drafts-tab entry: an on-board conversation paired with its draft.
@@ -42,6 +55,18 @@ internal protocol StowerDraftStoring: Sendable {
 
     /// Deletes the draft for `key`; a no-op when none exists.
     func delete(key: String) async throws
+
+    /// Marks the draft for `key` sent: sets `resolvedAt` to now, keeping the body.
+    ///
+    /// An additive update only — it must never route through `delete`, so the body
+    /// `unmarkSent` needs to restore is never destroyed. A no-op when no draft
+    /// exists for `key`.
+    func markSent(key: String) async throws
+
+    /// Un-resolves the draft for `key` (the "Mark as sent" undo): clears
+    /// `resolvedAt` back to `nil`, keeping the body untouched. A no-op when no
+    /// draft exists for `key`.
+    func unmarkSent(key: String) async throws
 }
 
 /// A volatile draft store for previews and tests ONLY.
@@ -71,10 +96,30 @@ internal actor StowerInMemoryDraftStore: StowerDraftStoring {
             entries[key] = nil
             return
         }
+        // A body write always reactivates: resolvedAt resets to nil, mirroring the
+        // real store's upsert contract.
         entries[key] = StowerDraftEntry(body: body, updatedAt: clock())
     }
 
     internal func delete(key: String) {
         entries[key] = nil
+    }
+
+    internal func markSent(key: String) {
+        guard let entry = entries[key] else { return }
+        entries[key] = StowerDraftEntry(
+            body: entry.body,
+            updatedAt: entry.updatedAt,
+            resolvedAt: clock()
+        )
+    }
+
+    internal func unmarkSent(key: String) {
+        guard let entry = entries[key] else { return }
+        entries[key] = StowerDraftEntry(
+            body: entry.body,
+            updatedAt: entry.updatedAt,
+            resolvedAt: nil
+        )
     }
 }

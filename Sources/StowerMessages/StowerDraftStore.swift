@@ -137,14 +137,15 @@ public actor StowerDraftStore {
         try databaseQueue.read { database in
             let rows = try Row.fetchAll(
                 database,
-                sql: "SELECT draft_key, body, updated_at FROM draft"
+                sql: "SELECT draft_key, body, updated_at, resolved_at FROM draft"
             )
             var drafts: [String: StowerDraftRecord] = [:]
             for row in rows {
                 let key: String = row["draft_key"]
                 drafts[key] = StowerDraftRecord(
                     body: row["body"],
-                    updatedAt: row["updated_at"]
+                    updatedAt: row["updated_at"],
+                    resolvedAt: row["resolved_at"]
                 )
             }
             return drafts
@@ -156,6 +157,8 @@ public actor StowerDraftStore {
     /// Write-through and fsync-durable (`synchronous = FULL`): when this returns the
     /// change is on disk. The body is stored verbatim (internal whitespace and
     /// newlines preserved); only an all-whitespace body counts as "no draft" (JC3).
+    /// Writing a body always resets `resolved_at` to `NULL` — any edit reactivates a
+    /// previously-resolved draft.
     public func upsert(key: String, body: String) throws {
         guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             try deleteRow(key: key)
@@ -164,11 +167,12 @@ public actor StowerDraftStore {
         try databaseQueue.write { database in
             try database.execute(
                 sql: """
-                    INSERT INTO draft (draft_key, body, updated_at)
-                    VALUES (?, ?, ?)
+                    INSERT INTO draft (draft_key, body, updated_at, resolved_at)
+                    VALUES (?, ?, ?, NULL)
                     ON CONFLICT(draft_key) DO UPDATE SET
                       body = excluded.body,
-                      updated_at = excluded.updated_at
+                      updated_at = excluded.updated_at,
+                      resolved_at = NULL
                     """,
                 arguments: [key, body, Date()]
             )
@@ -178,6 +182,33 @@ public actor StowerDraftStore {
     /// Deletes the draft for `key`; a no-op when none exists.
     public func delete(key: String) throws {
         try deleteRow(key: key)
+    }
+
+    /// Marks the draft for `key` sent: sets `resolved_at` to now, keeping the body.
+    ///
+    /// An additive `UPDATE` only — it never routes through `deleteRow`, so the body
+    /// a future undo (`unmarkSent`) needs to restore is never destroyed. A no-op
+    /// when no row exists for `key`.
+    public func markSent(key: String) throws {
+        try databaseQueue.write { database in
+            try database.execute(
+                sql: "UPDATE draft SET resolved_at = ? WHERE draft_key = ?",
+                arguments: [Date(), key]
+            )
+        }
+    }
+
+    /// Un-resolves the draft for `key` (the "Mark as sent" undo): clears
+    /// `resolved_at` back to `NULL`, keeping the body and `updated_at` untouched.
+    ///
+    /// A no-op when no row exists for `key`.
+    public func unmarkSent(key: String) throws {
+        try databaseQueue.write { database in
+            try database.execute(
+                sql: "UPDATE draft SET resolved_at = NULL WHERE draft_key = ?",
+                arguments: [key]
+            )
+        }
     }
 
     private func deleteRow(key: String) throws {

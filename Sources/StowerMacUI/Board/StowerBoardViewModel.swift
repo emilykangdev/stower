@@ -396,5 +396,4 @@ internal final class StowerBoardViewModel {
             await self?.runRefreshLoop(generation: generation)
         }
     }
-
 }

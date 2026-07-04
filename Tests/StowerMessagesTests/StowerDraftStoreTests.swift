@@ -118,9 +118,15 @@ internal struct StowerDraftStoreTests {
         #expect(try await store.all()["raw:d"] == nil)
     }
 
-    // MARK: I-Precious — an additive migration preserves existing drafts
+    // MARK: I-Precious — a FUTURE additive migration preserves existing drafts
+    //
+    // Distinct from `StowerDraftStoreSchemaTests`' I5 (which proves the real
+    // v1→v2-resolved-at migration itself): this proves the store's additive-only
+    // POSTURE holds for a hypothetical NEXT bump layered on top of today's real
+    // schema (v1 + v2-resolved-at already applied via `open`), so a future schema
+    // change can trust the same guarantee.
 
-    @Test("an additive v2 migration preserves an existing draft (I-Precious)")
+    @Test("a future additive migration preserves an existing draft (I-Precious)")
     internal func additiveMigrationPreservesDrafts() async throws {
         let directory = try makeDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -131,14 +137,18 @@ internal struct StowerDraftStoreTests {
         try await original.upsert(key: "email:foo@x.com", body: "draft worth keeping")
 
         // Apply a NEW additive migration out-of-band (a column add), exactly what a
-        // future schema bump would do. The existing v1 id is already applied and so
-        // is skipped; only the additive v2 runs.
+        // future schema bump would do. The existing v1 + v2-resolved-at ids are
+        // already applied and so are skipped; only the new hypothetical v3 runs.
         var migrator = DatabaseMigrator()
         migrator.registerMigration("stower-drafts-v1") { _ in
             // Already applied on this file; registered so the migrator agrees on
             // history. Never re-run.
         }
-        migrator.registerMigration("stower-drafts-v2") { database in
+        migrator.registerMigration("stower-drafts-v2-resolved-at") { _ in
+            // Already applied on this file (via `open`); registered so the
+            // migrator agrees on history. Never re-run.
+        }
+        migrator.registerMigration("stower-drafts-v3-hypothetical") { database in
             try database.alter(table: "draft") { table in
                 table.add(column: "pinned", .boolean)
             }
@@ -149,5 +159,79 @@ internal struct StowerDraftStoreTests {
         // The store reopens cleanly and the draft is intact — no erase on bump.
         let reopened = try StowerDraftStore(path: path)
         #expect(try await reopened.all()["email:foo@x.com"]?.body == "draft worth keeping")
+    }
+
+    // MARK: I1 — markSent keeps the body and sets resolved_at; never deletes
+
+    @Test("markSent keeps the body and sets resolved_at (I1)")
+    internal func markSentKeepsBodyAndSetsResolvedAt() async throws {
+        let store = try StowerDraftStore.inMemory()
+        try await store.upsert(key: "raw:e", body: "call back")
+
+        try await store.markSent(key: "raw:e")
+
+        let record = try await store.all()["raw:e"]
+        #expect(record?.body == "call back")
+        #expect(record?.resolvedAt != nil)
+    }
+
+    // MARK: I2 — a body upsert clears resolved_at (reactivates)
+
+    @Test("a body upsert clears resolved_at, reactivating the draft (I2)")
+    internal func upsertReactivatesResolvedDraft() async throws {
+        let store = try StowerDraftStore.inMemory()
+        try await store.upsert(key: "raw:f", body: "call back")
+        try await store.markSent(key: "raw:f")
+        #expect(try await store.all()["raw:f"]?.resolvedAt != nil)
+
+        try await store.upsert(key: "raw:f", body: "new text")
+
+        #expect(try await store.all()["raw:f"]?.resolvedAt == nil)
+    }
+
+    // MARK: I3 — blank body still deletes even when resolved_at is set
+
+    @Test("a blank body still deletes a resolved draft (I3)")
+    internal func blankBodyDeletesResolvedDraft() async throws {
+        let store = try StowerDraftStore.inMemory()
+        try await store.upsert(key: "raw:g", body: "call back")
+        try await store.markSent(key: "raw:g")
+
+        try await store.upsert(key: "raw:g", body: "   \n ")
+
+        #expect(try await store.all()["raw:g"] == nil)
+    }
+
+    // MARK: I4 — all() round-trips resolvedAt (nil and set)
+
+    @Test("all() round-trips resolvedAt for both an active and a resolved draft (I4)")
+    internal func allRoundTripsResolvedAt() async throws {
+        let store = try StowerDraftStore.inMemory()
+        try await store.upsert(key: "raw:active", body: "still drafting")
+        try await store.upsert(key: "raw:resolved", body: "already sent")
+        try await store.markSent(key: "raw:resolved")
+
+        let drafts = try await store.all()
+        #expect(drafts["raw:active"]?.resolvedAt == nil)
+        #expect(drafts["raw:resolved"]?.resolvedAt != nil)
+    }
+
+    // MARK: I13 — markSent then unmarkSent round-trips (D2 undo)
+
+    @Test(
+        "markSent then unmarkSent round-trips: resolved_at clears, body + updated_at intact (I13)"
+    )
+    internal func markSentThenUnmarkSentRoundTrips() async throws {
+        let store = try StowerDraftStore.inMemory()
+        try await store.upsert(key: "raw:h", body: "call back")
+        let beforeUpdatedAt = try await store.all()["raw:h"]?.updatedAt
+
+        try await store.markSent(key: "raw:h")
+        try await store.unmarkSent(key: "raw:h")
+
+        let record = try await store.all()["raw:h"]
+        #expect(record?.resolvedAt == nil)
+        #expect(record?.body == "call back")
+        #expect(record?.updatedAt == beforeUpdatedAt)
     }
 }

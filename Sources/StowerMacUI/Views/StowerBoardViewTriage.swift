@@ -90,7 +90,10 @@ extension StowerBoardView {
         Button {
             model.openComposer(for: row)
         } label: {
-            StowerNoReplyRowView(row: row, draftPreview: model.drafts[row.draftKey]?.body)
+            StowerNoReplyRowView(
+                row: row,
+                draftPreview: model.activeDraftPreview(key: row.draftKey)
+            )
         }
         .buttonStyle(.plain)
         .overlay(alignment: .trailing) { hoverDismissControl(row) }
@@ -131,8 +134,11 @@ extension StowerBoardView {
     internal func selectableList(_ rows: [StowerBoardRow]) -> some View {
         List(selection: $model.selection) {
             ForEach(rows) { row in
-                StowerNoReplyRowView(row: row, draftPreview: model.drafts[row.draftKey]?.body)
-                    .tag(row.id)
+                StowerNoReplyRowView(
+                    row: row,
+                    draftPreview: model.activeDraftPreview(key: row.draftKey)
+                )
+                .tag(row.id)
             }
         }
     }

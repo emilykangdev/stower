@@ -5,15 +5,28 @@ import SwiftUI
 /// Top to bottom: a header (avatar + name + day-age + close), the read-only
 /// conversation scrollback for context (the shared `StowerThreadBubbleRow` over the
 /// embedded `StowerThreadViewModel`, scrollable), the private draft editor
-/// (`StowerDraftField`, Return = newline, write-through), and "Reply in Messages".
-/// Instantiated only while open. Closing dismisses it — the draft is already
-/// persisted write-through, so there is nothing to save on close.
+/// (`StowerDraftField`, Return = newline, write-through), and the two-step reply
+/// control: "Reply in Messages" (drops the draft), which replaces itself with
+/// "Mark as sent" (resolves the draft and closes the composer, D1). Instantiated
+/// only while open. Closing dismisses it — the draft is already persisted
+/// write-through, so there is nothing to save on close.
 internal struct StowerDraftComposer: View {
     internal let row: StowerBoardRow
     internal let thread: StowerThreadViewModel
     @Binding internal var draft: String
     internal let onReplyInMessages: () -> Void
+    internal let onMarkSent: () -> Void
     internal let onClose: () -> Void
+
+    /// Whether "Reply in Messages" has been clicked this composer session.
+    ///
+    /// View-local (JC3): released automatically when the composer is torn down on
+    /// close, and reset on a conversation switch via the view's `.id(row.chatID)` —
+    /// no manual cleanup needed, unlike a view-model-held flag would require.
+    /// Deliberately NOT derived from `resolvedAt` (A2/bad-pattern): the record stays
+    /// `nil` throughout this toggle, so only an ephemeral flag can distinguish
+    /// before/after the first click.
+    @State private var repliedThisSession = false
 
     internal var body: some View {
         VStack(alignment: .leading, spacing: StowerBoardTheme.headerSpacing) {
@@ -97,22 +110,39 @@ internal struct StowerDraftComposer: View {
         }
     }
 
-    private var replyControls: some View {
-        VStack(alignment: .leading, spacing: StowerBoardTheme.rowTextSpacing) {
-            Button {
-                onReplyInMessages()
-            } label: {
-                Label("Reply in Messages", systemImage: "arrowshape.turn.up.right")
-                    .frame(maxWidth: .infinity)
+    @ViewBuilder private var replyControls: some View {
+        if !repliedThisSession {
+            VStack(alignment: .leading, spacing: StowerBoardTheme.rowTextSpacing) {
+                Button {
+                    onReplyInMessages()
+                    repliedThisSession = true
+                } label: {
+                    Label("Reply in Messages", systemImage: "arrowshape.turn.up.right")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                // Stays enabled even without a deep link: `StowerMessagesDropper.drop`
+                // always writes the draft to the clipboard first and only skips the
+                // open/paste when `deepLink` is nil, so the promised copy-only fallback
+                // stays reachable for rows the engine can't form an `sms:` URL for.
+                Text("Never sent — Stower drops your draft into Messages for you to send.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderedProminent)
-            // Stays enabled even without a deep link: `StowerMessagesDropper.drop`
-            // always writes the draft to the clipboard first and only skips the
-            // open/paste when `deepLink` is nil, so the promised copy-only fallback
-            // stays reachable for rows the engine can't form an `sms:` URL for.
-            Text("Never sent — Stower drops your draft into Messages for you to send.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: StowerBoardTheme.rowTextSpacing) {
+                Button {
+                    onMarkSent()
+                    repliedThisSession = false
+                } label: {
+                    Label("Mark as sent", systemImage: "checkmark.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                Text("Already sent from Messages? Mark this draft as sent.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

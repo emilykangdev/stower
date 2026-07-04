@@ -20,6 +20,14 @@ extension StowerDraftStore {
                 table.column("updated_at", .datetime).notNull()
             }
         }
+        // Additive: a nullable `resolved_at` column. `NULL` = active (shown
+        // everywhere a draft appears); set = resolved (soft-resolve, row kept).
+        // Existing rows read back with `resolved_at = NULL` — no backfill needed.
+        migrator.registerMigration("stower-drafts-v2-resolved-at") { database in
+            try database.alter(table: "draft") { table in
+                table.add(column: "resolved_at", .datetime)
+            }
+        }
         try migrator.migrate(databaseQueue)
     }
 }

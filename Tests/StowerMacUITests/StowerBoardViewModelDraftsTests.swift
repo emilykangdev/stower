@@ -12,7 +12,10 @@ import Testing
 /// (I-ComposerThreadLifecycle), and composer-closes-on-revoke
 /// (I-ComposerClosesOnContactsRevoke).
 ///
-/// Driven by `StowerSpyBoardDataSource` + an in-memory `StowerDraftStoring`.
+/// Driven by `StowerSpyBoardDataSource` + an in-memory `StowerDraftStoring`. The
+/// "Mark as sent" resolve behaviors (I6–I13, D1/D2) live in the sibling
+/// `StowerBoardViewModelDraftResolveTests` to keep this file's scope to the
+/// pre-existing draft write-through/composer-lifecycle contract.
 @MainActor
 @Suite internal struct StowerBoardViewModelDraftsTests {
     private func makeViewModel(
@@ -263,52 +266,4 @@ import Testing
         #expect(model.composerKey == nil)
         #expect(model.composerThread == nil)
     }
-}
-
-/// A draft store whose reads can be made to fail (to exercise the merge path's
-/// failure handling — a failed read must not wipe local drafts) and whose next N
-/// writes can be made to throw (to exercise the write-through retry).
-private actor StowerFlakyDraftStore: StowerDraftStoring {
-    private var entries: [String: StowerDraftEntry]
-    private var failReads = false
-    private var failNextWrites = 0
-
-    init(entries: [String: StowerDraftEntry]) {
-        self.entries = entries
-    }
-
-    func setFailReads(_ failReads: Bool) {
-        self.failReads = failReads
-    }
-
-    /// Makes the next `count` write attempts (upsert/delete) throw before succeeding.
-    func setFailNextWrites(_ count: Int) {
-        failNextWrites = count
-    }
-
-    func all() throws -> [String: StowerDraftEntry] {
-        guard !failReads else { throw StowerFlakyDraftStoreError.readFailed }
-        return entries
-    }
-
-    func upsert(key: String, body: String) throws {
-        try failWriteIfArmed()
-        entries[key] = StowerDraftEntry(body: body, updatedAt: Date())
-    }
-
-    func delete(key: String) throws {
-        try failWriteIfArmed()
-        entries[key] = nil
-    }
-
-    private func failWriteIfArmed() throws {
-        guard failNextWrites > 0 else { return }
-        failNextWrites -= 1
-        throw StowerFlakyDraftStoreError.writeFailed
-    }
-}
-
-private enum StowerFlakyDraftStoreError: Error {
-    case readFailed
-    case writeFailed
 }

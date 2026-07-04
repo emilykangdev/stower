@@ -157,7 +157,7 @@ private struct StowerLiveDraftStore: StowerDraftStoring {
 
     func all() async throws -> [String: StowerDraftEntry] {
         try await store.all().mapValues {
-            StowerDraftEntry(body: $0.body, updatedAt: $0.updatedAt)
+            StowerDraftEntry(body: $0.body, updatedAt: $0.updatedAt, resolvedAt: $0.resolvedAt)
         }
     }
 
@@ -167,6 +167,14 @@ private struct StowerLiveDraftStore: StowerDraftStoring {
 
     func delete(key: String) async throws {
         try await store.delete(key: key)
+    }
+
+    func markSent(key: String) async throws {
+        try await store.markSent(key: key)
+    }
+
+    func unmarkSent(key: String) async throws {
+        try await store.unmarkSent(key: key)
     }
 }
 
