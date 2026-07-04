@@ -76,8 +76,19 @@ extension StowerBoardViewModel {
     /// revert a just-undone `unmarkSent` back to resolved (resolvedAt mismatch:
     /// local nil, fresh set) while the durable write hasn't landed yet — **Codex
     /// P2**: the original guard only covered the markSent direction, so clicking
-    /// the undo bar's Undo could be silently re-hidden by a stale reload.
+    /// the undo bar's Undo could be silently re-hidden by a stale reload. The
+    /// in-flight key set is snapshotted BEFORE the store read so a write that
+    /// completes during the read's suspension can't slip a stale row past the
+    /// guard (**Codex P2**).
     internal func mergeDrafts(generation: Int) async {
+        // Snapshot the in-flight write keys BEFORE the await: a write task clears its
+        // own `inflightWrites[key]` on the main actor, so it can complete AND remove
+        // the entry during the `draftStore.all()` suspension. Reading `inflightWrites`
+        // after the await would then see `nil` for a key whose write only just landed,
+        // letting the divergence guard apply the `fresh` row we read BEFORE that write
+        // — temporarily resurrecting a just-resolved draft (or re-hiding a just-undone
+        // one) even though disk already holds the newer state (**Codex P2**).
+        let inflightAtReadStart = Set(inflightWrites.keys)
         // A FAILED read must leave local state untouched — returning `[:]` here would
         // make the prune below wipe every visible draft on a transient hiccup (they're
         // still on disk). Distinguish failure from a genuine empty store: only prune
@@ -86,7 +97,7 @@ extension StowerBoardViewModel {
         guard generation == loadGeneration else { return }
         for (key, entry) in fresh where key != composerKey {
             let resolvedAtDiverges = (drafts[key]?.resolvedAt != nil) != (entry.resolvedAt != nil)
-            if resolvedAtDiverges, inflightWrites[key] != nil {
+            if resolvedAtDiverges, inflightAtReadStart.contains(key) {
                 // Keep the local resolvedAt: a queued markSent/unmarkSent hasn't
                 // landed yet, so the stale fresh row must not flip the card back
                 // out from under whichever action the user just took.
