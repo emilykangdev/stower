@@ -134,8 +134,8 @@ extension StowerBoardViewModel {
     ///
     /// Called from `applicationShouldTerminate` (JC2); never reached by `cancel()`.
     internal func flushAll() async {
-        for task in inflightWrites.values {
-            await task.value
+        for handle in inflightWrites.values {
+            await handle.task?.value
         }
         // The triage chain ends each action with a durable write before its reload, so
         // awaiting it guarantees a dismiss/mute issued moments before ⌘Q is persisted.
@@ -193,10 +193,12 @@ extension StowerBoardViewModel {
 
     /// Presents the single reused `StowerDismissUndoBar` slot (D2/JC7) for a draft
     /// resolve, bumping the same monotonic sequence a dismiss bar uses so either
-    /// action restarts the one drain timer.
+    /// action restarts the one drain timer. `kind: .markedSent` renders "Marked as
+    /// sent" instead of the dismiss copy — **Codex P2**: the bar previously always
+    /// read "Dismissed" regardless of which action raised it.
     private func showDraftResolveUndoBar() {
         undoBarSequence += 1
-        undoBar = StowerDismissUndoBarState(id: undoBarSequence, count: 1)
+        undoBar = StowerDismissUndoBarState(id: undoBarSequence, count: 1, kind: .markedSent)
     }
 
     /// Registers exactly one undo-manager step for a draft resolve.
@@ -282,22 +284,36 @@ extension StowerBoardViewModel {
     /// failure off the typing path (no error UI mid-edit), but the terminal write
     /// — the last one before quit, with no next keystroke to retry it — must not
     /// silently vanish while the UI shows it saved.
+    ///
+    /// Clears `inflightWrites[key]` when THIS call's handle is still the one
+    /// registered there (reference identity via `StowerDraftWriteHandle`) — an
+    /// older write's cleanup running late must never wipe a NEWER write's
+    /// still-in-flight entry for the same key. Without this, the I10
+    /// `mergeDrafts` guard's `inflightWrites[key] != nil` check stays true
+    /// forever after a key's first write — including a write that ultimately
+    /// FAILED — permanently masking the store's true (correct) state on every
+    /// future reload instead of only the brief window the write is genuinely
+    /// still in flight.
     private func enqueueDraftWrite(key: String, op: @escaping @Sendable () async throws -> Void) {
         let previous = inflightWrites[key]
         let limit = Self.draftWriteRetryLimit
         let backoff = Self.draftWriteRetryBackoff
-        inflightWrites[key] = Task {
-            await previous?.value
+        let handle = StowerDraftWriteHandle()
+        handle.task = Task { [weak self] in
+            await previous?.task?.value
             for attempt in 1...limit {
                 do {
                     try await op()
-                    return
+                    break
                 } catch {
-                    guard attempt < limit else { return }
+                    guard attempt < limit else { break }
                     try? await Task.sleep(for: backoff)
                 }
             }
+            guard let self, self.inflightWrites[key] === handle else { return }
+            self.inflightWrites[key] = nil
         }
+        inflightWrites[key] = handle
     }
 
     /// How many times a write-through draft change retries before giving up.
@@ -306,4 +322,24 @@ extension StowerBoardViewModel {
     /// The backoff between write-through retries (rides out a transient lock /
     /// briefly-full disk without blocking a graceful quit's `flushAll`).
     private static let draftWriteRetryBackoff: Duration = .milliseconds(50)
+}
+
+/// A reference-identity wrapper around one key's in-flight draft write `Task`.
+///
+/// A class (not the bare `Task` struct) so `enqueueDraftWrite`'s completion can
+/// compare `inflightWrites[key] === handle` — reference identity tells whether a
+/// NEWER write for the same key has already replaced this one in the dictionary,
+/// so an older write's cleanup can never wipe a still-in-flight newer entry.
+/// `task` starts `nil` (the task's own closure needs `handle` to exist before the
+/// task itself can be constructed) and is set immediately after, before any other
+/// code can observe the handle — `flushAll` only reads it after `enqueueDraftWrite`
+/// returns, by which point it is always non-`nil`.
+internal final class StowerDraftWriteHandle {
+    /// The write task this handle wraps, or `nil` only during its own construction.
+    internal var task: Task<Void, Never>?
+
+    /// Creates an empty handle; `task` is assigned immediately after.
+    internal init() {
+        task = nil
+    }
 }

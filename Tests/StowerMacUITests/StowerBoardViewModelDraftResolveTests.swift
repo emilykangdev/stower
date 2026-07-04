@@ -227,4 +227,40 @@ import Testing
         #expect(record?.resolvedAt != nil)
     }
 
+    @Test(
+        "a completed markSent write clears inflightWrites, so reload trusts a fresh read (I10 fix)"
+    )
+    internal func completedWriteClearsInflightWritesForFreshReload() async {
+        // Regression test for a Codex P2: inflightWrites[key] was never cleared
+        // once a write finished, so the I10 guard's `inflightWrites[key] != nil`
+        // check stayed true FOREVER after a key's first write — including a
+        // write that had already completed (or failed) long ago — permanently
+        // masking a later, genuinely fresh + correct store read.
+        let row = draftRow(chatID: "c1", handle: "alice")
+        let store = StowerInMemoryDraftStore(entries: [
+            row.draftKey: StowerDraftEntry(body: "call back", updatedAt: Date())
+        ])
+        let spy = StowerSpyBoardDataSource()
+        let oneRow = StowerBoardModel(neglected: [row], ghosted: [])
+        spy.loadModels = [oneRow, oneRow, oneRow]
+        let model = makeViewModel(spy, draftStore: store)
+        model.load()
+        await model.loadTaskHandle?.value
+
+        model.markSent(row)
+        await model.flushAll()
+        #expect(model.inflightWrites[row.draftKey] == nil)
+
+        // Undo it directly in the STORE (bypassing the VM) so the next reload's
+        // fresh read is genuinely active — mirroring "the resolve completed, then
+        // later got reverted by some other means" rather than a race.
+        try? await store.unmarkSent(key: row.draftKey)
+
+        // A later reload must trust this fresh, correct active read — NOT keep
+        // masking it as resolved because of a stale, long-cleared inflight entry.
+        model.load()
+        await model.loadTaskHandle?.value
+
+        #expect(model.drafts[row.draftKey]?.resolvedAt == nil)
+    }
 }

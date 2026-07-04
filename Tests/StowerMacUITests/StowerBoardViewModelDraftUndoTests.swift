@@ -84,6 +84,9 @@ import Testing
 
         model.markSent(row)
         #expect(model.undoBar != nil)
+        // Codex P2 regression: the bar must render/announce as a resolve, not a
+        // dismiss ("Dismissed" would be wrong copy for "Mark as sent").
+        #expect(model.undoBar?.kind == .markedSent)
 
         model.undoLastDismiss()
         await model.flushAll()

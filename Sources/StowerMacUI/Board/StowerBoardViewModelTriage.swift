@@ -305,21 +305,46 @@ extension StowerBoardViewModel {
     private static let mutedSendersSurface = "muted_senders"
 }
 
+/// Which action the reused `StowerDismissUndoBar` slot is currently showing.
+///
+/// Drives the bar's label so a mark-as-sent undo never reads as "Dismissed" to a
+/// sighted user OR VoiceOver (the label doubles as the accessibility label) —
+/// **Codex P2**: deriving copy from `count` alone can't distinguish the two.
+internal enum StowerUndoBarKind: Equatable {
+    /// A triage dismiss/mute undo ("Dismissed" / "N dismissed").
+    case dismissed
+
+    /// A "Mark as sent" undo (D2) — always a single draft, never a batch.
+    case markedSent
+}
+
 /// The transient draining-bar undo slot's state — a single REPLACEABLE slot.
 ///
 /// Reused for both a triage dismiss/mute undo and a mark-as-sent undo (D2/JC7 —
 /// never a parallel bar). Both actions register their reversal on the same
-/// `undoManager` (`registerDismissUndo` / `registerDraftResolveUndo`), so this
-/// state carries only what the bar renders, not which kind of undo is pending.
+/// `undoManager` (`registerDismissUndo` / `registerDraftResolveUndo`); `kind`
+/// only distinguishes the bar's rendered copy, not which manager handles Undo.
 ///
-/// Carries only what the bar renders: a monotonic `id` (so a replaced slot restarts
-/// the drain timer) and the dismissed `count` (1 → "Dismissed", N → "N dismissed").
-/// The dwell duration and copy live on `StowerDismissUndoBar` (the view), keeping the
-/// view-model free of presentation constants.
+/// Carries what the bar renders: a monotonic `id` (so a replaced slot restarts the
+/// drain timer), the dismissed `count` (1 → "Dismissed", N → "N dismissed" — unused
+/// for `.markedSent`, always 1), and `kind`. The dwell duration lives on
+/// `StowerDismissUndoBar` (the view), keeping the view-model free of presentation
+/// timing constants.
 internal struct StowerDismissUndoBarState: Equatable, Identifiable {
     /// The monotonic slot id; a newer dismiss bumps it to restart the drain.
     internal let id: Int
 
     /// How many rows this bar's Undo would restore (1 = single, >1 = batch).
     internal let count: Int
+
+    /// Which action this bar is undoing — drives the rendered/announced label.
+    internal let kind: StowerUndoBarKind
+
+    /// Creates a bar state; `kind` defaults to `.dismissed` so the existing
+    /// triage call sites need no change.
+    internal init(id: Int, count: Int, kind: StowerUndoBarKind = .dismissed) {
+        self.id = id
+        self.count = count
+        self.kind = kind
+    }
 }

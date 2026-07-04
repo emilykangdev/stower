@@ -25,7 +25,10 @@ internal struct StowerDraftComposer: View {
     /// no manual cleanup needed, unlike a view-model-held flag would require.
     /// Deliberately NOT derived from `resolvedAt` (A2/bad-pattern): the record stays
     /// `nil` throughout this toggle, so only an ephemeral flag can distinguish
-    /// before/after the first click.
+    /// before/after the first click. Reset by a further edit to `draft` (see
+    /// `body`'s `.onChange`) — **Codex P2**: without this, editing after a drop
+    /// left "Mark as sent" showing for a body that was never actually re-dropped
+    /// into Messages, so resolving it would silently discard the edit's intent.
     @State private var repliedThisSession = false
 
     internal var body: some View {
@@ -36,6 +39,12 @@ internal struct StowerDraftComposer: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             StowerDraftField(text: $draft)
             replyControls
+        }
+        // A further edit after "Reply in Messages" means the dropped text is now
+        // stale — revert to "Reply in Messages" so the user re-drops the current
+        // body rather than "Mark as sent" resolving text Messages never saw.
+        .onChange(of: draft) { _, _ in
+            repliedThisSession = false
         }
         .padding()
         // Width is fixed (the window is always wider than this); height is a CAP, not
