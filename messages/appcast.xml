@@ -27,4 +27,18 @@
         sparkle:edSignature="oXCkzzSOv9uTx3ZI8xLDLpXDcqDHEiVZXuev1XiDk3Cg+aMQ+aRRG9t7dPw4OgH9pmTJG9c+QfbndNjM6EQMDg=="
       />
     </item>
+      <item>
+      <title>Stower 0.2.0</title>
+      <pubDate>Sat, 04 Jul 2026 06:08:05 +0000</pubDate>
+      <sparkle:releaseNotesLink>https://updates.stower.app/messages/notes/0.2.0.html</sparkle:releaseNotesLink>
+      <sparkle:version>3</sparkle:version>
+      <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+      <sparkle:phasedRolloutInterval>86400</sparkle:phasedRolloutInterval>
+      <enclosure
+        url="https://github.com/emilykangdev/stower/releases/download/messages-v0.2.0/Stower-0.2.0.zip"
+        length="10082366"
+        type="application/octet-stream"
+        sparkle:edSignature="YfcnJlHxtKjOxGDkv1ChjYyuuEsJsuPwDPKVGG3zP9r5IScA50+Z9ZSXAFProGyx82OKfRfZSHeRMtOQpB41Dg=="
+      />
+    </item>
   </channel></rss>
