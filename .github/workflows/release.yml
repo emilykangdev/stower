@@ -116,15 +116,19 @@ jobs:
           # Scripts/release/dmg_settings.py was authored/spiked against — its
           # `hide_extensions` handling is version-tied — so pinning also keeps the
           # DMG build reproducible.
-          # Runner Python is PEP-668 externally-managed, so a bare `pip install`
-          # errors; pipx is preinstalled on GH images but bootstrap it if absent.
-          command -v pipx >/dev/null 2>&1 || python3 -m pip install --user pipx
-          python3 -m pipx install 'dmgbuild==1.6.7'
-          # Expose pipx's console-script dir so the later DMG-build step runs the
-          # installed, pinned copy (`dmgbuild`) instead of `pipx run` re-fetching an
-          # ephemeral env while the keychain is unlocked. ~/.local/bin is pipx's
-          # default PIPX_BIN_DIR on the GH macOS image.
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          #
+          # Use a dedicated venv — NOT pipx. The runner's python3 is Homebrew
+          # python@3.14, which has no `pipx` module (`python3 -m pipx` → "No module
+          # named pipx"), and the preinstalled `pipx` CLI lives in its own venv whose
+          # bin dir isn't reliably on PATH. `python3 -m venv` is exempt from PEP-668,
+          # and installing INTO the venv is not externally-managed, so this is the
+          # robust, self-contained path with an exact bin dir we control.
+          DMG_VENV="$RUNNER_TEMP/dmgbuild-venv"
+          python3 -m venv "$DMG_VENV"
+          "$DMG_VENV/bin/pip" install --disable-pip-version-check 'dmgbuild==1.6.7'
+          # Put the venv's bin on PATH so the later DMG-build step runs THIS exact,
+          # pinned dmgbuild (its console script is named `dmgbuild`).
+          echo "$DMG_VENV/bin" >> "$GITHUB_PATH"
 
       - name: Import Developer ID certificate to temp keychain
         env:
