@@ -6,13 +6,14 @@ import Testing
 
 /// The board view-model's "Mark as sent" draft-resolve behaviors: the Drafts-tab
 /// filter (I6), the inline/composer active-body gate (I7), the local resolve +
-/// composer-close on mark-sent (I8/D1), the reload race guard (I10), the
-/// per-key write-ordering guarantee (I11), the reused-undo-bar round-trip
-/// (I13/D2), and the flaky-write retry parity for the new store ops (I12).
+/// composer-close on mark-sent (I8/D1, including the shared-`draftKey` sibling
+/// case), the reload race guard (I10), and the per-key write-ordering guarantee
+/// (I11).
 ///
-/// Sibling to `StowerBoardViewModelDraftsTests` (which keeps the pre-existing
-/// draft write-through/composer-lifecycle contract); split out to stay under the
-/// file/type length gate.
+/// Sibling to `StowerBoardViewModelDraftsTests` (pre-existing draft
+/// write-through/composer-lifecycle contract) and
+/// `StowerBoardViewModelDraftUndoTests` (the D2 undo/⌘Z/redo/I12/I13 behaviors);
+/// split out to stay under the file/type length gate.
 @MainActor
 @Suite internal struct StowerBoardViewModelDraftResolveTests {
     private func makeViewModel(
@@ -132,6 +133,38 @@ import Testing
         #expect(model.composerThread == nil)
     }
 
+    @Test(
+        "markSent closes the composer for a same-key sibling row (shared draftKey, distinct chatID)"
+    )
+    internal func markSentClosesComposerForSharedKeySibling() async {
+        // Same number, two threads (iMessage + SMS) — one shared draftKey, distinct
+        // chatIDs (A2). The composer is open on the iMessage thread; resolving via
+        // the Drafts-tab card for the SMS sibling (same draftKey) must still close
+        // it — the open composer's editor reads by the shared key, so leaving it
+        // open would show a blanked field for a draft that still "exists" per
+        // composerChatID, misreading as data loss (the exact case D1 guards against).
+        let handle = "+15551112222"
+        let iMessage = draftRow(chatID: "imessage", handle: handle)
+        let sms = draftRow(chatID: "sms", handle: handle)
+        #expect(iMessage.draftKey == sms.draftKey)
+        let store = StowerInMemoryDraftStore(entries: [
+            iMessage.draftKey: StowerDraftEntry(body: "call back", updatedAt: Date())
+        ])
+        let spy = StowerSpyBoardDataSource()
+        spy.loadModels = [StowerBoardModel(neglected: [iMessage, sms], ghosted: [])]
+        let model = makeViewModel(spy, draftStore: store)
+        model.load()
+        await model.loadTaskHandle?.value
+        model.openComposer(for: iMessage)
+        #expect(model.composerChatID == "imessage")
+
+        // Resolve via the SIBLING row (SMS) — different chatID, same draftKey.
+        model.markSent(sms)
+
+        #expect(model.composerKey == nil)
+        #expect(model.composerThread == nil)
+    }
+
     // MARK: I10 — a Flow-2 markSent survives a stale mergeDrafts reload race
 
     @Test(
@@ -194,95 +227,4 @@ import Testing
         #expect(record?.resolvedAt != nil)
     }
 
-    // MARK: I13 (VM-level) — markSent then unmarkSent (D2 undo) round-trips
-
-    @Test("unmarkSent restores the local entry to active, keeping the body (I13)")
-    internal func unmarkSentRestoresActive() async {
-        let row = draftRow(chatID: "c1", handle: "alice")
-        let store = StowerInMemoryDraftStore(entries: [
-            row.draftKey: StowerDraftEntry(body: "call back", updatedAt: Date())
-        ])
-        let spy = StowerSpyBoardDataSource()
-        spy.loadModels = [StowerBoardModel(neglected: [row], ghosted: [])]
-        let model = makeViewModel(spy, draftStore: store)
-        model.load()
-        await model.loadTaskHandle?.value
-
-        model.markSent(row)
-        #expect(model.drafts[row.draftKey]?.resolvedAt != nil)
-
-        model.unmarkSent(row)
-        await model.flushAll()
-
-        #expect(model.drafts[row.draftKey]?.resolvedAt == nil)
-        #expect(model.drafts[row.draftKey]?.body == "call back")
-        #expect(try await store.all()[row.draftKey]?.resolvedAt == nil)
-    }
-
-    @Test("the reused undo bar's Undo (undoLastDismiss) reverses a draft resolve (D2)")
-    internal func undoBarUndoesDraftResolve() async {
-        let row = draftRow(chatID: "c1", handle: "alice")
-        let store = StowerInMemoryDraftStore(entries: [
-            row.draftKey: StowerDraftEntry(body: "call back", updatedAt: Date())
-        ])
-        let spy = StowerSpyBoardDataSource()
-        spy.loadModels = [StowerBoardModel(neglected: [row], ghosted: [])]
-        let model = makeViewModel(spy, draftStore: store)
-        model.load()
-        await model.loadTaskHandle?.value
-
-        model.markSent(row)
-        #expect(model.undoBar != nil)
-        #expect(model.undoBar?.pendingDraftResolve?.id == row.id)
-
-        model.undoLastDismiss()
-        await model.flushAll()
-
-        #expect(model.drafts[row.draftKey]?.resolvedAt == nil)
-        #expect(model.undoBar == nil)
-        #expect(try await store.all()[row.draftKey]?.resolvedAt == nil)
-    }
-
-    // MARK: I12 — the flaky test double covers markSent/unmarkSent + their retry
-
-    @Test("a transient markSent write failure is retried, landing resolved_at (I12)")
-    internal func markSentTransientFailureIsRetried() async throws {
-        let row = draftRow(chatID: "c1", handle: "alice")
-        let store = StowerFlakyDraftStore(entries: [
-            row.draftKey: StowerDraftEntry(body: "call back", updatedAt: Date())
-        ])
-        let spy = StowerSpyBoardDataSource()
-        spy.loadModels = [StowerBoardModel(neglected: [row], ghosted: [])]
-        let model = makeViewModel(spy, draftStore: store)
-        model.load()
-        await model.loadTaskHandle?.value
-
-        await store.setFailNextWrites(1)
-        model.markSent(row)
-        await model.flushAll()
-
-        #expect(try await store.all()[row.draftKey]?.resolvedAt != nil)
-    }
-
-    @Test("a transient unmarkSent write failure is retried, clearing resolved_at (I12)")
-    internal func unmarkSentTransientFailureIsRetried() async throws {
-        let row = draftRow(chatID: "c1", handle: "alice")
-        let store = StowerFlakyDraftStore(entries: [
-            row.draftKey: StowerDraftEntry(body: "call back", updatedAt: Date())
-        ])
-        let spy = StowerSpyBoardDataSource()
-        spy.loadModels = [StowerBoardModel(neglected: [row], ghosted: [])]
-        let model = makeViewModel(spy, draftStore: store)
-        model.load()
-        await model.loadTaskHandle?.value
-
-        model.markSent(row)
-        await model.flushAll()
-
-        await store.setFailNextWrites(1)
-        model.unmarkSent(row)
-        await model.flushAll()
-
-        #expect(try await store.all()[row.draftKey]?.resolvedAt == nil)
-    }
 }

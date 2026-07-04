@@ -158,12 +158,21 @@ extension StowerBoardViewModel {
     /// Marks the draft for `row` sent (Flow 1 composer / Flow 2 checkmark, D1/D2).
     ///
     /// A no-op if the draft is missing or already resolved. Updates the local entry
-    /// immediately (keeping the body), closes the composer if it's the one open for
-    /// this row (D1 — never a side effect of the field clearing, an explicit call),
-    /// presents the reused `StowerDismissUndoBar` (D2), and enqueues the durable
-    /// write chained on this key's `inflightWrites` (I11) so a keystroke-upsert
-    /// already queued for this key cannot land after and reset `resolved_at = NULL`
-    /// on disk.
+    /// immediately (keeping the body), closes the composer if IT'S EDITING THIS
+    /// DRAFT — checked by `composerKey == key` (the shared `draftKey`), not
+    /// `composerChatID == row.chatID` (D1 — never a side effect of the field
+    /// clearing, an explicit call). A same-number iMessage/SMS pair shares one
+    /// `draftKey` but has distinct `chatID`s (A2): resolving from a Drafts-tab
+    /// card for the sibling thread still empties the OPEN composer's editor (its
+    /// `draftBinding` reads by the shared key), so the composer must close then
+    /// too, not only when the exact clicked row's `chatID` matches. Registers ONE
+    /// `UndoManager` step (mirrors `registerDismissUndo`) so BOTH the reused
+    /// `StowerDismissUndoBar`'s Undo button and the app's ⌘Z (which calls
+    /// `undoManager.undo()` directly, not `undoLastDismiss`) reverse this same
+    /// resolve — not whatever dismiss/mute happens to be on the stack. Enqueues
+    /// the durable write chained on this key's `inflightWrites` (I11) so a
+    /// keystroke-upsert already queued for this key cannot land after and reset
+    /// `resolved_at = NULL` on disk.
     internal func markSent(_ row: StowerBoardRow) {
         let key = row.draftKey
         guard let entry = drafts[key], entry.resolvedAt == nil else { return }
@@ -172,28 +181,82 @@ extension StowerBoardViewModel {
             updatedAt: entry.updatedAt,
             resolvedAt: clock()
         )
-        if composerChatID == row.chatID {
+        if composerKey == key {
             closeComposer()
         }
-        presentDraftResolveUndoBar(for: row)
+        registerDraftResolveUndo(for: row)
+        showDraftResolveUndoBar()
         enqueueDraftWrite(key: key) { [draftStore] in
             try await draftStore.markSent(key: key)
         }
     }
 
     /// Presents the single reused `StowerDismissUndoBar` slot (D2/JC7) for a draft
-    /// resolve — bumping the same monotonic sequence a dismiss bar uses (so either
-    /// action restarts the one drain timer) and recording `row` as the state's
-    /// `pendingDraftResolve`, so `undoLastDismiss` routes its Undo to `unmarkSent`
-    /// instead of the triage `UndoManager` stack.
-    private func presentDraftResolveUndoBar(for row: StowerBoardRow) {
+    /// resolve, bumping the same monotonic sequence a dismiss bar uses so either
+    /// action restarts the one drain timer.
+    private func showDraftResolveUndoBar() {
         undoBarSequence += 1
-        undoBar = StowerDismissUndoBarState(id: undoBarSequence, count: 1, pendingDraftResolve: row)
+        undoBar = StowerDismissUndoBarState(id: undoBarSequence, count: 1)
     }
 
-    /// Reverses a "Mark as sent" (the reused undo bar's Undo, D2): restores the
-    /// local entry to active and enqueues the durable `unmarkSent`, chained on the
-    /// same per-key queue as every other draft write.
+    /// Registers exactly one undo-manager step for a draft resolve.
+    ///
+    /// Mirrors `registerDismissUndo`'s undo/redo shape so ⌘Z (which drives the
+    /// same `undoManager` directly) reverses precisely this resolve.
+    private func registerDraftResolveUndo(for row: StowerBoardRow) {
+        undoManager.beginUndoGrouping()
+        undoManager.registerUndo(withTarget: self) { vm in vm.handleUndoDraftResolve(row) }
+        undoManager.setActionName(Self.draftResolveUndoActionName)
+        undoManager.endUndoGrouping()
+    }
+
+    /// The undo handler — runs SYNCHRONOUSLY inside `undo()` (mirrors
+    /// `handleUndoDismiss`): registers the REDO now, defers only the async
+    /// `unmarkSent` write.
+    private func handleUndoDraftResolve(_ row: StowerBoardRow) {
+        undoManager.registerUndo(withTarget: self) { vm in vm.handleRedoDraftResolve(row) }
+        undoManager.setActionName(Self.draftResolveUndoActionName)
+        undoBar = nil
+        unmarkSent(row)
+    }
+
+    /// The redo handler — runs SYNCHRONOUSLY inside `redo()` (mirrors
+    /// `handleRedoDismiss`): re-registers the undo now, defers only the
+    /// re-resolve write + bar.
+    private func handleRedoDraftResolve(_ row: StowerBoardRow) {
+        undoManager.registerUndo(withTarget: self) { vm in vm.handleUndoDraftResolve(row) }
+        undoManager.setActionName(Self.draftResolveUndoActionName)
+        markSentAfterRedo(row)
+    }
+
+    /// Re-resolves `row` from a redo, without re-registering the undo step
+    /// `handleRedoDraftResolve` already set up (that's what `markSent` itself
+    /// would otherwise do, double-registering).
+    private func markSentAfterRedo(_ row: StowerBoardRow) {
+        let key = row.draftKey
+        guard let entry = drafts[key], entry.resolvedAt == nil else { return }
+        drafts[key] = StowerDraftEntry(
+            body: entry.body,
+            updatedAt: entry.updatedAt,
+            resolvedAt: clock()
+        )
+        if composerKey == key {
+            closeComposer()
+        }
+        showDraftResolveUndoBar()
+        enqueueDraftWrite(key: key) { [draftStore] in
+            try await draftStore.markSent(key: key)
+        }
+    }
+
+    /// Reverses a "Mark as sent" (the reused undo bar's Undo AND ⌘Z, D2): restores
+    /// the local entry to active and enqueues the durable `unmarkSent`, chained on
+    /// the same per-key queue as every other draft write.
+    ///
+    /// Called both directly (the pre-`UndoManager` undo path) and via
+    /// `handleUndoDraftResolve` (the registered ⌘Z/bar path) — the latter already
+    /// clears `undoBar` and manages the redo registration, so this method only
+    /// ever touches the local entry + durable write.
     internal func unmarkSent(_ row: StowerBoardRow) {
         let key = row.draftKey
         guard let entry = drafts[key] else { return }
@@ -206,6 +269,9 @@ extension StowerBoardViewModel {
             try await draftStore.unmarkSent(key: key)
         }
     }
+
+    /// The Edit-menu action name ⌘Z surfaces for a draft resolve ("Undo Mark as Sent").
+    private static let draftResolveUndoActionName = "Mark as Sent"
 
     /// Persists one draft change, chained per key so the last-issued write wins.
     ///

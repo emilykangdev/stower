@@ -128,24 +128,18 @@ extension StowerBoardViewModel {
 
     /// The bar's Undo button and ⌘Z are the SAME call — reverse the last action.
     ///
-    /// The single reused bar slot (JC7/D2) can be showing either a dismiss undo or a
-    /// draft-resolve undo; `undoBar?.pendingDraftResolve` discriminates which. A
-    /// draft resolve is NOT on the `UndoManager` ⌘Z stack (only dismiss/mute triage
-    /// actions are), so that branch reverses directly rather than through
-    /// `undoManager.undo()`.
+    /// The single reused bar slot (JC7/D2) can be showing either a dismiss/mute
+    /// undo or a draft-resolve undo; both register their reversal on this SAME
+    /// `undoManager` (`registerDismissUndo` / `registerDraftResolveUndo`), so one
+    /// `undo()` call correctly reverses whichever action is actually on top of the
+    /// stack — this is also why ⌘Z (which drives `undoManager.undo()` directly,
+    /// bypassing this method) stays consistent with the bar's Undo button.
     internal func undoLastDismiss() {
-        if let row = undoBar?.pendingDraftResolve {
-            unmarkSent(row)
-            undoBar = nil
-            return
-        }
         undoManager.undo()
     }
 
-    /// Replaces the single draining-bar slot with a fresh one.
-    ///
-    /// Bumps the id so the view restarts its drain timer. A dismiss/mute bar
-    /// carries no pending draft resolve.
+    /// Replaces the single draining-bar slot with a fresh one (bumps the id so the
+    /// view restarts its drain timer).
     private func showUndoBar(count: Int) {
         undoBarSequence += 1
         undoBar = StowerDismissUndoBarState(id: undoBarSequence, count: count)
@@ -311,32 +305,21 @@ extension StowerBoardViewModel {
     private static let mutedSendersSurface = "muted_senders"
 }
 
-/// The transient draining-bar undo slot's state — a single REPLACEABLE slot,
-/// reused for both a triage dismiss/mute undo and a "Mark as sent" undo (D2/JC7 —
-/// never a parallel bar).
+/// The transient draining-bar undo slot's state — a single REPLACEABLE slot.
 ///
-/// Carries what the bar renders — a monotonic `id` (so a replaced slot restarts
-/// the drain timer) and the dismissed `count` (1 → "Dismissed", N → "N
-/// dismissed") — plus `pendingDraftResolve`, which discriminates what Undo does:
-/// `nil` routes through the triage `UndoManager` stack, set reverses that one
-/// draft's resolve directly (`unmarkSent`). The dwell duration and copy live on
-/// `StowerDismissUndoBar` (the view), keeping the view-model free of presentation
-/// constants.
+/// Reused for both a triage dismiss/mute undo and a mark-as-sent undo (D2/JC7 —
+/// never a parallel bar). Both actions register their reversal on the same
+/// `undoManager` (`registerDismissUndo` / `registerDraftResolveUndo`), so this
+/// state carries only what the bar renders, not which kind of undo is pending.
+///
+/// Carries only what the bar renders: a monotonic `id` (so a replaced slot restarts
+/// the drain timer) and the dismissed `count` (1 → "Dismissed", N → "N dismissed").
+/// The dwell duration and copy live on `StowerDismissUndoBar` (the view), keeping the
+/// view-model free of presentation constants.
 internal struct StowerDismissUndoBarState: Equatable, Identifiable {
     /// The monotonic slot id; a newer dismiss bumps it to restart the drain.
     internal let id: Int
 
     /// How many rows this bar's Undo would restore (1 = single, >1 = batch).
     internal let count: Int
-
-    /// The row this bar's Undo would `unmarkSent`, or `nil` for a dismiss/mute bar.
-    internal let pendingDraftResolve: StowerBoardRow?
-
-    /// Creates a bar state; `pendingDraftResolve` defaults to `nil` (a dismiss/mute
-    /// bar) so the existing triage call sites need no change.
-    internal init(id: Int, count: Int, pendingDraftResolve: StowerBoardRow? = nil) {
-        self.id = id
-        self.count = count
-        self.pendingDraftResolve = pendingDraftResolve
-    }
 }
