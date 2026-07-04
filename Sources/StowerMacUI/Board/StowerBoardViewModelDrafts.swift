@@ -69,10 +69,14 @@ extension StowerBoardViewModel {
     ///
     /// Skips the open composer's key so a background refresh never reverts an
     /// in-flight edit (I-ReloadPreservesEdit), and never calls the store's delete —
-    /// an off-board draft stays in the store untouched (I-NeverDelete). Also guards a
-    /// locally-resolved entry whose `markSent` write is still in flight (I10): a
-    /// reload fed stale (`resolvedAt == nil`) fresh data for that key must NOT revert
-    /// the just-resolved card while the durable write hasn't landed yet.
+    /// an off-board draft stays in the store untouched (I-NeverDelete). Also guards
+    /// EITHER direction of a `resolvedAt` divergence while that key's write is still
+    /// in flight (I10): a reload fed stale fresh data must not revert a just-resolved
+    /// `markSent` back to active (resolvedAt mismatch: local set, fresh nil) NOR
+    /// revert a just-undone `unmarkSent` back to resolved (resolvedAt mismatch:
+    /// local nil, fresh set) while the durable write hasn't landed yet — **Codex
+    /// P2**: the original guard only covered the markSent direction, so clicking
+    /// the undo bar's Undo could be silently re-hidden by a stale reload.
     internal func mergeDrafts(generation: Int) async {
         // A FAILED read must leave local state untouched — returning `[:]` here would
         // make the prune below wipe every visible draft on a transient hiccup (they're
@@ -81,9 +85,11 @@ extension StowerBoardViewModel {
         guard let fresh = try? await draftStore.all() else { return }
         guard generation == loadGeneration else { return }
         for (key, entry) in fresh where key != composerKey {
-            if drafts[key]?.resolvedAt != nil, entry.resolvedAt == nil, inflightWrites[key] != nil {
-                // Keep the in-flight resolve: a queued markSent hasn't landed yet, so
-                // the stale fresh row must not un-resolve the card out from under it.
+            let resolvedAtDiverges = (drafts[key]?.resolvedAt != nil) != (entry.resolvedAt != nil)
+            if resolvedAtDiverges, inflightWrites[key] != nil {
+                // Keep the local resolvedAt: a queued markSent/unmarkSent hasn't
+                // landed yet, so the stale fresh row must not flip the card back
+                // out from under whichever action the user just took.
                 continue
             }
             drafts[key] = entry

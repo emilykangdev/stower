@@ -190,4 +190,47 @@ import Testing
 
         #expect(try await store.all()[row.draftKey]?.resolvedAt == nil)
     }
+
+    @Test(
+        "an in-flight unmarkSent survives a reload fed stale resolved data (I10, symmetric)"
+    )
+    internal func unmarkSentSurvivesStaleReloadRace() async throws {
+        // Regression test for a Codex P2: the I10 mergeDrafts guard originally
+        // only protected the markSent direction (local resolved, fresh active).
+        // The symmetric case — local UNresolved via unmarkSent, fresh still
+        // resolved because the durable write hasn't landed — could get silently
+        // re-hidden as "resolved" by a reload racing ahead of the write.
+        let row = draftRow(chatID: "c1", handle: "alice")
+        let store = StowerFlakyDraftStore(entries: [
+            row.draftKey: StowerDraftEntry(body: "call back", updatedAt: Date())
+        ])
+        let spy = StowerSpyBoardDataSource()
+        let oneRow = StowerBoardModel(neglected: [row], ghosted: [])
+        spy.loadModels = [oneRow, oneRow]
+        let model = makeViewModel(spy, draftStore: store)
+        model.load()
+        await model.loadTaskHandle?.value
+
+        model.markSent(row)
+        await model.flushAll()
+        #expect(try await store.all()[row.draftKey]?.resolvedAt != nil)
+
+        // Arm the NEXT write (unmarkSent's) to fail once, so it stays queued in
+        // inflightWrites (retrying) at the moment the reload below runs — the
+        // store's `all()` still reports the OLD resolved row.
+        await store.setFailNextWrites(1)
+        model.unmarkSent(row)
+        #expect(model.drafts[row.draftKey]?.resolvedAt == nil)
+
+        // A reload races ahead of the retried unmarkSent write landing.
+        model.load()
+        await model.loadTaskHandle?.value
+
+        // The guard must keep the local, just-undone active state — NOT revert
+        // it back to resolved because the fresh read is still stale.
+        #expect(model.drafts[row.draftKey]?.resolvedAt == nil)
+
+        await model.flushAll()
+        #expect(try await store.all()[row.draftKey]?.resolvedAt == nil)
+    }
 }
