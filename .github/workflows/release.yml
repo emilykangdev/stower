@@ -452,15 +452,32 @@ jobs:
           fi
           # The .zip feeds the Sparkle appcast (below); the .dmg is the
           # human-facing download the website "Download" button points at.
+          #
+          # Attach the DMG under TWO names: the versioned Stower-<version>.dmg
+          # (archival — old releases stay browsable with an unambiguous filename)
+          # AND a constant-named Stower.dmg. The constant name is what lets the
+          # website link at GitHub's permanent "latest" redirect —
+          # https://github.com/<owner>/<repo>/releases/latest/download/Stower.dmg —
+          # which resolves to the newest release's asset of that exact name, so the
+          # download button never needs a per-release edit. `latest` tracks the most
+          # recent NON-prerelease, non-draft Release; these are full releases (no
+          # --prerelease), so it resolves correctly. The copy is byte-identical, so
+          # the notarization staple embedded in the DMG travels with it.
+          # Single-source the constant asset name — it must stay identical to what
+          # the website's latest-download redirect points at, so define it once.
+          STABLE_DMG_NAME="Stower.dmg"
+          cp "$DMG_PATH" "$RUNNER_TEMP/$STABLE_DMG_NAME"
           gh release create "$GITHUB_REF_NAME" \
             "$ZIP_PATH" \
             "$DMG_PATH" \
+            "$RUNNER_TEMP/$STABLE_DMG_NAME" \
             --title "Stower $VERSION" \
             --notes-file "$NOTES_FILE"
           ASSET_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$ZIP_NAME"
           echo "ASSET_URL=$ASSET_URL" >> "$GITHUB_ENV"
           DMG_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$DMG_NAME"
-          echo "DMG download URL (point the website at this): $DMG_URL"
+          echo "Versioned DMG URL: $DMG_URL"
+          echo "Stable 'latest' URL for the website: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/$STABLE_DMG_NAME"
 
       - name: Sign update and amend appcast
         if: github.event_name == 'push'
