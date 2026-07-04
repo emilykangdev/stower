@@ -47,18 +47,32 @@ Each entity's first row is a **LIFECYCLE** marker:
 > **Owned + built, PRECIOUS:** `StowerDraftStore` persists the user's private
 > per-conversation drafts in its own `drafts.sqlite` under
 > `~/Library/Application Support/Stower/`. One table, `draft`:
-> `draft_key TEXT PRIMARY KEY`, `body TEXT NOT NULL`, `updated_at DATETIME NOT NULL`.
-> The `draft_key` is the conversation's normalized handle via `StowerDraftKey`
-> (`email:<lowercased>` / `e164:<digits, no +>` / `raw:<handle>`), so a draft
-> survives a chat-GUID flip on an SMS↔iMessage switch and a Contacts edit. It is a
-> default rollback-journaled `DatabaseQueue` (NOT WAL — no `-wal`/`-shm` sidecars,
-> only a transient `-journal` during a write) with `synchronous = FULL` pinned, so
-> every committed change is fsync-durable. A blank/whitespace body deletes the row.
-> Unlike the disposable verdict cache, it is **never erased**: migrations are
-> additive-only and a corrupt file is quarantined aside (`…corrupt-<ts>`), never
-> deleted. It is orthogonal to the engine — it never touches verdicts, ranking, the
-> `inputHash`, or the index, and is intentionally absent from the index diagram
-> below; it owns no index table.
+> `draft_key TEXT PRIMARY KEY`, `body TEXT NOT NULL`, `updated_at DATETIME NOT NULL`,
+> `resolved_at DATETIME` (nullable). The `draft_key` is the conversation's normalized
+> handle via `StowerDraftKey` (`email:<lowercased>` / `e164:<digits, no +>` /
+> `raw:<handle>`), so a draft survives a chat-GUID flip on an SMS↔iMessage switch and
+> a Contacts edit. It is a default rollback-journaled `DatabaseQueue` (NOT WAL — no
+> `-wal`/`-shm` sidecars, only a transient `-journal` during a write) with
+> `synchronous = FULL` pinned, so every committed change is fsync-durable. A
+> blank/whitespace body deletes the row. Unlike the disposable verdict cache, it is
+> **never erased**: migrations are additive-only (`stower-drafts-v1` creates the
+> table; `stower-drafts-v2-resolved-at` adds the column via `ALTER TABLE`) and a
+> corrupt file is quarantined aside (`…corrupt-<ts>`), never deleted. It is
+> orthogonal to the engine — it never touches verdicts, ranking, the `inputHash`, or
+> the index, and is intentionally absent from the index diagram below; it owns no
+> index table.
+>
+> **`resolved_at` = the "mark as sent" soft-resolve (added `stower-drafts-v2`).**
+> `NULL` = active (the draft shows everywhere it appears); a set timestamp = resolved
+> — the row is **kept** (never deleted), so the resolve is reversible, but hidden from
+> all three read surfaces. `StowerDraftStore.markSent(key:)` is an additive `UPDATE`
+> (never routes through `deleteRow`, so the body a later `unmarkSent(key:)` restores
+> survives); `unmarkSent(key:)` clears it back to `NULL`. `upsert(key:body:)` always
+> writes `resolved_at = NULL`, so any body edit reactivates a previously-resolved
+> draft. The three read surfaces that hide a resolved draft (`resolvedAt != nil`) —
+> the Drafts tab (`StowerDraftCard`), the composer, and the inline row preview
+> (`activeDraftPreview`) — filter in the app layer (`StowerBoardViewModelDrafts`),
+> not in SQL: `all()` returns every row and the view model excludes resolved ones.
 
 ```mermaid
 erDiagram

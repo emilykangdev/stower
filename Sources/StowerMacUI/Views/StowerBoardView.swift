@@ -180,9 +180,11 @@ internal struct StowerBoardView: View {
         case .maybeFollowUp:
             lensList(model.board?.rows(for: .ghosted) ?? [], emptyMessage: Self.followUpEmpty)
         case .drafts:
-            StowerDraftsList(cards: model.onBoardDrafts) { row in
-                model.openComposer(for: row)
-            }
+            StowerDraftsList(
+                cards: model.onBoardDrafts,
+                onSelect: { row in model.openComposer(for: row) },
+                onMarkSent: { row in model.markSent(row) }
+            )
         }
     }
 
@@ -231,8 +233,13 @@ internal struct StowerBoardView: View {
                 thread: thread,
                 draft: model.draftBinding(for: row.draftKey),
                 onReplyInMessages: { model.dropIntoMessages(row) },
+                onMarkSent: { model.markSent(row) },
                 onClose: { model.closeComposer() }
             )
+            // Resets the composer's ephemeral `repliedThisSession` flag on a
+            // conversation switch (openComposer swaps the row without closing) —
+            // SwiftUI frees the `@State` when the identity changes (A2).
+            .id(row.chatID)
             .transition(.move(edge: .trailing).combined(with: .opacity))
         }
     }

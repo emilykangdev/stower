@@ -6,6 +6,24 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-07-03: **Drafts "mark as sent" resolution — soft-resolve via a persisted `resolved_at` (branch `manual-dismiss-draft`, PR #50).**
+  Additive `stower-drafts-v2-resolved-at` migration adds a nullable `resolved_at` column to `drafts.sqlite`'s
+  `draft` table (`NULL` = active, set = resolved; the row is **kept**, never deleted, so the resolve is
+  reversible). Store API (`StowerDraftStore` + the app-owned `StowerDraftStoring`): `markSent(key:)` (additive
+  `UPDATE`, never routes through `deleteRow`), `unmarkSent(key:)` (clears back to `NULL`), and `upsert` always
+  writes `resolved_at = NULL` so any body edit reactivates a resolved draft. Two entry points: (1) the
+  `StowerDraftComposer` two-step flow — "Reply in Messages" (drops the draft) → "Mark as sent" (resolves +
+  closes the composer, D1); the button state is session-local, NOT derived from `resolvedAt`, and reverts to
+  "Reply in Messages" on a further edit. (2) a one-tap `StowerDraftsList` trailing checkmark. Undo reuses the
+  single `StowerDismissUndoBar` slot (new `.markedSent` kind → "Marked as sent" copy) and registers a
+  `UndoManager` step so ⌘Z reverses the resolve (`handleUndoDraftResolve` → `unmarkSent`). Resolved drafts are
+  filtered at all three read surfaces in the app layer (`StowerBoardViewModelDrafts`: `StowerDraftCard` list,
+  composer, and `activeDraftPreview` inline preview) — `all()` returns every row; the view model excludes
+  `resolvedAt != nil`. `mergeDrafts` I10 guard keeps a local resolve/undo from being reverted by a stale reload
+  while that key's write is in flight (both directions). Writes serialize per-key through `enqueueDraftWrite`
+  (I11); `flushAll` drains them on quit. Codex loop: 3 iterations, 6 P2 fixed. Docs synced: `Docs/DataModel.md`
+  (schema + resolution semantics). New tests: `StowerBoardViewModelDraftResolveTests`,
+  `StowerBoardViewModelDraftUndoTests`, plus `StowerDraftStore`/schema resolve coverage.
 - 2026-07-01: **Licensing is client-only Lemon Squeezy activate-once + local 7-day trial (branch `v0-prep`, PR #41).**
   No Stower-operated server exists. As-built seam (`Sources/StowerMacUI/Startup/`): `StowerLicenseGating` →
   `StowerLemonSqueezyLicenseGate` composes `StowerLemonSqueezyClient` (the app's ONLY licensing network

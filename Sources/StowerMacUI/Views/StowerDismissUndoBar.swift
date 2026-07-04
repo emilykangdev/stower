@@ -59,9 +59,16 @@ internal struct StowerDismissUndoBar: View {
         .task(id: state.id) { await drain() }
     }
 
-    /// "Dismissed · Undo" for a single row, "N dismissed · Undo" for a batch.
+    /// "Dismissed"/"N dismissed" for a triage undo, "Marked as sent" for a draft
+    /// resolve undo (D2) — this label doubles as the VoiceOver announcement, so a
+    /// mark-as-sent bar must never read "Dismissed".
     private var label: String {
-        state.count > 1 ? "\(state.count) dismissed" : "Dismissed"
+        switch state.kind {
+        case .dismissed:
+            return state.count > 1 ? "\(state.count) dismissed" : "Dismissed"
+        case .markedSent:
+            return "Marked as sent"
+        }
     }
 
     @ViewBuilder private var background: some View {

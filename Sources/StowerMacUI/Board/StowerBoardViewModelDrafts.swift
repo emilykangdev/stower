@@ -23,17 +23,21 @@ extension StowerBoardViewModel {
             ?? board.ghosted.first { $0.chatID == composerChatID }
     }
 
-    /// The on-board conversations that have a draft, one card per `draftKey`.
+    /// The on-board conversations that have an ACTIVE draft, one card per `draftKey`.
     ///
     /// Built only from loaded board rows, so an off-board draft is never surfaced
     /// here (I-DraftsTabOnBoardOnly), and deduped so a conversation appearing in both
-    /// lenses yields a single card.
+    /// lenses yields a single card. A resolved draft (`resolvedAt != nil`) is filtered
+    /// out — one of the three surfaces (with `activeDraftPreview` and the composer
+    /// binding getter) that must all hide a resolved draft.
     internal var onBoardDrafts: [StowerDraftCard] {
         guard let board else { return [] }
         var seen = Set<String>()
         var cards: [StowerDraftCard] = []
         for row in board.neglected + board.ghosted {
-            guard let entry = drafts[row.draftKey], !seen.contains(row.draftKey) else { continue }
+            guard let entry = drafts[row.draftKey], entry.resolvedAt == nil,
+                !seen.contains(row.draftKey)
+            else { continue }
             seen.insert(row.draftKey)
             cards.append(StowerDraftCard(row: row, entry: entry))
         }
@@ -65,8 +69,29 @@ extension StowerBoardViewModel {
     ///
     /// Skips the open composer's key so a background refresh never reverts an
     /// in-flight edit (I-ReloadPreservesEdit), and never calls the store's delete —
-    /// an off-board draft stays in the store untouched (I-NeverDelete).
+    /// an off-board draft stays in the store untouched (I-NeverDelete). Also guards
+    /// EITHER direction of a `resolvedAt` divergence while that key's write is still
+    /// in flight (I10): a reload fed stale fresh data must not revert a just-resolved
+    /// `markSent` back to active (resolvedAt mismatch: local set, fresh nil) NOR
+    /// revert a just-undone `unmarkSent` back to resolved (resolvedAt mismatch:
+    /// local nil, fresh set) while the durable write hasn't landed yet — **Codex
+    /// P2**: the original guard only covered the markSent direction, so clicking
+    /// the undo bar's Undo could be silently re-hidden by a stale reload. The
+    /// in-flight key set is snapshotted BEFORE the store read so a write that
+    /// completes during the read's suspension can't slip a stale row past the
+    /// guard (**Codex P2**). That same snapshot also protects the prune below:
+    /// a key whose write was in flight at read start is never pruned even when
+    /// absent from `fresh`, so a just-`markSent` draft whose upsert/markSent
+    /// hasn't landed yet isn't wiped out from under a pending Undo (**cursor**).
     internal func mergeDrafts(generation: Int) async {
+        // Snapshot the in-flight write keys BEFORE the await: a write task clears its
+        // own `inflightWrites[key]` on the main actor, so it can complete AND remove
+        // the entry during the `draftStore.all()` suspension. Reading `inflightWrites`
+        // after the await would then see `nil` for a key whose write only just landed,
+        // letting the divergence guard apply the `fresh` row we read BEFORE that write
+        // — temporarily resurrecting a just-resolved draft (or re-hiding a just-undone
+        // one) even though disk already holds the newer state (**Codex P2**).
+        let inflightAtReadStart = Set(inflightWrites.keys)
         // A FAILED read must leave local state untouched — returning `[:]` here would
         // make the prune below wipe every visible draft on a transient hiccup (they're
         // still on disk). Distinguish failure from a genuine empty store: only prune
@@ -74,9 +99,24 @@ extension StowerBoardViewModel {
         guard let fresh = try? await draftStore.all() else { return }
         guard generation == loadGeneration else { return }
         for (key, entry) in fresh where key != composerKey {
+            let resolvedAtDiverges = (drafts[key]?.resolvedAt != nil) != (entry.resolvedAt != nil)
+            if resolvedAtDiverges, inflightAtReadStart.contains(key) {
+                // Keep the local resolvedAt: a queued markSent/unmarkSent hasn't
+                // landed yet, so the stale fresh row must not flip the card back
+                // out from under whichever action the user just took.
+                continue
+            }
             drafts[key] = entry
         }
-        let removed = drafts.keys.filter { fresh[$0] == nil && $0 != composerKey }
+        // Prune only keys the store genuinely no longer has — but NOT a key whose
+        // durable write was still in flight when we read (`inflightAtReadStart`): a
+        // just-optimistically-`markSent` draft whose upsert/markSent hasn't landed can
+        // be absent from this stale `fresh`, and pruning it would wipe the in-memory
+        // entry, so a later Undo/`unmarkSent` early-returns (`guard let entry`) and
+        // never enqueues the reversal while the pending resolve still lands on disk.
+        let removed = drafts.keys.filter {
+            fresh[$0] == nil && $0 != composerKey && !inflightAtReadStart.contains($0)
+        }
         for key in removed {
             drafts[key] = nil
         }
@@ -84,21 +124,37 @@ extension StowerBoardViewModel {
 
     /// A write-through binding over the draft for `key`.
     ///
-    /// The getter reads the current body; the setter updates `drafts` and persists
-    /// the change immediately (JC2). Return is a newline in the editor, so there is
-    /// no submit/blur commit step — every change is already on disk.
+    /// The getter reads the current body, but returns `""` when the entry is
+    /// resolved (T-ReactivateBody): the user has already sent it, so its old body
+    /// is never resurfaced for editing on reopen — the body is kept only so D2's
+    /// undo can restore it. The setter updates `drafts` and persists the change
+    /// immediately (JC2); typing there reactivates the draft as a brand-new one.
+    /// Return is a newline in the editor, so there is no submit/blur commit step —
+    /// every change is already on disk.
     internal func draftBinding(for key: String) -> Binding<String> {
         Binding(
-            get: { [weak self] in self?.drafts[key]?.body ?? "" },
+            get: { [weak self] in self?.activeDraftPreview(key: key) ?? "" },
             set: { [weak self] newBody in self?.setDraft(key: key, body: newBody) }
         )
     }
 
+    /// The draft body for `key` iff it's active, or `nil` when resolved/absent.
+    ///
+    /// The single gate all three active-draft surfaces (Drafts tab `onBoardDrafts`,
+    /// composer `draftBinding` getter, inline `StowerNoReplyRowView` preview) read
+    /// through, so a resolved draft can never show its stale body anywhere.
+    internal func activeDraftPreview(key: String) -> String? {
+        guard let entry = drafts[key], entry.resolvedAt == nil else { return nil }
+        return entry.body
+    }
+
     /// Copies the draft, opens the conversation, and best-effort auto-pastes it.
     ///
-    /// Never sends (JC5) — there is no send path to reach.
+    /// Never sends (JC5) — there is no send path to reach. Reads the ACTIVE body
+    /// only (not the raw store entry): re-clicking "Reply in Messages" after a
+    /// resolve must never paste a resolved draft's stale body.
     internal func dropIntoMessages(_ row: StowerBoardRow) {
-        dropper.drop(text: drafts[row.draftKey]?.body ?? "", deepLink: row.deepLink)
+        dropper.drop(text: activeDraftPreview(key: row.draftKey) ?? "", deepLink: row.deepLink)
     }
 
     /// Drains every in-flight write-through upsert AND the in-flight triage action, so
@@ -106,8 +162,8 @@ extension StowerBoardViewModel {
     ///
     /// Called from `applicationShouldTerminate` (JC2); never reached by `cancel()`.
     internal func flushAll() async {
-        for task in inflightWrites.values {
-            await task.value
+        for handle in inflightWrites.values {
+            await handle.task?.value
         }
         // The triage chain ends each action with a durable write before its reload, so
         // awaiting it guarantees a dismiss/mute issued moments before ⌘Q is persisted.
@@ -118,37 +174,174 @@ extension StowerBoardViewModel {
     private func setDraft(key: String, body: String) {
         let cleared = body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         drafts[key] = cleared ? nil : StowerDraftEntry(body: body, updatedAt: clock())
-        commitDraft(key: key, body: body, cleared: cleared)
+        enqueueDraftWrite(key: key) { [draftStore] in
+            if cleared {
+                try await draftStore.delete(key: key)
+            } else {
+                try await draftStore.upsert(key: key, body: body)
+            }
+        }
     }
 
-    /// Persists one draft change, chained per key so the last edit wins.
+    /// Marks the draft for `row` sent (Flow 1 composer / Flow 2 checkmark, D1/D2).
     ///
-    /// A cleared body `delete`s the row outright rather than `upsert`-ing an empty one
-    /// (JC3) — explicit, even though the store's `upsert` already treats a blank body
-    /// as a delete; the test locks that contract. A transient write failure retries
-    /// with a bounded backoff: JC2 keeps the failure off the typing path (no error UI
-    /// mid-edit), but the terminal write — the last edit before quit, with no next
-    /// keystroke to retry it — must not silently vanish while the UI shows it saved.
-    private func commitDraft(key: String, body: String, cleared: Bool) {
+    /// A no-op if the draft is missing or already resolved. Updates the local entry
+    /// immediately (keeping the body), closes the composer if IT'S EDITING THIS
+    /// DRAFT — checked by `composerKey == key` (the shared `draftKey`), not
+    /// `composerChatID == row.chatID` (D1 — never a side effect of the field
+    /// clearing, an explicit call). A same-number iMessage/SMS pair shares one
+    /// `draftKey` but has distinct `chatID`s (A2): resolving from a Drafts-tab
+    /// card for the sibling thread still empties the OPEN composer's editor (its
+    /// `draftBinding` reads by the shared key), so the composer must close then
+    /// too, not only when the exact clicked row's `chatID` matches. Registers ONE
+    /// `UndoManager` step (mirrors `registerDismissUndo`) so BOTH the reused
+    /// `StowerDismissUndoBar`'s Undo button and the app's ⌘Z (which calls
+    /// `undoManager.undo()` directly, not `undoLastDismiss`) reverse this same
+    /// resolve — not whatever dismiss/mute happens to be on the stack. Enqueues
+    /// the durable write chained on this key's `inflightWrites` (I11) so a
+    /// keystroke-upsert already queued for this key cannot land after and reset
+    /// `resolved_at = NULL` on disk.
+    internal func markSent(_ row: StowerBoardRow) {
+        let key = row.draftKey
+        guard let entry = drafts[key], entry.resolvedAt == nil else { return }
+        drafts[key] = StowerDraftEntry(
+            body: entry.body,
+            updatedAt: entry.updatedAt,
+            resolvedAt: clock()
+        )
+        if composerKey == key {
+            closeComposer()
+        }
+        registerDraftResolveUndo(for: row)
+        showDraftResolveUndoBar()
+        enqueueDraftWrite(key: key) { [draftStore] in
+            try await draftStore.markSent(key: key)
+        }
+    }
+
+    /// Presents the single reused `StowerDismissUndoBar` slot (D2/JC7) for a draft
+    /// resolve, bumping the same monotonic sequence a dismiss bar uses so either
+    /// action restarts the one drain timer. `kind: .markedSent` renders "Marked as
+    /// sent" instead of the dismiss copy — **Codex P2**: the bar previously always
+    /// read "Dismissed" regardless of which action raised it.
+    private func showDraftResolveUndoBar() {
+        undoBarSequence += 1
+        undoBar = StowerDismissUndoBarState(id: undoBarSequence, count: 1, kind: .markedSent)
+    }
+
+    /// Registers exactly one undo-manager step for a draft resolve.
+    ///
+    /// Mirrors `registerDismissUndo`'s undo/redo shape so ⌘Z (which drives the
+    /// same `undoManager` directly) reverses precisely this resolve.
+    private func registerDraftResolveUndo(for row: StowerBoardRow) {
+        undoManager.beginUndoGrouping()
+        undoManager.registerUndo(withTarget: self) { vm in vm.handleUndoDraftResolve(row) }
+        undoManager.setActionName(Self.draftResolveUndoActionName)
+        undoManager.endUndoGrouping()
+    }
+
+    /// The undo handler — runs SYNCHRONOUSLY inside `undo()` (mirrors
+    /// `handleUndoDismiss`): registers the REDO now, defers only the async
+    /// `unmarkSent` write.
+    private func handleUndoDraftResolve(_ row: StowerBoardRow) {
+        undoManager.registerUndo(withTarget: self) { vm in vm.handleRedoDraftResolve(row) }
+        undoManager.setActionName(Self.draftResolveUndoActionName)
+        undoBar = nil
+        unmarkSent(row)
+    }
+
+    /// The redo handler — runs SYNCHRONOUSLY inside `redo()` (mirrors
+    /// `handleRedoDismiss`): re-registers the undo now, defers only the
+    /// re-resolve write + bar.
+    private func handleRedoDraftResolve(_ row: StowerBoardRow) {
+        undoManager.registerUndo(withTarget: self) { vm in vm.handleUndoDraftResolve(row) }
+        undoManager.setActionName(Self.draftResolveUndoActionName)
+        markSentAfterRedo(row)
+    }
+
+    /// Re-resolves `row` from a redo, without re-registering the undo step
+    /// `handleRedoDraftResolve` already set up (that's what `markSent` itself
+    /// would otherwise do, double-registering).
+    private func markSentAfterRedo(_ row: StowerBoardRow) {
+        let key = row.draftKey
+        guard let entry = drafts[key], entry.resolvedAt == nil else { return }
+        drafts[key] = StowerDraftEntry(
+            body: entry.body,
+            updatedAt: entry.updatedAt,
+            resolvedAt: clock()
+        )
+        if composerKey == key {
+            closeComposer()
+        }
+        showDraftResolveUndoBar()
+        enqueueDraftWrite(key: key) { [draftStore] in
+            try await draftStore.markSent(key: key)
+        }
+    }
+
+    /// Reverses a "Mark as sent" (the reused undo bar's Undo AND ⌘Z, D2): restores
+    /// the local entry to active and enqueues the durable `unmarkSent`, chained on
+    /// the same per-key queue as every other draft write.
+    ///
+    /// Called both directly (the pre-`UndoManager` undo path) and via
+    /// `handleUndoDraftResolve` (the registered ⌘Z/bar path) — the latter already
+    /// clears `undoBar` and manages the redo registration, so this method only
+    /// ever touches the local entry + durable write.
+    internal func unmarkSent(_ row: StowerBoardRow) {
+        let key = row.draftKey
+        guard let entry = drafts[key] else { return }
+        drafts[key] = StowerDraftEntry(
+            body: entry.body,
+            updatedAt: entry.updatedAt,
+            resolvedAt: nil
+        )
+        enqueueDraftWrite(key: key) { [draftStore] in
+            try await draftStore.unmarkSent(key: key)
+        }
+    }
+
+    /// The Edit-menu action name ⌘Z surfaces for a draft resolve ("Undo Mark as Sent").
+    private static let draftResolveUndoActionName = "Mark as Sent"
+
+    /// Persists one draft change, chained per key so the last-issued write wins.
+    ///
+    /// Every mutation to a key's row — `upsert`, `delete`, `markSent`,
+    /// `unmarkSent` — funnels through here (I11), so a write queued earlier for
+    /// this key always lands before one queued later, never the reverse. A
+    /// transient write failure retries with a bounded backoff: JC2 keeps the
+    /// failure off the typing path (no error UI mid-edit), but the terminal write
+    /// — the last one before quit, with no next keystroke to retry it — must not
+    /// silently vanish while the UI shows it saved.
+    ///
+    /// Clears `inflightWrites[key]` when THIS call's handle is still the one
+    /// registered there (reference identity via `StowerDraftWriteHandle`) — an
+    /// older write's cleanup running late must never wipe a NEWER write's
+    /// still-in-flight entry for the same key. Without this, the I10
+    /// `mergeDrafts` guard's `inflightWrites[key] != nil` check stays true
+    /// forever after a key's first write — including a write that ultimately
+    /// FAILED — permanently masking the store's true (correct) state on every
+    /// future reload instead of only the brief window the write is genuinely
+    /// still in flight.
+    private func enqueueDraftWrite(key: String, op: @escaping @Sendable () async throws -> Void) {
         let previous = inflightWrites[key]
         let limit = Self.draftWriteRetryLimit
         let backoff = Self.draftWriteRetryBackoff
-        inflightWrites[key] = Task { [draftStore] in
-            await previous?.value
+        let handle = StowerDraftWriteHandle()
+        handle.task = Task { [weak self] in
+            await previous?.task?.value
             for attempt in 1...limit {
                 do {
-                    if cleared {
-                        try await draftStore.delete(key: key)
-                    } else {
-                        try await draftStore.upsert(key: key, body: body)
-                    }
-                    return
+                    try await op()
+                    break
                 } catch {
-                    guard attempt < limit else { return }
+                    guard attempt < limit else { break }
                     try? await Task.sleep(for: backoff)
                 }
             }
+            guard let self, self.inflightWrites[key] === handle else { return }
+            self.inflightWrites[key] = nil
         }
+        inflightWrites[key] = handle
     }
 
     /// How many times a write-through draft change retries before giving up.
@@ -157,4 +350,24 @@ extension StowerBoardViewModel {
     /// The backoff between write-through retries (rides out a transient lock /
     /// briefly-full disk without blocking a graceful quit's `flushAll`).
     private static let draftWriteRetryBackoff: Duration = .milliseconds(50)
+}
+
+/// A reference-identity wrapper around one key's in-flight draft write `Task`.
+///
+/// A class (not the bare `Task` struct) so `enqueueDraftWrite`'s completion can
+/// compare `inflightWrites[key] === handle` — reference identity tells whether a
+/// NEWER write for the same key has already replaced this one in the dictionary,
+/// so an older write's cleanup can never wipe a still-in-flight newer entry.
+/// `task` starts `nil` (the task's own closure needs `handle` to exist before the
+/// task itself can be constructed) and is set immediately after, before any other
+/// code can observe the handle — `flushAll` only reads it after `enqueueDraftWrite`
+/// returns, by which point it is always non-`nil`.
+internal final class StowerDraftWriteHandle {
+    /// The write task this handle wraps, or `nil` only during its own construction.
+    internal var task: Task<Void, Never>?
+
+    /// Creates an empty handle; `task` is assigned immediately after.
+    internal init() {
+        task = nil
+    }
 }

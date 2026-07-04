@@ -207,8 +207,9 @@ internal final class StowerBoardViewModel {
 
     /// In-flight write-through upserts, per key, chained in issue order so the last
     /// edit wins. Deliberately OUT of `cancel()`'s reach so the termination flush can
-    /// still drain them (JC2) — a draft must not be lost to the disappear-cancel.
-    internal var inflightWrites: [String: Task<Void, Never>] = [:]
+    /// still drain them (JC2). Cleared once a key's write finishes, so `mergeDrafts`'s
+    /// I10 guard reflects a write genuinely still in flight, not "one ran once."
+    internal var inflightWrites: [String: StowerDraftWriteHandle] = [:]
 
     /// Monotonic id for the draining-bar slot, bumped on each replace so the
     /// `StowerDismissUndoBar` view restarts its drain timer (`.task(id:)`) when the
@@ -396,5 +397,4 @@ internal final class StowerBoardViewModel {
             await self?.runRefreshLoop(generation: generation)
         }
     }
-
 }
