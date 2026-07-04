@@ -68,9 +68,11 @@ didn't mean to touch. Relatedly: never sign the two bundle ids with different si
 identities — that would break the very isolation this split relies on (each grant's
 `csreq` pins the signing identity as well as the bundle id).
 
-**Verify the entitlement actually made it into the signed app:**
+**Verify the entitlement actually made it into the signed app** (the `.app`
+filename follows `PRODUCT_NAME` — `StowerTest.app` for a Debug build, `Stower.app`
+for Release; the internal project stays `StowerMac.xcodeproj`, see `AGENTS.md`):
 ```bash
-codesign -d --entitlements - --xml "<path>/StowerMac.app" | plutil -p - | grep addressbook
+codesign -d --entitlements - --xml "<path>/StowerTest.app" | plutil -p - | grep addressbook
 # expect: "com.apple.security.personal-information.addressbook" => 1
 ```
 

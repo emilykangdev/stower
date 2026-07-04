@@ -120,11 +120,13 @@ otherwise, no report is written, and Sentry logs `no items to flush` on the next
 - **Stay in Xcode:** Edit Scheme → Run → Info → uncheck **"Debug executable."** This is a
   *runtime* toggle (whether LLDB attaches); it does **not** change the Debug build
   configuration, so `#if DEBUG` stays true and the Force Crash menu still appears.
-- **Or** build (`⌘B`) and launch the product directly: `open …/DerivedData/…/Debug/StowerMac.app`.
+- **Or** build (`⌘B`) and launch the product directly: `open …/DerivedData/…/Debug/StowerTest.app`
+  (the Debug config's `PRODUCT_NAME` is `StowerTest` — see the product-vs-internal naming
+  split in `AGENTS.md`).
 
 Sentry writes the report to disk **during** the crash and uploads it on the **next
 launch** (A2) — so crash, relaunch, then check the EU dashboard. Verify capture on disk:
-`~/Library/Caches/SentryCrash/StowerMac/Reports/` gains a file and
+`~/Library/Caches/SentryCrash/StowerTest/Reports/` gains a file and
 `Data/CrashState.json` flips `crashedLastLaunch: true`. (Empty `Reports/` +
 `crashedLastLaunch: false` ⇒ the crash was not caught — almost always the debugger.)
 Stacks are **unsymbolicated** until dSYMs are uploaded (the ops-gated symbolication step).

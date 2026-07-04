@@ -1,16 +1,31 @@
-# Release — StowerMac Distribution Pipeline
+# Release — Stower Distribution Pipeline
 
 Subsystem rationale for the tag-triggered Developer ID + Sparkle release pipeline.
+(The product artifact is `Stower.app` — the internal Xcode scheme/target stays
+`StowerMac`; see the product-vs-internal naming split in `AGENTS.md`.)
 
 ## Overview
 
 A `git push` of a `messages-vX.Y.Z` tag archives, Developer-ID signs, notarizes,
-and staples `StowerMac.app`, attaches the resulting zip to a GitHub Release, and
-amends the Sparkle appcast at `https://updates.stower.app/messages/appcast.xml`.
-An already-installed copy discovers, EdDSA-verifies, and installs the update.
+and staples `Stower.app`, then produces **two** distribution artifacts from it,
+attaches both to a GitHub Release, and amends the Sparkle appcast at
+`https://updates.stower.app/messages/appcast.xml`. An already-installed copy
+discovers, EdDSA-verifies, and installs the update.
 
-Two signing systems converge on one artifact:
-- **Developer ID / notarization** (Gatekeeper): `xcodebuild exportArchive` → `notarytool` → `stapler`
+- **`Stower-<version>.zip`** — the Sparkle appcast enclosure (in-place update, no
+  drag needed). This is the artifact `sign_update` signs into `appcast.xml`.
+- **`Stower-<version>.dmg`** — the human-facing drag-to-Applications download the
+  website "Download" button points at, so a brand-new user lands in
+  `/Applications` instead of running a translocated copy from `~/Downloads`. Built
+  with **`dmgbuild`** (not `create-dmg`): `dmgbuild` writes the `.DS_Store`
+  directly with no Finder/AppleScript, so window styling runs headless on the GitHub
+  runner. Its settings live in `Scripts/release/dmg_settings.py`; the window
+  background is `Scripts/release/dmg-background.png` (the @2x, expanded to a
+  multi-representation TIFF by the workflow via `sips` + `tiffutil`). The DMG is
+  itself codesigned, notarized, and stapled before publish.
+
+Two signing systems converge on the artifacts:
+- **Developer ID / notarization** (Gatekeeper): `xcodebuild exportArchive` → `notarytool` → `stapler` (applied to both the `.app`, the `.zip`'s app, and the `.dmg`)
 - **Sparkle EdDSA** (update integrity): `sign_update` writes a signature into `appcast.xml`
 
 The pipeline is `macos-26` only. `macos-15` max SDK is macOS 26.2 < the 26.4
@@ -213,6 +228,8 @@ Sparkle cannot downgrade. The rollback path is always forward:
 | Sparkle.framework signed (no --deep) | `codesign --verify --strict` on framework |
 | App notarized and stapled | `notarytool --wait` + `stapler staple` |
 | Gatekeeper accepts the artifact | `spctl -a -vvv` + `stapler validate` gate |
+| DMG codesigned with secure timestamp | `codesign --force --timestamp` + `--verify --strict` |
+| DMG notarized and stapled | `notarytool submit --wait` (status == Accepted) + `stapler staple`/`validate` |
 | EdDSA signature present in appcast | `sign_update` output non-empty assertion |
 | SUFeedURL correct in built Info.plist | `PlistBuddy` gate before notarization |
 | SUEnableAutomaticChecks absent (consent-first) | `PlistBuddy` gate |
@@ -222,4 +239,4 @@ Sparkle cannot downgrade. The rollback path is always forward:
 | Release ships authored notes (never empty) | `Docs/release-notes/<VERSION>.md` non-empty check before archive |
 | GitHub Release + Sparkle "what's new" show the same notes | both read `Docs/release-notes/<VERSION>.md` |
 | Dry-run does NOT create a GitHub Release | publish steps gate on `github.event_name == 'push'` |
-| Dry-run DOES notarize + staple (validation, no publish) | notarize/staple/Gatekeeper run on both events; only publish gates on `push` |
+| Dry-run DOES notarize + staple both artifacts (validation, no publish) | app + DMG notarize/staple/Gatekeeper run on both events; only publish gates on `push` (dry-run also uploads the DMG as a workflow artifact for layout inspection) |
