@@ -419,14 +419,14 @@ if [ ! -f "StowerMac/StowerMac.xcodeproj/xcshareddata/xcschemes/StowerMac.xcsche
     echo "       guard's expected path here (precheck.sh). (6p)" >&2
     exit 1
 fi
-if ! grep -q '^\t\t\tname = StowerMac;' StowerMac/StowerMac.xcodeproj/project.pbxproj 2>/dev/null; then
+if ! grep -RInE '^\t\t\tname = StowerMac;' StowerMac/StowerMac.xcodeproj/project.pbxproj 2>/dev/null | grep -q .; then
     echo "ERROR: PBXNativeTarget name = StowerMac; not found in project.pbxproj — the" >&2
     echo "       internal target name must never be swept to match the product identity" >&2
     echo "       (see AGENTS.md naming-map). If this is an intentional internal rename," >&2
     echo "       update this guard's expected name here (precheck.sh). (6p)" >&2
     exit 1
 fi
-if ! grep -nE -- '-scheme StowerMac' .github/workflows/release.yml .github/workflows/ci.yml 2>/dev/null \
+if ! grep -RInE -- '-scheme StowerMac' .github/workflows/release.yml .github/workflows/ci.yml 2>/dev/null \
     | grep -vE ':[0-9]+:[[:space:]]*#' | grep -q .; then
     echo "ERROR: no active (non-comment) '-scheme StowerMac' line found in" >&2
     echo "       .github/workflows/release.yml or ci.yml — the internal scheme name must" >&2

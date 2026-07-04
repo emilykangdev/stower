@@ -323,8 +323,10 @@ jobs:
           # cannot — see the plan's Assumption A3 / Judgment Call JC1).
           # Runner Python is PEP-668 externally-managed, so a bare `pip install`
           # errors; pipx is preinstalled on GH images but bootstrap it if absent.
+          # Invoke pipx as a module (`python3 -m pipx`) so a bootstrapped pipx
+          # works even when its console-script dir (~/.local/bin) isn't on PATH.
           command -v pipx >/dev/null 2>&1 || python3 -m pip install --user pipx
-          pipx install dmgbuild
+          python3 -m pipx install dmgbuild
           # dmgbuild's `background` setting copies the image as-is (no @2x
           # handling), so build a multi-representation TIFF (1x 660x400 + 2x
           # 1320x800) that Finder resolves per display. The committed PNG
@@ -336,7 +338,7 @@ jobs:
           DMG_NAME="Stower-${VERSION}.dmg"
           DMG_PATH="$RUNNER_TEMP/$DMG_NAME"
           rm -f "$DMG_PATH"
-          pipx run dmgbuild -s Scripts/release/dmg_settings.py \
+          python3 -m pipx run dmgbuild -s Scripts/release/dmg_settings.py \
             -D app="$APP_PATH" -D background="$BG_TIFF" \
             "Stower ${VERSION}" "$DMG_PATH"
           echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"

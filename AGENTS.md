@@ -127,8 +127,9 @@ code:
 - **Naming map: product identity vs. internal structure — do not conflate them.**
   Two distinctions, both locked by `Scripts/precheck.sh`'s `6p` guard:
   1. **Product identity ≠ internal `StowerMac` structure.** The user-facing product
-     name (`Stower`/`Stower Test`, the pbxproj's `PRODUCT_NAME` / bundle id /
-     `INFOPLIST_KEY_CFBundleDisplayName`) is independent of the internal
+     name (`Stower`/`Stower Test`, the pbxproj's `PRODUCT_NAME` /
+     `PRODUCT_BUNDLE_IDENTIFIER` / `INFOPLIST_KEY_CFBundleDisplayName`) is
+     independent of the internal
      `StowerMac` scheme, `StowerMac.xcodeproj`, and the `StowerMacUI` /
      `StowerCore` / `StowerMessages` / `StowerPhotos` SPM module names. Do
      **not** sweep `StowerMac → Stower` anywhere in scheme/project/module
