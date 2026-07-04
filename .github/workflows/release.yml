@@ -236,7 +236,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          ZIP_NAME="StowerMac-${VERSION}.zip"
+          ZIP_NAME="Stower-${VERSION}.zip"
           ZIP_PATH="$RUNNER_TEMP/$ZIP_NAME"
           ditto -c -k --keepParent "$APP_PATH" "$ZIP_PATH"
           echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
@@ -306,6 +306,97 @@ jobs:
           xcrun stapler validate "$APP_PATH"
           echo "Post-notarize gates: PASSED"
 
+      # ------------------------------------------------------------------
+      # Human-facing download: a drag-to-Applications DMG. The .zip above
+      # stays the Sparkle appcast artifact (in-place update, no drag needed);
+      # this DMG is what a brand-new user downloads so they land in
+      # /Applications instead of running a translocated copy from ~/Downloads.
+      # Built BEFORE the keychain is deleted (codesign needs the Developer ID
+      # identity) and BEFORE the dry-run stop (so dry-runs validate it too).
+      # ------------------------------------------------------------------
+      - name: Build drag-to-Applications DMG
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # dmgbuild writes .DS_Store directly — no Finder/AppleScript, so this
+          # runs headless on the GH runner (create-dmg's Finder-driven styling
+          # cannot — see the plan's Assumption A3 / Judgment Call JC1).
+          # Runner Python is PEP-668 externally-managed, so a bare `pip install`
+          # errors; pipx is preinstalled on GH images but bootstrap it if absent.
+          command -v pipx >/dev/null 2>&1 || python3 -m pip install --user pipx
+          pipx install dmgbuild
+          # dmgbuild's `background` setting copies the image as-is (no @2x
+          # handling), so build a multi-representation TIFF (1x 660x400 + 2x
+          # 1320x800) that Finder resolves per display. The committed PNG
+          # (Scripts/release/dmg-background.png) is the @2x.
+          BG_1X="$RUNNER_TEMP/dmg-bg-1x.png"
+          BG_TIFF="$RUNNER_TEMP/dmg-background.tiff"
+          sips -z 400 660 Scripts/release/dmg-background.png --out "$BG_1X" >/dev/null
+          tiffutil -cathidpicheck "$BG_1X" Scripts/release/dmg-background.png -out "$BG_TIFF"
+          DMG_NAME="Stower-${VERSION}.dmg"
+          DMG_PATH="$RUNNER_TEMP/$DMG_NAME"
+          rm -f "$DMG_PATH"
+          pipx run dmgbuild -s Scripts/release/dmg_settings.py \
+            -D app="$APP_PATH" -D background="$BG_TIFF" \
+            "Stower ${VERSION}" "$DMG_PATH"
+          echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
+          echo "DMG_NAME=$DMG_NAME" >> "$GITHUB_ENV"
+          echo "Built DMG: $DMG_PATH"
+
+      - name: Codesign DMG (Developer ID + secure timestamp)
+        run: |
+          # Explicit codesign (not create-dmg --codesign) to guarantee the
+          # secure timestamp notarization requires.
+          codesign --force --timestamp --sign "Developer ID Application" "$DMG_PATH"
+          codesign --verify --strict --verbose=2 "$DMG_PATH"
+          echo "DMG codesign: DONE"
+
+      - name: Notarize DMG
+        id: notarize_dmg
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_APP_PASSWORD: ${{ secrets.NOTARY_APP_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+        run: |
+          SUBMISSION_OUTPUT="$(xcrun notarytool submit "$DMG_PATH" \
+            --apple-id "$NOTARY_APPLE_ID" \
+            --password "$NOTARY_APP_PASSWORD" \
+            --team-id "$NOTARY_TEAM_ID" \
+            --wait \
+            --output-format json)"
+          echo "$SUBMISSION_OUTPUT"
+          SUBMISSION_ID="$(echo "$SUBMISSION_OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || true)"
+          STATUS="$(echo "$SUBMISSION_OUTPUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',''))" 2>/dev/null || true)"
+          if [ "$STATUS" != "Accepted" ]; then
+            echo "ERROR: DMG notarization status is '$STATUS', expected 'Accepted'." >&2
+            if [ -n "$SUBMISSION_ID" ]; then
+              xcrun notarytool log "$SUBMISSION_ID" \
+                --apple-id "$NOTARY_APPLE_ID" \
+                --password "$NOTARY_APP_PASSWORD" \
+                --team-id "$NOTARY_TEAM_ID" || true
+            fi
+            exit 1
+          fi
+          echo "DMG notarization: ACCEPTED (id=$SUBMISSION_ID)"
+
+      - name: Staple DMG
+        run: |
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          echo "DMG staple: DONE"
+
+      - name: Upload DMG artifact (dry-run inspection)
+        # On a dry-run the DMG is never published to a Release, and $RUNNER_TEMP is
+        # wiped when the job ends — so upload it as a workflow artifact you can
+        # download and mount to eyeball the dmgbuild window layout. always() so
+        # the file is still captured for inspection even if a later gate failed.
+        if: ${{ always() && github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Stower-dmg
+          path: ${{ env.DMG_PATH }}
+          if-no-files-found: warn
+
       - name: Delete temp keychain
         if: always()
         run: |
@@ -317,8 +408,8 @@ jobs:
       - name: Stop here for dry-run (workflow_dispatch)
         if: github.event_name == 'workflow_dispatch'
         run: |
-          echo "Dry-run complete: notarized + stapled artifact at $ZIP_PATH"
-          echo "Validated: archive, export, signing gates, notarize, staple, Gatekeeper."
+          echo "Dry-run complete: notarized + stapled artifacts at $ZIP_PATH and $DMG_PATH"
+          echo "Validated: archive, export, signing gates, notarize + staple (app AND dmg), Gatekeeper."
           echo "Skipped (real releases only): GitHub Release + appcast publish."
           exit 0
 
@@ -337,12 +428,17 @@ jobs:
             echo "ERROR: release notes missing or empty at $NOTES_FILE." >&2
             exit 1
           fi
+          # The .zip feeds the Sparkle appcast (below); the .dmg is the
+          # human-facing download the website "Download" button points at.
           gh release create "$GITHUB_REF_NAME" \
             "$ZIP_PATH" \
+            "$DMG_PATH" \
             --title "Stower $VERSION" \
             --notes-file "$NOTES_FILE"
           ASSET_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$ZIP_NAME"
           echo "ASSET_URL=$ASSET_URL" >> "$GITHUB_ENV"
+          DMG_URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$DMG_NAME"
+          echo "DMG download URL (point the website at this): $DMG_URL"
 
       - name: Sign update and amend appcast
         if: github.event_name == 'push'

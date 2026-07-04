@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  StowerMac DMG installer background.
+  Authored at @2x: viewBox 0 0 1320 800  (logical window is 660x400 points).
+  KEEP-EMPTY icon zones (real Finder icons render on top):
+    left  app icon  : center (330,400) @2x  == (165,200) @1x
+    right Applications: center (990,400) @2x == (495,200) @1x
+  Nothing decorative is drawn inside those two zones.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="800" viewBox="0 0 1320 800">
+  <defs>
+    <!-- Aged-paper grain -->
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" seed="7" stitchTiles="stitch" result="n"/>
+      <feColorMatrix in="n" type="matrix"
+        values="0 0 0 0 0.42  0 0 0 0 0.31  0 0 0 0 0.19  0 0 0 0.5 0"/>
+    </filter>
+
+    <!-- Fibrous paper texture, very faint -->
+    <filter id="fibers" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="turbulence" baseFrequency="0.012 0.14" numOctaves="3" seed="21" result="f"/>
+      <feColorMatrix in="f" type="matrix"
+        values="0 0 0 0 0.36  0 0 0 0 0.26  0 0 0 0 0.15  0 0 0 0.35 0"/>
+    </filter>
+
+    <!-- Hand-drawn wobble for inked strokes -->
+    <filter id="ink" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="2" seed="4" result="t"/>
+      <feDisplacementMap in="SourceGraphic" in2="t" scale="6" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+
+    <!-- Soft vignette to age the edges -->
+    <radialGradient id="vignette" cx="50%" cy="46%" r="72%">
+      <stop offset="0%"  stop-color="#000000" stop-opacity="0"/>
+      <stop offset="72%" stop-color="#3a2a16" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#3a2a16" stop-opacity="0.16"/>
+    </radialGradient>
+
+    <!-- Subtle top-down warmth on the sheet -->
+    <linearGradient id="sheet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#F7EFDD"/>
+      <stop offset="55%" stop-color="#F3EAD6"/>
+      <stop offset="100%" stop-color="#EEE2C9"/>
+    </linearGradient>
+
+    <!-- Back-of-paper for the dog-ear -->
+    <linearGradient id="flap" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"  stop-color="#FCF6E8"/>
+      <stop offset="100%" stop-color="#EADCBE"/>
+    </linearGradient>
+
+    <filter id="flapShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="-5" dy="6" stdDeviation="7" flood-color="#5b4324" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <!-- Parchment base -->
+  <rect width="1320" height="800" fill="url(#sheet)"/>
+  <rect width="1320" height="800" fill="#8a6d3f" opacity="0.05" filter="url(#fibers)"/>
+  <rect width="1320" height="800" opacity="0.05" filter="url(#grain)"/>
+  <rect width="1320" height="800" fill="url(#vignette)"/>
+
+  <!-- Hand-ruled double border (kept to the margins, clear of icon zones) -->
+  <g filter="url(#ink)" fill="none" stroke="#6B4E32" stroke-linejoin="round">
+    <rect x="70" y="66" width="1180" height="668" rx="10" stroke-width="3" opacity="0.85"/>
+    <rect x="86" y="82" width="1148" height="636" rx="7" stroke-width="1.4" opacity="0.6"/>
+  </g>
+
+  <!-- Corner stitch ticks -->
+  <g stroke="#6B4E32" stroke-width="2.2" stroke-linecap="round" opacity="0.55" filter="url(#ink)">
+    <path d="M104 100 l26 0 M104 100 l0 26"/>
+    <path d="M1216 100 l-26 0 M1216 100 l0 26"/>
+    <path d="M104 700 l26 0 M104 700 l0 -26"/>
+    <path d="M1216 700 l-26 0 M1216 700 l0 -26"/>
+  </g>
+
+  <!-- Title -->
+  <g fill="#5A4128" filter="url(#ink)">
+    <text x="660" y="176" text-anchor="middle"
+          font-family="Baskerville, 'Hoefler Text', Georgia, 'Times New Roman', serif"
+          font-size="72" letter-spacing="6" font-style="italic">Stower</text>
+  </g>
+  <!-- Flourish underline -->
+  <path d="M520 204 C 600 194, 720 194, 800 204" fill="none" stroke="#6B4E32"
+        stroke-width="2.4" stroke-linecap="round" opacity="0.75" filter="url(#ink)"/>
+  <circle cx="500" cy="204" r="3" fill="#6B4E32" opacity="0.7"/>
+  <circle cx="820" cy="204" r="3" fill="#6B4E32" opacity="0.7"/>
+
+  <!-- Running-stitch "thread" arrow, from left zone toward Applications -->
+  <g stroke="#6B4E32" stroke-linecap="round" fill="none" filter="url(#ink)">
+    <!-- thread stitches -->
+    <path d="M500 400 H 812" stroke-width="6" stroke-dasharray="20 13" opacity="0.9"/>
+    <!-- arrowhead -->
+    <path d="M804 372 L 842 400 L 804 428" stroke-width="6" stroke-linejoin="round"/>
+    <!-- loose thread curl at the tail, echoing the spool -->
+    <path d="M500 400 C 480 400, 470 384, 484 378 C 496 373, 500 388, 490 392"
+          stroke-width="3.4" opacity="0.75"/>
+  </g>
+
+  <!-- Install hint -->
+  <text x="660" y="704" text-anchor="middle" fill="#7A5C3C"
+        font-family="Baskerville, 'Hoefler Text', Georgia, serif"
+        font-size="28" font-style="italic" letter-spacing="1.2" filter="url(#ink)"
+        opacity="0.92">Drag to Applications to install</text>
+
+  <!-- Dog-eared top-right corner, matching the app icon's peel -->
+  <g filter="url(#flapShadow)">
+    <!-- revealed layer beneath the lifted corner -->
+    <path d="M1200 66 L 1254 66 L 1254 120 Z" fill="#DECFAF"/>
+    <!-- the folded-over flap -->
+    <path d="M1200 66 L 1254 120 L 1200 120 Z" fill="url(#flap)"
+          stroke="#6B4E32" stroke-width="1.2" stroke-opacity="0.5"/>
+  </g>
+</svg>

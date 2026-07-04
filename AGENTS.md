@@ -83,7 +83,31 @@ No external deps (no plutil/jq/python) — these run on every commit.
 - Do not pull in Hummingbird, swift-nio, or any HTTP server dependency.
   v2 territory.
 - Do not read or write face-identity tables in `Photos.sqlite` (ZPERSON,
-  ZDETECTEDFACE). Use PhotoKit + FastVLM captions.
+  ZDETECTEDFACE). If photo indexing is ever built (see "Photos — two different
+  features" below), it uses PhotoKit + FastVLM captions, never those tables.
+
+## Photos — two different features, do not conflate them
+
+"Photos" means two unrelated things in Stower. Keep them separate in scope and in
+code:
+
+- **Photo *indexing / recall*** — the `StowerPhotos` adapter reading the user's photo
+  library via PhotoKit and captioning it with FastVLM so photos become a searchable
+  source (today `Sources/StowerPhotos` is only a scaffold). This is **uncertain and
+  currently unlikely** — it hinges on unresolved technical details *and* product
+  direction, and may never ship. Do not build toward it or assume it lands; leave
+  `StowerPhotos` a scaffold until a discussion + brief + plan says otherwise.
+- **Photo *attachment in a draft*** — letting the user **drag-and-drop a photo onto a
+  draft** so it rides along into the Messages compose field. This is **in scope, cheap
+  enough for v0**, and serves the core JTBD ("help me send a text" — real texts often
+  include a photo). It needs **no** PhotoKit, no `StowerPhotos`, no library indexing:
+  the photo is user-picked and delivered by the **same clipboard + synthetic ⌘V path**
+  (`StowerMessagesDropper`) as a text draft — never a Return, so it stays send-free
+  (see "Out of scope for v1"). Staging an attachment onto the pasteboard is
+  *populating* the compose field, not sending — it sits inside that send-free
+  carve-out. The one open build-to-learn detail: getting text **and** image into the
+  field in one shot (multi-item pasteboard vs. a two-step paste) — verify empirically,
+  don't assume.
 
 ## Conventions
 
@@ -100,6 +124,24 @@ No external deps (no plutil/jq/python) — these run on every commit.
   `StowerModelUnavailableView`, not "the model screen". Invented English
   paraphrases drift out of sync and aren't greppable; exact names are. If the
   symbol doesn't exist yet, name the one you intend to create, not a vibe.
+- **Naming map: product identity vs. internal structure — do not conflate them.**
+  Two distinctions, both locked by `Scripts/precheck.sh`'s `6p` guard:
+  1. **Product identity ≠ internal `StowerMac` structure.** The user-facing product
+     name (`Stower`/`Stower Test`, the pbxproj's `PRODUCT_NAME` / bundle id /
+     `INFOPLIST_KEY_CFBundleDisplayName`) is independent of the internal
+     `StowerMac` scheme, `StowerMac.xcodeproj`, and the `StowerMacUI` /
+     `StowerCore` / `StowerMessages` / `StowerPhotos` SPM module names. Do
+     **not** sweep `StowerMac → Stower` anywhere in scheme/project/module
+     names — it breaks `-scheme StowerMac` in `ci.yml` + `release.yml`, every
+     `import StowerMacUI`, and `precheck.sh`'s own path guards.
+  2. **Within product identity, `PRODUCT_NAME` and the display name are
+     deliberately different values — do not unify them.** `PRODUCT_NAME` stays
+     space-free (`StowerTest` / `Stower`) because it drives the `.app` filename,
+     the `Contents/MacOS/` binary name (`EXECUTABLE_NAME`), the run scripts'
+     derivation (`Scripts/run-app.sh` / `run-app-demo.sh`), and the `6p` guard's
+     `PRODUCT_NAME` match. `INFOPLIST_KEY_CFBundleDisplayName` carries the space
+     (`"Stower Test"`) for the menu-bar/Finder label only. Unifying them would
+     break the `awk -F ' = '` derivation and the guard.
 
 ## Signal-coding skills
 
