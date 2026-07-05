@@ -80,6 +80,21 @@ license key locally, with no server-side license record carrying a
 `diagnostics_opt_out` for the hook to reconcile against. The hook and its tests
 survive unwired.
 
+## UserDefaults keys
+
+Analytics/diagnostics persist two independent `UserDefaults` blobs. They are kept
+under separate keys on purpose so they can never desync or corrupt each other
+(guarded by `analyticsStorageKeyNeverCollidesWithShownFlag`):
+
+| Key | Symbol | Holds | Written / read by |
+|-----|--------|-------|-------------------|
+| `com.stower.analytics.install-record` | `StowerDiagnosticsStorageLocation.defaultsKey` | The `DiagnosticsInstallRecord` blob — the random per-install `UUID` + the `enabled` opt-out cache | `StowerDiagnosticsIdentity` (UUID) + `StowerDiagnosticsConsent` (opt-out) |
+| `com.stower.analytics.shown` | `StowerDiagnosticsConsent.shownDefaultsKey` | A boolean: has the one-time `StowerAnalyticsConsentCard` disclosure been shown | `StowerDiagnosticsConsent.hasShownDisclosure` / `markDisclosureShown()` |
+
+Both survive relaunch and uninstall→reinstall (`UserDefaults` persists in
+`~/Library/Preferences`); a wiped domain or a different macOS user account starts
+fresh on both.
+
 ## Event taxonomy (typed, PII-safe)
 
 `StowerAnalyticsEvent` is a typed enum; no case accepts a raw string that could carry
