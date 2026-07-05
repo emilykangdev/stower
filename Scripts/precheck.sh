@@ -444,12 +444,20 @@ fi
 #      SCOPE: keychain-item access only — SecItem*/SecKeychain* and the item-query
 #      kSec* constants. Legit Security.framework use stays ALLOWED: `import Security`,
 #      SecKey* (crypto), SecTrust* (TLS pinning), SecCertificate* (code-signing).
-#      Tests/ is intentionally out of scope (test fixtures never ship). Grep family
-#      — line-local token fact; no \b (BSD grep lacks it), explicit tokens instead.
-#      Must-be-ABSENT polarity (a match fails).
-if grep -RInE --include="*.swift" \
-    'SecItem[A-Za-z]*|SecKeychain[A-Za-z]*|kSecClass|kSecMatchLimit|kSecReturnData|kSecReturnAttributes|kSecReturnRef|kSecValueData|kSecValueRef|kSecAttrService|kSecAttrAccount|kSecAttrGeneric|kSecAttrSynchronizable|kSecUseDataProtectionKeychain' \
-    Sources/ StowerMac/StowerMac/ 2>/dev/null; then
+#      Tests/ is intentionally out of scope (test fixtures never ship). awk (not
+#      grep) so a PURE-COMMENT line naming a banned token — a doc mention, not a
+#      compile reference — cannot trip it (same idiom as debug_region_violation
+#      above, and the AGENTS.md 6x-family rule: a stray word in a comment must not
+#      fail the guard). Line-local token fact; no \b (BSD grep lacks it), explicit
+#      tokens. Must-be-ABSENT polarity (a match on a NON-comment line fails).
+keychain_item_pat='SecItem[A-Za-z]*|SecKeychain[A-Za-z]*|kSecClass|kSecMatchLimit|kSecReturnData|kSecReturnAttributes|kSecReturnRef|kSecValueData|kSecValueRef|kSecAttrService|kSecAttrAccount|kSecAttrGeneric|kSecAttrSynchronizable|kSecUseDataProtectionKeychain'
+keychain_hits="$(find Sources/ StowerMac/StowerMac/ -name '*.swift' -type f -print0 2>/dev/null \
+    | xargs -0 awk -v pat="$keychain_item_pat" '
+        /^[[:space:]]*\/\//     { next }
+        ($0 ~ pat)              { print FILENAME ":" FNR ": " $0 }
+    ' 2>/dev/null)"
+if [ -n "$keychain_hits" ]; then
+    printf '%s\n' "$keychain_hits" >&2
     echo "ERROR: a Keychain-item API (SecItem*/SecKeychain*/item-query kSec* constant)" >&2
     echo "       was found in first-party Swift. The diagnostics record lives in" >&2
     echo "       UserDefaults precisely because a launch-path Keychain read raised a" >&2
