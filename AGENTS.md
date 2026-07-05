@@ -28,6 +28,12 @@ Apply the following constraints to every change you make.
 - Do not omit doc comments on `public` declarations. Triple-slash only;
   no `/** */` blocks.
 - Do not use `XCTest` for new tests. Use Swift Testing (`@Test`, `#expect`).
+- Do not name a test with a bare camelCase behavioral name or a `test` prefix. Every
+  `@Test` carries a `("…")` display string describing ONE behavior as a present-tense
+  sentence (tag the invariant it guards, e.g. `(I5)`); a `@Suite`'s display string, when
+  present, is a short noun **label** for the type/subsystem under test (e.g.
+  `"StowerDiagnosticsConsent"`), not a sentence. The `func`/`struct` name is a short
+  label, not the description. Full standard + rationale: `Docs/Tests.md`.
 - Do not exceed function body length 40 lines or cyclomatic complexity 8
   without a `// swiftlint:disable:next` comment that explains why.
 - Do not use real Photos or Messages data in test fixtures, prompts, debug

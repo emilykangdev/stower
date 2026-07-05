@@ -359,9 +359,24 @@ The board's one bottom-banner slot is a 4-state machine
   server-side hook to revoke anything even if it wanted to.
 - **No device binding beyond Lemon Squeezy's own `activation_limit`.** The
   app does not compute or send a hardware fingerprint. Lemon Squeezy's
-  `instance_name` label is purely descriptive ("Stower"); enforcement of
-  "how many machines can activate this key" is entirely Lemon Squeezy's
-  server-side `activation_limit`, not anything the app enforces or checks.
+  `instance_name` label is purely descriptive ("Stower",
+  `StowerLemonSqueezyLicenseGate.defaultInstanceName`); the bound `instance.id`
+  is **server-minted by Lemon Squeezy** on `/v1/licenses/activate`, not derived
+  from the machine. Enforcement of "how many machines can activate this key" is
+  entirely Lemon Squeezy's server-side `activation_limit`, not anything the app
+  computes, sends, or checks.
+- **The diagnostics install id is a SEPARATE identifier — and also not a device
+  fingerprint (do not conflate the two).** Analytics/crash reporting use
+  `StowerDiagnosticsIdentity.clientUser()`: a random per-install `UUID()` stored
+  in `UserDefaults` (`com.stower.analytics.install-record`), minted once and used
+  only to de-duplicate an install's own anonymous event stream (counts, retention,
+  funnels). It is **not** hardware-derived (no IDFV/IDFA/serial), identifies the
+  *install*, not the device or the person (a second macOS account, or wiped app
+  data, yields a new id), and TelemetryDeck double-hashes it (app salt + SHA-256)
+  before any signal leaves the machine — the raw UUID never travels the network.
+  It plays **no role in licensing**: this diagnostics UUID and the license
+  `instance.id` above are unrelated identifiers, neither one a device fingerprint.
+  Full rationale lives in `Docs/Analytics.md` §"Identity (anonymous by construction)".
 
 ---
 

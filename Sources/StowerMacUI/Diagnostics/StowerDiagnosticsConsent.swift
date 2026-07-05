@@ -8,8 +8,8 @@ import Foundation
 /// the stale "on" value and keep emitting. This latch closes that gap: once
 /// `StowerDiagnostics.setEnabled(false)` latches off, every reporter honors it
 /// immediately this session — independent of whether the UserDefaults write
-/// succeeded. Durable off across launches is backstopped by the license
-/// `diagnostics_opt_out` reconcile (JC8).
+/// succeeded. Durable off across launches lives in the `UserDefaults` `enabled`
+/// field; the license `diagnostics_opt_out` reconcile hook (JC8) is unwired.
 ///
 /// Thread-safe (lock-guarded) because reporters may emit off the main actor.
 /// Never re-enables itself; only an explicit user opt-in (`reset()`) clears it.
@@ -43,13 +43,13 @@ internal enum StowerDiagnosticsKillLatch {
 
 /// Manages the diagnostics consent state (analytics + crash reporting).
 ///
-/// Consent is **license-scoped** (JC8): the authoritative source of truth is
-/// the license record's `diagnostics_opt_out` field (parallel licensing
-/// workstream). The **`enabled` field** inside the diagnostics install record
-/// is the **fast local cache** used at launch and when offline.
+/// The authoritative consent value as-built is the **`enabled` field** inside the
+/// diagnostics install record in `UserDefaults`. A license-scoped `diagnostics_opt_out`
+/// reconcile hook (JC8) exists (`reconcile(licenseOptOut:)`) but is currently unwired
+/// — no production caller — so `UserDefaults` is the sole durable authority.
 ///
-/// **Precedence: "off wins."** Diagnostics is off if EITHER the license record
-/// OR the UserDefaults cache says off. Only an explicit user action re-enables.
+/// **Precedence: "off wins."** Diagnostics is off if EITHER the (unwired) license
+/// reconcile OR the UserDefaults cache says off. Only an explicit user action re-enables.
 ///
 /// The **first-run-shown** flag for the disclosure card lives in `UserDefaults`
 /// under a separate key — not in the consent/identity install record.
@@ -59,30 +59,21 @@ internal enum StowerDiagnosticsKillLatch {
 /// the launch path raised a password dialog before the first window drew.
 internal struct StowerDiagnosticsConsent: Sendable {
     private let storage: any StowerLeaseStorage
-    private let legacyKeychainRead: @Sendable () -> Data?
 
     /// The `UserDefaults` key for the first-run disclosure card shown-flag.
     internal static let shownDefaultsKey = "com.stower.analytics.shown"
 
     /// Creates the consent accessor.
     ///
-    /// - Parameters:
-    ///   - storage: The persistence seam (same store as
-    ///     `StowerDiagnosticsIdentity`). Defaults to the real `UserDefaults`-backed
-    ///     store; inject an in-memory fake for tests.
-    ///   - legacyKeychainRead: Reads an upgrading install's pre-migration
-    ///     opt-out. Defaults to the same real Keychain read
-    ///     `StowerDiagnosticsIdentity` uses; inject a fake for tests so they
-    ///     never touch the Keychain.
+    /// - Parameter storage: The persistence seam (same store as
+    ///   `StowerDiagnosticsIdentity`). Defaults to the real `UserDefaults`-backed
+    ///   store; inject an in-memory fake for tests.
     internal init(
         storage: any StowerLeaseStorage = StowerUserDefaultsItem(
             key: StowerDiagnosticsStorageLocation.defaultsKey
-        ),
-        legacyKeychainRead: @escaping @Sendable () -> Data? =
-            StowerDiagnosticsIdentity.readLegacyKeychainRecord
+        )
     ) {
         self.storage = storage
-        self.legacyKeychainRead = legacyKeychainRead
     }
 
     // MARK: — Enabled / disabled
@@ -156,33 +147,12 @@ internal struct StowerDiagnosticsConsent: Sendable {
     // MARK: — Private helpers
 
     private func readRecord() -> DiagnosticsInstallRecord? {
-        // Falls through to migration on ANY failure to produce a record — data
-        // missing entirely, or present but undecodable (matches
-        // StowerDiagnosticsIdentity.storedRecord()'s same fall-through via
-        // clientUser(), so corrupted UserDefaults doesn't skip a real
-        // pre-migration opt-out and re-enable diagnostics for that launch).
         guard let data = storage.readData(),
             let record = try? JSONDecoder().decode(DiagnosticsInstallRecord.self, from: data)
         else {
-            return migrateFromLegacyKeychain()
+            // Missing OR undecodable — treat as a fresh install (default-on).
+            return nil
         }
-        return record
-    }
-
-    /// One-time migration for an install predating the `UserDefaults` move.
-    ///
-    /// Its opt-out lives in the legacy Keychain item, not yet migrated. Mirrors
-    /// `StowerDiagnosticsIdentity`'s own migration, deliberately independent —
-    /// see the `legacyKeychainRead` parameter doc. Once this (or Identity's)
-    /// migration writes the record into `storage`, every later `readRecord()`
-    /// this launch finds it there and never reaches the Keychain again.
-    private func migrateFromLegacyKeychain() -> DiagnosticsInstallRecord? {
-        guard
-            let data = legacyKeychainRead(),
-            let record = try? JSONDecoder().decode(DiagnosticsInstallRecord.self, from: data),
-            UUID(uuidString: record.id) != nil
-        else { return nil }
-        storage.write(data)
         return record
     }
 

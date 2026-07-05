@@ -29,14 +29,17 @@ from the random UUID, not the salt — and must never change, or every existing 
 would look new. The UUID and the cached opt-out share one `UserDefaults` blob
 (`DiagnosticsInstallRecord`) so they can't desync.
 
-An install that predates the `UserDefaults` move has its record in the Keychain
-instead (the original storage). `clientUser()` migrates it forward exactly once —
-read-only, coordinates unchanged (`StowerDiagnosticsLegacyKeychainKeys`) — so an
-upgrading install keeps its identity and its opt-out instead of silently minting a
-fresh UUID and resetting to default-on. `UserDefaults` moved off the Keychain
-specifically because a Keychain read on the launch path raised the macOS "allow
-access to your keychain" password dialog before the first window drew; the
-migration reads the Keychain once per install, never again.
+The install record lives **only** in `UserDefaults` — the app makes no Keychain
+call at all. An earlier build migrated a pre-`UserDefaults` install's record forward
+by reading a legacy Keychain item on the launch path, but that read raised the macOS
+"allow access to your keychain" password dialog before the first window drew — for
+cross-signature upgraders it **blocked the app from opening**. The migration was
+removed; `clientUser()` now goes straight from a missing/undecodable record to minting
+a fresh UUID (the handful of pre-`UserDefaults` testers lose analytics continuity and
+re-toggle any opt-out in Settings — accepted). A `Scripts/precheck.sh` `6q` guard bans
+Keychain-item APIs (`SecItem*` / item-query `kSec*`) in first-party Swift so the
+launch-blocking read can never come back; legit `Security.framework` use
+(`SecKey`/`SecTrust`/`SecCertificate`) stays allowed.
 
 ## Kill switch (never-start, not stop)
 
@@ -79,6 +82,21 @@ caller today**: the client-only Lemon Squeezy activate-once flow stores only a
 license key locally, with no server-side license record carrying a
 `diagnostics_opt_out` for the hook to reconcile against. The hook and its tests
 survive unwired.
+
+## UserDefaults keys
+
+Analytics/diagnostics persist two independent `UserDefaults` blobs. They are kept
+under separate keys on purpose so they can never desync or corrupt each other
+(guarded by `analyticsStorageKeyNeverCollidesWithShownFlag`):
+
+| Key | Symbol | Holds | Written / read by |
+|-----|--------|-------|-------------------|
+| `com.stower.analytics.install-record` | `StowerDiagnosticsStorageLocation.defaultsKey` | The `DiagnosticsInstallRecord` blob — the random per-install `UUID` + the `enabled` opt-out cache | `StowerDiagnosticsIdentity` (UUID) + `StowerDiagnosticsConsent` (opt-out) |
+| `com.stower.analytics.shown` | `StowerDiagnosticsConsent.shownDefaultsKey` | A boolean: has the one-time `StowerAnalyticsConsentCard` disclosure been shown | `StowerDiagnosticsConsent.hasShownDisclosure` / `markDisclosureShown()` |
+
+Both survive relaunch and uninstall→reinstall (`UserDefaults` persists in
+`~/Library/Preferences`); a wiped domain or a different macOS user account starts
+fresh on both.
 
 ## Event taxonomy (typed, PII-safe)
 

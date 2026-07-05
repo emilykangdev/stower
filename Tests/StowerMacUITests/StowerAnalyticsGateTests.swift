@@ -13,15 +13,15 @@ import Testing
 
         let storage = StowerInMemoryLeaseStorage()
         // Pre-write a record with enabled=false.
-        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
+        let consent = StowerDiagnosticsConsent(storage: storage)
         consent.setEnabled(false)
 
         var makeClientCalled = false
 
         // Initialize with disabled consent — makeClient must NOT be called.
         StowerAnalytics.startBackend(
-            consent: StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil }),
-            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
+            consent: StowerDiagnosticsConsent(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage),
             makeClient: { _, _, _ in makeClientCalled = true }
         )
 
@@ -44,8 +44,8 @@ import Testing
         var makeClientCalled = false
 
         StowerAnalytics.startBackend(
-            consent: StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil }),
-            identity: StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil }),
+            consent: StowerDiagnosticsConsent(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage),
             makeClient: { _, _, _ in makeClientCalled = true }
         )
 
@@ -80,7 +80,7 @@ import Testing
         defer { StowerAnalytics.resetForTesting() }
 
         let storage = StowerInMemoryLeaseStorage()
-        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
+        let consent = StowerDiagnosticsConsent(storage: storage)
         // Fresh storage = enabled cache (default-on).
         #expect(consent.isEnabled == true)
 
