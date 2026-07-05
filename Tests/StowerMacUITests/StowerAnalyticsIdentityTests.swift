@@ -1,5 +1,4 @@
 import Foundation
-import Synchronization
 import Testing
 
 @testable import StowerMacUI
@@ -10,7 +9,7 @@ import Testing
 
     @Test internal func returnsStableIDOnMultipleCalls() {
         let storage = StowerInMemoryLeaseStorage()
-        let identity = StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil })
+        let identity = StowerDiagnosticsIdentity(storage: storage)
         let first = identity.clientUser()
         let second = identity.clientUser()
         #expect(first == second)
@@ -18,24 +17,15 @@ import Testing
 
     @Test internal func survivesFreshStorageReinit() {
         let storage = StowerInMemoryLeaseStorage()
-        let id1 = StowerDiagnosticsIdentity(
-            storage: storage,
-            legacyKeychainRead: { nil }
-        ).clientUser()
+        let id1 = StowerDiagnosticsIdentity(storage: storage).clientUser()
         // Simulating a reinstall with the same backing storage (UserDefaults survives).
-        let id2 = StowerDiagnosticsIdentity(
-            storage: storage,
-            legacyKeychainRead: { nil }
-        ).clientUser()
+        let id2 = StowerDiagnosticsIdentity(storage: storage).clientUser()
         #expect(id1 == id2)
     }
 
     @Test internal func mintsValidUUIDOnFreshStorage() {
         let storage = StowerInMemoryLeaseStorage()
-        let id = StowerDiagnosticsIdentity(
-            storage: storage,
-            legacyKeychainRead: { nil }
-        ).clientUser()
+        let id = StowerDiagnosticsIdentity(storage: storage).clientUser()
         #expect(UUID(uuidString: id) != nil, "clientUser() must return a valid UUID string")
     }
 
@@ -49,62 +39,26 @@ import Testing
 
     @Test internal func freshStorageDefaultsEnabled() {
         let storage = StowerInMemoryLeaseStorage()
-        let consent = StowerDiagnosticsConsent(storage: storage, legacyKeychainRead: { nil })
+        let consent = StowerDiagnosticsConsent(storage: storage)
         // Default-on for a fresh install.
         #expect(consent.isEnabled == true)
     }
 
-    @Test internal func migratesLegacyKeychainRecordWhenStorageIsEmpty() throws {
-        // An upgrading install: nothing in UserDefaults yet, but the pre-migration
-        // Keychain item holds the real record — including a prior opt-out.
-        let legacyID = UUID().uuidString
-        let legacyRecord = try JSONEncoder().encode(
-            DiagnosticsInstallRecord(id: legacyID, enabled: false)
-        )
+    @Test("undecodable storage mints a fresh valid identity (I4)")
+    internal func undecodableStorageMintsFreshIdentity() {
+        // UserDefaults holds bytes that fail to decode as a
+        // DiagnosticsInstallRecord — treat as a fresh install and mint a valid
+        // UUID rather than crashing or returning garbage.
         let storage = StowerInMemoryLeaseStorage()
-        let identity = StowerDiagnosticsIdentity(
-            storage: storage,
-            legacyKeychainRead: { legacyRecord }
-        )
+        storage.write(Data("not valid json".utf8))
 
+        let identity = StowerDiagnosticsIdentity(storage: storage)
         let returned = identity.clientUser()
 
         #expect(
-            returned == legacyID,
-            "an upgrading install must keep its pre-migration identity, not mint a fresh one"
+            UUID(uuidString: returned) != nil,
+            "undecodable storage must mint a valid UUID, not return garbage"
         )
-        // The migration must persist forward, not just return the value in memory.
-        let persisted = try #require(storage.readData())
-        let decoded = try JSONDecoder().decode(DiagnosticsInstallRecord.self, from: persisted)
-        #expect(decoded.id == legacyID)
-        #expect(
-            decoded.enabled == false,
-            "a prior opt-out must survive the migration, not silently reset to default-on"
-        )
-    }
-
-    @Test internal func legacyKeychainOnlyReadOncePerInstall() throws {
-        // After the first `clientUser()` migrates the record into `storage`,
-        // a second call must never touch the legacy read again — it should
-        // already be satisfied by `storedRecord()`.
-        let legacyRecord = try JSONEncoder().encode(
-            DiagnosticsInstallRecord(id: UUID().uuidString, enabled: true)
-        )
-        let legacyReadCount = Mutex(0)
-        let storage = StowerInMemoryLeaseStorage()
-        let identity = StowerDiagnosticsIdentity(
-            storage: storage,
-            legacyKeychainRead: {
-                legacyReadCount.withLock { $0 += 1 }
-                return legacyRecord
-            }
-        )
-
-        let first = identity.clientUser()
-        let second = identity.clientUser()
-
-        #expect(first == second)
-        #expect(legacyReadCount.withLock { $0 } == 1)
     }
 
     @Test internal func garbageIDTreatedAsFreshInstall() throws {
@@ -113,7 +67,7 @@ import Testing
         let garbled = Data(#"{"id":"not-a-uuid","enabled":true}"#.utf8)
         storage.write(garbled)
 
-        let identity = StowerDiagnosticsIdentity(storage: storage, legacyKeychainRead: { nil })
+        let identity = StowerDiagnosticsIdentity(storage: storage)
         let returned = identity.clientUser()
 
         // The garbage id must be rejected and a new valid UUID minted.

@@ -435,3 +435,27 @@ if ! grep -RInE -- '-scheme StowerMac' .github/workflows/release.yml .github/wor
     echo "       scheme name here (precheck.sh). (6p)" >&2
     exit 1
 fi
+
+# 6q — No Keychain-ITEM API in first-party Swift (Sources/ + StowerMac/StowerMac/).
+#      The diagnostics install record lives in UserDefaults, not the Keychain: a
+#      Keychain read on the launch path raised the macOS "allow access to your
+#      keychain" dialog that BLOCKS the app from opening for cross-signature
+#      upgraders. That read is removed; this guard keeps it from coming back.
+#      SCOPE: keychain-item access only — SecItem*/SecKeychain* and the item-query
+#      kSec* constants. Legit Security.framework use stays ALLOWED: `import Security`,
+#      SecKey* (crypto), SecTrust* (TLS pinning), SecCertificate* (code-signing).
+#      Tests/ is intentionally out of scope (test fixtures never ship). Grep family
+#      — line-local token fact; no \b (BSD grep lacks it), explicit tokens instead.
+#      Must-be-ABSENT polarity (a match fails).
+if grep -RInE --include="*.swift" \
+    'SecItem[A-Za-z]*|SecKeychain[A-Za-z]*|kSecClass|kSecMatchLimit|kSecReturnData|kSecReturnAttributes|kSecReturnRef|kSecValueData|kSecValueRef|kSecAttrService|kSecAttrAccount|kSecAttrGeneric|kSecAttrSynchronizable|kSecUseDataProtectionKeychain' \
+    Sources/ StowerMac/StowerMac/ 2>/dev/null; then
+    echo "ERROR: a Keychain-item API (SecItem*/SecKeychain*/item-query kSec* constant)" >&2
+    echo "       was found in first-party Swift. The diagnostics record lives in" >&2
+    echo "       UserDefaults precisely because a launch-path Keychain read raised a" >&2
+    echo "       password dialog that blocks app launch — do not reintroduce it. Legit" >&2
+    echo "       Security.framework use (import Security, SecKey/SecTrust/SecCertificate)" >&2
+    echo "       is allowed; if you need one that trips this guard, narrow the token list" >&2
+    echo "       here (precheck.sh). Keep any 'Keychain' rationale in prose, not API tokens. (6q)" >&2
+    exit 1
+fi
