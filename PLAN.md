@@ -6,6 +6,21 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-07-04: **Legacy diagnostics Keychain migration removed; Keychain-item APIs locked out (branch `remove-legacy-keychain-migration`, PR #54).**
+  The diagnostics install record (`DiagnosticsInstallRecord`) now lives **only** in `UserDefaults`
+  (`StowerDiagnosticsStorageLocation.defaultsKey`). The earlier launch-path read of a legacy Keychain item —
+  meant to migrate a pre-`UserDefaults` install's record forward — raised the macOS "allow access to your
+  keychain" password dialog before the first window drew and **blocked the app from opening** for
+  cross-signature upgraders, so it was deleted along with all `import Security` / `SecItem*` usage from
+  `Sources/StowerMacUI/Diagnostics/StowerDiagnosticsIdentity.swift` and `StowerDiagnosticsConsent.swift`.
+  `StowerDiagnosticsIdentity.clientUser()` now goes straight from a missing/undecodable record to minting a
+  fresh random `UUID` (the handful of pre-`UserDefaults` testers lose analytics continuity and re-toggle any
+  opt-out in Settings — accepted). New precheck static guard **6q** bans Keychain-item APIs
+  (`SecItem*`/`SecKeychain*`/item-query `kSec*`) in first-party Swift (`Sources/` + `StowerMac/StowerMac/`) so
+  the launch-blocking read can't return; legit `Security.framework` use (`SecKey`/`SecTrust`/`SecCertificate`,
+  `import Security`) stays allowed, and 6q is `awk`-based so a pure-comment mention of a banned token can't trip
+  it. Docs synced from as-built code: `Docs/Analytics.md` (identity/migration section + `6q`), `Docs/Tests.md`,
+  `AGENTS.md`. Tests updated across the diagnostics/analytics suites (identity, consent, gate, crash-reporting).
 - 2026-07-03: **Drafts "mark as sent" resolution — soft-resolve via a persisted `resolved_at` (branch `manual-dismiss-draft`, PR #50).**
   Additive `stower-drafts-v2-resolved-at` migration adds a nullable `resolved_at` column to `drafts.sqlite`'s
   `draft` table (`NULL` = active, set = resolved; the row is **kept**, never deleted, so the resolve is
