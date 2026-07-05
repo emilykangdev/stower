@@ -14,9 +14,11 @@ this file owns the **naming standard** and its rationale.
 
 ## Naming standard (the rule)
 
-**Every `@Test` and `@Suite` carries a string display name: a lowercase,
-present-tense sentence describing the *behavior*.** The Swift function name is a
-short identifier only — never the description.
+**Every `@Test` carries a string display name: a lowercase, present-tense sentence
+describing the *behavior*.** A `@Suite`'s display name, when present, is a short
+**label** for the type/subsystem under test — a noun phrase like
+`"StowerDiagnosticsConsent"`, not a behavior sentence. The Swift function/struct name
+is a short identifier only — never the behavior description.
 
 ```swift
 // ✅ standard

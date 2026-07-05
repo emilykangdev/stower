@@ -5,7 +5,7 @@ import Testing
 
 /// Tests `StowerDiagnosticsConsent`: enabled default, opt-out, "off wins"
 /// reconciliation, and the "never auto-re-enables" invariant (JC8).
-@Suite internal struct StowerAnalyticsConsentTests {
+@Suite(.serialized) @MainActor internal struct StowerAnalyticsConsentTests {
 
     @Test internal func defaultsOnForFreshInstall() {
         let storage = StowerInMemoryLeaseStorage()
