@@ -1,5 +1,5 @@
 {
-  "originHash" : "968fe2040fb11d3f120798f60f673956a263b40c3da371aead2d3fcc39927ed0",
+  "originHash" : "7dee4970addcf7209427fe990fe7f42ccaa261a5cc04b4ebf23b992cead866b8",
   "pins" : [
     {
       "identity" : "combine-schedulers",
@@ -38,12 +38,21 @@
       }
     },
     {
+      "identity" : "opencombine",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/OpenCombine/OpenCombine.git",
+      "state" : {
+        "revision" : "8576f0d579b27020beccbccc3ea6844f3ddfc2c2",
+        "version" : "0.14.0"
+      }
+    },
+    {
       "identity" : "sentry-cocoa",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/getsentry/sentry-cocoa",
       "state" : {
-        "revision" : "00a2fec32ea665b81e406419e078bb713238e23f",
-        "version" : "9.19.0"
+        "revision" : "08bea0774bf7b0dd17c2a2745cf476f785998e3c",
+        "version" : "9.20.0"
       }
     },
     {
