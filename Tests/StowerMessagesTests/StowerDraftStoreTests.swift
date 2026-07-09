@@ -234,4 +234,26 @@ internal struct StowerDraftStoreTests {
         #expect(record?.body == "call back")
         #expect(record?.updatedAt == beforeUpdatedAt)
     }
+
+    // MARK: I9 — defaultURL(inFolder:) resolves under Application Support/<folderName>/
+
+    @Test(
+        "defaultURL(inFolder:) resolves under Application Support/<folderName>/drafts.sqlite (I9)"
+    )
+    internal func defaultURLResolvesUnderGivenFolder() {
+        let url = StowerDraftStore.defaultURL(inFolder: "SomeTestFolder")
+        #expect(url?.lastPathComponent == StowerDraftStore.fileName)
+        #expect(url?.deletingLastPathComponent().lastPathComponent == "SomeTestFolder")
+    }
+
+    // MARK: I11 — defaultURL(inFolder:) rejects an unsafe folder name
+
+    @Test("defaultURL(inFolder:) rejects an empty, traversal, or multi-segment folder name (I11)")
+    internal func defaultURLRejectsUnsafeFolderNames() {
+        #expect(StowerDraftStore.defaultURL(inFolder: "") == nil)
+        #expect(StowerDraftStore.defaultURL(inFolder: "../evil") == nil)
+        #expect(StowerDraftStore.defaultURL(inFolder: "a/b") == nil)
+        #expect(StowerDraftStore.defaultURL(inFolder: "..") == nil)
+        #expect(StowerDraftStore.defaultURL(inFolder: ".") == nil)
+    }
 }

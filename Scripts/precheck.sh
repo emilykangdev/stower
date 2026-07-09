@@ -137,10 +137,19 @@ if [ "$SM_IMPORTERS" != "$SM_ALLOWED" ]; then
     exit 1
 fi
 
-# 6c — This slice has no StowerCore boundary file in StowerMacUI yet (a future
-#      search/index slice adds one and relaxes this — do NOT permanently ban StowerCore).
-if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerCore([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null; then
-    echo "ERROR: StowerMacUI imports no StowerCore in this slice (add a boundary file when a search slice needs it)" >&2
+# 6c — StowerCore may be imported by EXACTLY this StowerMacUI file: the shared
+#      composition root that resolves each store's build-variant Application
+#      Support folder via StowerEnvironment (PAR-62). Closed allowlist (do not
+#      weaken/delete to go green); compared as a SORTED SET.
+SC_ALLOWED="$(printf '%s\n' \
+    "Sources/StowerMacUI/Board/StowerMessagesComposition.swift" \
+    | LC_ALL=C sort)"
+SC_IMPORTERS="$(grep -RIlE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerCore([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null | LC_ALL=C sort || true)"
+if [ "$SC_IMPORTERS" != "$SC_ALLOWED" ]; then
+    echo "ERROR: only these StowerMacUI files may import StowerCore:" >&2
+    echo "$SC_ALLOWED" | sed 's/^/       allowed: /' >&2
+    echo "       Found:" >&2
+    echo "${SC_IMPORTERS:-<none>}" | sed 's/^/       /' >&2
     exit 1
 fi
 

@@ -62,10 +62,23 @@ public actor StowerInteractionEventStore {
         self.databaseQueue = databaseQueue
     }
 
-    /// The default location under `Application Support/Stower/interaction_events.sqlite`.
+    /// The default location under
+    /// `Application Support/<folderName>/interaction_events.sqlite`.
     ///
-    /// `nil` only when Application Support itself cannot be resolved or created.
-    public static var defaultURL: URL? {
+    /// `nil` when Application Support itself cannot be resolved or created, or
+    /// when `folderName` is not a single, safe path component (empty, contains
+    /// `/`, or is `.`/`..`).
+    ///
+    /// - Parameter folderName: The build-variant Application Support subfolder
+    ///   (e.g. `"Stower"`, `"StowerDebug"`), supplied by the caller so this
+    ///   engine-side type never has to know about `StowerEnvironment` itself.
+    /// - Returns: The resolved `interaction_events.sqlite` URL, or `nil` per the
+    ///   cases above.
+    public static func defaultURL(inFolder folderName: String) -> URL? {
+        guard !folderName.isEmpty, !folderName.contains("/"), folderName != "..", folderName != "."
+        else {
+            return nil
+        }
         guard
             let base = try? FileManager.default.url(
                 for: .applicationSupportDirectory,
@@ -78,7 +91,7 @@ public actor StowerInteractionEventStore {
         }
         return
             base
-            .appendingPathComponent("Stower", isDirectory: true)
+            .appendingPathComponent(folderName, isDirectory: true)
             .appendingPathComponent(Self.fileName)
     }
 

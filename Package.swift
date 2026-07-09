@@ -69,6 +69,7 @@ let package = Package(
             // StowerMessages; every other file talks to the app-owned boundary alone.
             name: "StowerMacUI",
             dependencies: [
+                "StowerCore",
                 "StowerMessages",
                 .product(name: "TelemetryDeck", package: "SwiftSDK"),
                 .product(name: "Sentry", package: "sentry-cocoa"),

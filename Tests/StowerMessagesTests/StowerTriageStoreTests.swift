@@ -206,4 +206,26 @@ internal struct StowerTriageStoreTests {
         #expect(try await reopened.dismissedMessages()[Self.handle]?.messageGUID == "g1")
         #expect(try await reopened.muted().map(\.handleKey) == [Self.other])
     }
+
+    // MARK: I9 — defaultURL(inFolder:) resolves under Application Support/<folderName>/
+
+    @Test(
+        "defaultURL(inFolder:) resolves under Application Support/<folderName>/triage.sqlite (I9)"
+    )
+    internal func defaultURLResolvesUnderGivenFolder() {
+        let url = StowerTriageStore.defaultURL(inFolder: "SomeTestFolder")
+        #expect(url?.lastPathComponent == StowerTriageStore.fileName)
+        #expect(url?.deletingLastPathComponent().lastPathComponent == "SomeTestFolder")
+    }
+
+    // MARK: I11 — defaultURL(inFolder:) rejects an unsafe folder name
+
+    @Test("defaultURL(inFolder:) rejects an empty, traversal, or multi-segment folder name (I11)")
+    internal func defaultURLRejectsUnsafeFolderNames() {
+        #expect(StowerTriageStore.defaultURL(inFolder: "") == nil)
+        #expect(StowerTriageStore.defaultURL(inFolder: "../evil") == nil)
+        #expect(StowerTriageStore.defaultURL(inFolder: "a/b") == nil)
+        #expect(StowerTriageStore.defaultURL(inFolder: "..") == nil)
+        #expect(StowerTriageStore.defaultURL(inFolder: ".") == nil)
+    }
 }

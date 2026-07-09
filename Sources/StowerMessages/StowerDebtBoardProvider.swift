@@ -1,4 +1,5 @@
 import Foundation
+import StowerCore
 import os
 
 /// The production `StowerDebtBoardProviding` actor.
@@ -41,8 +42,23 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
 
     internal static let logger = Logger(subsystem: "com.stower.messages", category: "reply-refresh")
 
-    /// The default verdict-cache location under Application Support.
-    public static var defaultCacheURL: URL? {
+    /// The default verdict-cache location under
+    /// `Application Support/<folderName>`.
+    ///
+    /// `nil` when Application Support itself cannot be resolved or created, or
+    /// when `folderName` is not a single, safe path component (empty, contains
+    /// `/`, or is `.`/`..`).
+    ///
+    /// - Parameter folderName: The build-variant Application Support subfolder
+    ///   (e.g. `"Stower"`, `"StowerDebug"`), supplied by the caller so this
+    ///   engine-side type never has to know about `StowerEnvironment` itself.
+    /// - Returns: The resolved `reply-verdicts.sqlite` URL, or `nil` per the cases
+    ///   above.
+    public static func cacheURL(inFolder folderName: String) -> URL? {
+        guard !folderName.isEmpty, !folderName.contains("/"), folderName != "..", folderName != "."
+        else {
+            return nil
+        }
         guard
             let base = try? FileManager.default.url(
                 for: .applicationSupportDirectory,
@@ -55,7 +71,7 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         }
         return
             base
-            .appendingPathComponent("Stower", isDirectory: true)
+            .appendingPathComponent(folderName, isDirectory: true)
             .appendingPathComponent(StowerReplyVerdictCache.fileName)
     }
 
@@ -71,7 +87,9 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     public init(
         sourceURL: URL = StowerChatDatabaseReader.defaultSourceURL,
         contactsResolver: StowerContactsResolver = .live(),
-        cacheURL: URL? = StowerDebtBoardProvider.defaultCacheURL,
+        cacheURL: URL? = StowerDebtBoardProvider.cacheURL(
+            inFolder: StowerEnvironment.current.applicationSupportDirectoryName
+        ),
         windowDays: Int = 180
     ) {
         readerFactory = {
