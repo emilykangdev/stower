@@ -1,5 +1,4 @@
 import Foundation
-import StowerCore
 import os
 
 /// The production `StowerDebtBoardProviding` actor.
@@ -87,9 +86,7 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
     public init(
         sourceURL: URL = StowerChatDatabaseReader.defaultSourceURL,
         contactsResolver: StowerContactsResolver = .live(),
-        cacheURL: URL? = StowerDebtBoardProvider.cacheURL(
-            inFolder: StowerEnvironment.current.applicationSupportDirectoryName
-        ),
+        cacheURL: URL?,
         windowDays: Int = 180
     ) {
         readerFactory = {
