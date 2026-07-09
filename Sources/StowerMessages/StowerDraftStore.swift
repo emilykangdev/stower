@@ -75,11 +75,22 @@ public actor StowerDraftStore {
         self.databaseQueue = databaseQueue
     }
 
-    /// The default store location under `Application Support/Stower/drafts.sqlite`.
+    /// The default store location under `Application Support/<folderName>/drafts.sqlite`.
     ///
-    /// `nil` only when Application Support itself cannot be resolved or created — a
-    /// disk-level failure the caller surfaces, never papers over.
-    public static var defaultURL: URL? {
+    /// `nil` when Application Support itself cannot be resolved or created — a
+    /// disk-level failure the caller surfaces, never papers over — or when
+    /// `folderName` is not a single, safe path component (empty, contains `/`,
+    /// or is `.`/`..`).
+    ///
+    /// - Parameter folderName: The build-variant Application Support subfolder
+    ///   (e.g. `"Stower"`, `"StowerDebug"`), supplied by the caller so this
+    ///   engine-side type never has to know about `StowerEnvironment` itself.
+    /// - Returns: The resolved `drafts.sqlite` URL, or `nil` per the cases above.
+    public static func defaultURL(inFolder folderName: String) -> URL? {
+        guard !folderName.isEmpty, !folderName.contains("/"), folderName != "..", folderName != "."
+        else {
+            return nil
+        }
         guard
             let base = try? FileManager.default.url(
                 for: .applicationSupportDirectory,
@@ -92,7 +103,7 @@ public actor StowerDraftStore {
         }
         return
             base
-            .appendingPathComponent("Stower", isDirectory: true)
+            .appendingPathComponent(folderName, isDirectory: true)
             .appendingPathComponent(Self.fileName)
     }
 

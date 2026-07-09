@@ -1,4 +1,5 @@
 import Foundation
+import StowerCore
 
 /// A DEBUG-only override for the Messages database the board reads.
 ///
@@ -48,14 +49,9 @@ internal enum StowerMessagesSourceOverride {
 
     /// The override the app runs with: `STOWER_MESSAGES_DB` in DEBUG only, else `nil`.
     internal static let resolved: URL? = {
-        #if DEBUG
-            let allowOverrides = true
-        #else
-            let allowOverrides = false
-        #endif
-        return effectiveSourceURL(
+        effectiveSourceURL(
             environment: ProcessInfo.processInfo.environment,
-            allowOverrides: allowOverrides
+            allowOverrides: StowerEnvironment.current == .debug
         )
     }()
 }

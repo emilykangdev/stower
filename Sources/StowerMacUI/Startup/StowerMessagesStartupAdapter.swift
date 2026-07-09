@@ -14,16 +14,14 @@ import StowerMessages
 internal struct StowerMessagesStartupAdapter: StowerStartupProviding {
     private let engine: any StowerDebtBoardProviding
 
-    /// The production composition: the real provider with all parameters
-    /// defaulted (the judge owns its model id and prompt — no app model argument).
-    internal init() {
-        engine = StowerDebtBoardProvider()
-    }
-
     /// Injects any engine conformer so the mapping table is testable without the
-    /// real provider (the adapter-mapping tests pass `StowerFakeMessagesEngine`),
-    /// and so `StowerMessagesComposition` can share one provider across both
-    /// adapters.
+    /// real provider.
+    ///
+    /// The adapter-mapping tests pass `StowerFakeMessagesEngine`; production always
+    /// passes the composition root's shared `StowerDebtBoardProvider` so
+    /// `StowerMessagesComposition` can share one provider across both adapters —
+    /// never a bare `StowerDebtBoardProvider()`, since only the composition root
+    /// knows the build-variant/demo-mode storage location a fresh provider must use.
     internal init(engine: any StowerDebtBoardProviding) {
         self.engine = engine
     }

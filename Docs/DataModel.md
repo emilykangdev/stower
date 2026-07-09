@@ -45,8 +45,11 @@ Each entity's first row is a **LIFECYCLE** marker:
 > intentionally absent from the index diagram below; it owns no index table.
 
 > **Owned + built, PRECIOUS:** `StowerDraftStore` persists the user's private
-> per-conversation drafts in its own `drafts.sqlite` under
-> `~/Library/Application Support/Stower/`. One table, `draft`:
+> per-conversation drafts in its own `drafts.sqlite` under `~/Library/Application
+> Support/<folder>/`, where `<folder>` is `Stower` (Release), `StowerDebug`
+> (Debug, real data), or `StowerDebugDemo` (Debug, demo data) — `StowerEnvironment`
+> and `StowerMessagesStorageLocation` isolate the three so they never write into
+> each other's files (PAR-62). One table, `draft`:
 > `draft_key TEXT PRIMARY KEY`, `body TEXT NOT NULL`, `updated_at DATETIME NOT NULL`,
 > `resolved_at DATETIME` (nullable). The `draft_key` is the conversation's normalized
 > handle via `StowerDraftKey` (`email:<lowercased>` / `e164:<digits, no +>` /

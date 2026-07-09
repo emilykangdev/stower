@@ -1,4 +1,5 @@
 import Foundation
+import StowerCore
 import StowerMessages
 
 /// The production composition point: builds ONE engine provider and vends both
@@ -52,7 +53,12 @@ internal struct StowerMessagesComposition {
     /// fallback). Only a true disk-level failure throws, which propagates as a startup
     /// failure like any other essential store.
     internal init() throws {
-        let (provider, demoContactsResolver) = Self.makeEngine()
+        // The storage-location Application Support subfolder — Debug, Debug-demo,
+        // and Release now resolve to distinct folders (PAR-62), so a Debug run
+        // against real data, a Debug run against demo data, and a Release run
+        // never mix drafts/triage/interaction-events/reply-cache into each other.
+        let folderName = StowerMessagesStorageLocation.current.applicationSupportDirectoryName
+        let (provider, demoContactsResolver) = Self.makeEngine(inFolder: folderName)
         startup = StowerMessagesStartupAdapter(engine: provider)
         contacts = StowerContactsAccess()
         // Build one live reporter shared across the startup funnel and the board.
@@ -60,7 +66,7 @@ internal struct StowerMessagesComposition {
         // switch; this reporter checks consent on every call (defence-in-depth).
         let consent = StowerDiagnosticsConsent()
         analyticsReporter = StowerTelemetryDeckReporter(consent: consent)
-        guard let draftURL = StowerDraftStore.defaultURL else {
+        guard let draftURL = StowerDraftStore.defaultURL(inFolder: folderName) else {
             throw StowerDraftStoreUnavailable.locationUnavailable
         }
         draftStore = StowerLiveDraftStore(store: try StowerDraftStore.open(at: draftURL))
@@ -69,7 +75,7 @@ internal struct StowerMessagesComposition {
         // disk-level fault throws — surfaced as a startup failure like any essential
         // store. Inject it into the board adapter so the filter applies the user's
         // dismiss/mute at display time.
-        guard let triageURL = StowerTriageStore.defaultURL else {
+        guard let triageURL = StowerTriageStore.defaultURL(inFolder: folderName) else {
             throw StowerTriageStoreUnavailable.locationUnavailable
         }
         let triage = StowerLiveTriageStore(store: try StowerTriageStore.open(at: triageURL))
@@ -87,7 +93,7 @@ internal struct StowerMessagesComposition {
         // and triage, a failure to open it must NEVER block the board. So it is opened
         // best-effort — any fault (unresolvable directory or a disk-level open error)
         // degrades to a no-op recorder, and dismiss/mute/unmute still work.
-        interactions = Self.openInteractionRecorder()
+        interactions = Self.openInteractionRecorder(inFolder: folderName)
         dropper = StowerMessagesDropper()
     }
 
@@ -100,16 +106,30 @@ internal struct StowerMessagesComposition {
     /// fake contacts so the demo shows names, not raw handles, without touching the
     /// real address book or the production `.live()` resolution path. The returned
     /// factory is `nil` outside demo mode (and always in Release).
-    private static func makeEngine() -> (
+    ///
+    /// - Parameter folderName: The build-variant Application Support subfolder the
+    ///   provider's verdict cache lives under, passed explicitly (never the default
+    ///   parameter — the default resolves the SAME variant folder today, but relying
+    ///   on it here would silently stop tracking the composition root's own folder
+    ///   name if the two ever diverge, e.g. once demo mode gets its own folder).
+    /// - Returns: The shared provider and, in demo mode only, the fake-contacts
+    ///   resolver factory (`nil` outside demo mode and always in Release).
+    private static func makeEngine(inFolder folderName: String) -> (
         provider: StowerDebtBoardProvider,
         demoContactsResolver: (@Sendable () -> StowerContactsResolver)?
     ) {
+        let cacheURL = StowerDebtBoardProvider.cacheURL(inFolder: folderName)
         guard let overrideURL = StowerMessagesSourceOverride.resolved else {
-            return (StowerDebtBoardProvider(contactsResolver: StowerContactsResolver()), nil)
+            let provider = StowerDebtBoardProvider(
+                contactsResolver: StowerContactsResolver(),
+                cacheURL: cacheURL
+            )
+            return (provider, nil)
         }
         let provider = StowerDebtBoardProvider(
             sourceURL: overrideURL,
-            contactsResolver: StowerContactsResolver()
+            contactsResolver: StowerContactsResolver(),
+            cacheURL: cacheURL
         )
         #if DEBUG
             return (provider, { StowerContactsResolver(mapping: StowerDemoContacts.mapping) })
@@ -119,8 +139,10 @@ internal struct StowerMessagesComposition {
     }
 
     /// Opens the interaction recorder best-effort, degrading to a no-op on any fault.
-    private static func openInteractionRecorder() -> any StowerInteractionRecording {
-        guard let url = StowerInteractionEventStore.defaultURL else {
+    private static func openInteractionRecorder(
+        inFolder folderName: String
+    ) -> any StowerInteractionRecording {
+        guard let url = StowerInteractionEventStore.defaultURL(inFolder: folderName) else {
             return StowerNoOpInteractionRecorder()
         }
         do {
@@ -130,6 +152,29 @@ internal struct StowerMessagesComposition {
         } catch {
             return StowerNoOpInteractionRecorder()
         }
+    }
+
+    // swiftlint:disable:next orphaned_doc_comment
+    /// Pure URL resolution, given an explicit folder name.
+    ///
+    /// No store is opened, no file is created beyond `FileManager`'s own harmless
+    /// `.applicationSupportDirectory` lookup. Exists so `StowerMessagesCompositionTests`
+    /// can assert all 4 stores share one folder name WITHOUT calling `init()` (which
+    /// opens real database connections against the REAL ambient `StowerDebug/` folder a
+    /// live app instance may be using concurrently — exactly the collision this
+    /// file's storage-location isolation closes elsewhere; a naive composition-root
+    /// test would silently reintroduce it). The named tuple mirrors `init()`'s own
+    /// four stores, with no single-use result type only a test would construct.
+    // swiftlint:disable:next large_tuple
+    internal static func resolvedURLs(forFolder folderName: String) -> (
+        draftURL: URL?, triageURL: URL?, eventsURL: URL?, cacheURL: URL?
+    ) {
+        (
+            StowerDraftStore.defaultURL(inFolder: folderName),
+            StowerTriageStore.defaultURL(inFolder: folderName),
+            StowerInteractionEventStore.defaultURL(inFolder: folderName),
+            StowerDebtBoardProvider.cacheURL(inFolder: folderName)
+        )
     }
 }
 

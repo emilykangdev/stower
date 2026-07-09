@@ -104,4 +104,26 @@ internal struct StowerInteractionEventStoreTests {
         #expect(recent.count == 1)
         #expect(recent.first?.messageGUID == "g1")
     }
+
+    // MARK: I9 — defaultURL(inFolder:) resolves under Application Support/<folderName>/
+
+    @Test(
+        "defaultURL(inFolder:) resolves under Application Support/<folderName>/, events file (I9)"
+    )
+    internal func defaultURLResolvesUnderGivenFolder() {
+        let url = StowerInteractionEventStore.defaultURL(inFolder: "SomeTestFolder")
+        #expect(url?.lastPathComponent == StowerInteractionEventStore.fileName)
+        #expect(url?.deletingLastPathComponent().lastPathComponent == "SomeTestFolder")
+    }
+
+    // MARK: I11 — defaultURL(inFolder:) rejects an unsafe folder name
+
+    @Test("defaultURL(inFolder:) rejects an empty, traversal, or multi-segment folder name (I11)")
+    internal func defaultURLRejectsUnsafeFolderNames() {
+        #expect(StowerInteractionEventStore.defaultURL(inFolder: "") == nil)
+        #expect(StowerInteractionEventStore.defaultURL(inFolder: "../evil") == nil)
+        #expect(StowerInteractionEventStore.defaultURL(inFolder: "a/b") == nil)
+        #expect(StowerInteractionEventStore.defaultURL(inFolder: "..") == nil)
+        #expect(StowerInteractionEventStore.defaultURL(inFolder: ".") == nil)
+    }
 }

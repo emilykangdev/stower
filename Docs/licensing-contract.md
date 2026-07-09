@@ -27,17 +27,19 @@ When the contract changes: edit here, bump the version, record the change in
 ```text
 Lemon Squeezy migration ✓ (done — Keygen/Supabase backend deleted,
   StowerLemonSqueezyClient + StowerLicenseStore + StowerTrialClock landed)
-  → prod ops (real Lemon Squeezy store id / product id / checkout URL, G1)
-  → enable paid sales
+  → prod ops ✓ (real Lemon Squeezy store id / product id / checkout URL,
+    supplied 2026-07-01 — G1 resolved)
+  → enable paid sales (pending G2/G3)
 ```
 
 The migration is merged: the app's only licensing network call is a direct
 `POST` to Lemon Squeezy's public `/v1/licenses/activate`, backed by a local
-7-day trial clock and plaintext `UserDefaults` license storage. The only
-remaining pre-sales step is prod ops: Emily supplying the real Lemon Squeezy
-`store_id`, `product_id`, and buyable checkout URL (§"Open questions" / G1);
-`StowerLicenseConfig.production` currently ships placeholders that fail every
-activation closed.
+7-day trial clock and plaintext `UserDefaults` license storage. The real
+Lemon Squeezy `store_id`, `product_id`, and buyable checkout URL were
+supplied 2026-07-01 and are live in `StowerLicenseConfig.production`/
+`.staging` (G1 resolved). The remaining pre-sales steps are a test-mode
+license key to verify activation end-to-end (G2) and confirming store/product
+approval status for live payments (G3) — see §"Open questions".
 
 ---
 
@@ -229,18 +231,18 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
 
 - All three fields are **public** — no secret ships in the binary, because
   `/activate` needs no API key. `storeID`/`productID` are load-bearing only
-  in that a placeholder `0` fails every activation closed, not because they
-  are secret.
+  in that a placeholder `0` would fail every activation closed, not because
+  they are secret.
 - Resolution: compiled default (`staging` in `DEBUG`, `production`
   otherwise) → optional `STOWER_CHECKOUT_URL` / `STOWER_STORE_ID` /
   `STOWER_PRODUCT_ID` `ProcessInfo` override, applied **only in DEBUG**
   (`effectiveConfig(allowOverrides:)`; Release always pins the compiled
   config). See `EnvironmentVariables.md` §1.
-- **Both `.production` and `.staging` currently ship placeholders**
-  (`checkoutURL: ""`, `storeID: 0`, `productID: 0`) — a known pending release
-  gate (§"Open questions" G1), not a bug. Activation fails closed
-  (`.invalid`, since `0` never matches a real product) until Emily supplies
-  the real values.
+- **Both `.production` and `.staging` ship real values** (supplied
+  2026-07-01) — a live `store_id`/`product_id`/checkout URL, not
+  placeholders (G1 resolved, §"Open questions"). What remains open is a
+  test-mode license key to verify activation end-to-end (G2) and store/product
+  approval status for live payments (G3).
 
 **DEBUG launch-argument levers** — `Sources/StowerMacUI/Startup/StowerLicenseDebugArguments.swift`
 
@@ -454,14 +456,16 @@ unlocks the app, or a secret leaks. Plans must not violate these.
 
 | # | What | Status | Owned by |
 |---|------|--------|----------|
-| G1 | Real Lemon Squeezy `store_id` / `product_id` / buyable checkout URL (`StowerLicenseConfig.production`/`.staging` currently placeholders) | **not supplied yet** | Emily |
+| G1 | Real Lemon Squeezy `store_id` / `product_id` / buyable checkout URL | **resolved 2026-07-01** — live in `StowerLicenseConfig.production`/`.staging` | Emily |
 | G2 | A test-mode Lemon Squeezy license key to verify activation end-to-end | **not supplied yet** | Emily |
 | G3 | Lemon Squeezy store/product approval status (can it accept live payments yet) | **not supplied yet** | Emily |
 | G4 | Whether the 7-day trial / no-per-major-gating shape is the permanent business model or a v0 simplification | **business decision, not engineering** | Emily — see §"Business-model note" |
 
-Until G1–G3 are resolved, every `/activate` call fails closed
-(`storeID`/`productID` of `0` never matches a real Lemon Squeezy response) —
-this is intentional fail-closed behavior, not a bug to fix in code.
+G1 is resolved: `StowerLicenseConfig.production`/`.staging` carry real
+`store_id`/`product_id`/checkout URL values, so `/activate` no longer fails
+closed on placeholder identity. Until G2–G3 are resolved, activation is
+unverified end-to-end and live-payment readiness is unconfirmed — not a bug
+to fix in code.
 
 ---
 

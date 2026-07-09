@@ -123,10 +123,11 @@ vercel dns add stower.app updates CNAME emilykangdev.github.io
 curl -s https://updates.stower.app/messages/appcast.xml | head -5
 ```
 
-### P5 — Public EdDSA key in project.pbxproj
+### P5 — Public EdDSA key in Info.plist
 
-Already done: `INFOPLIST_KEY_SUPublicEDKey = 8Nq8KadFjHjsmYuH6XPxC/QXW8kUhAkICj3Gfsw97ZM=`
-is set in both Debug and Release configs in `project.pbxproj`. No action needed.
+Already done: `SUPublicEDKey` is set to `8Nq8KadFjHjsmYuH6XPxC/QXW8kUhAkICj3Gfsw97ZM=`
+in `StowerMac/Info.plist` (`StowerUpdaterController` reads `SUFeedURL`/`SUPublicEDKey`
+from the built `Info.plist`). No action needed.
 
 ### P6 — GitHub Environment hardening (JC7)
 
