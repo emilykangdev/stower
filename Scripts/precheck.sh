@@ -142,7 +142,11 @@ fi
 #      build-variant (and demo-mode) Application Support folder via
 #      StowerEnvironment (PAR-62), and the License/Feedback/source-override types
 #      that share build-variant identity with the rest of the app via
-#      StowerEnvironment instead of their own independent #if DEBUG. Closed
+#      StowerEnvironment instead of their own independent #if DEBUG. Admits
+#      attributed imports with or without argument lists (@preconcurrency,
+#      @testable, @attr(args)) and submodule-style imports (import struct/class/
+#      enum/protocol StowerCore.Foo) — same pattern as 6k/6l, so a file can't slip
+#      past the allowlist via an import form the bare regex wouldn't match. Closed
 #      allowlist (do not weaken/delete to go green); compared as a SORTED SET.
 SC_ALLOWED="$(printf '%s\n' \
     "Sources/StowerMacUI/Board/StowerMessagesComposition.swift" \
@@ -151,7 +155,9 @@ SC_ALLOWED="$(printf '%s\n' \
     "Sources/StowerMacUI/Startup/StowerLicenseConfig.swift" \
     "Sources/StowerMacUI/Startup/StowerMessagesSourceOverride.swift" \
     | LC_ALL=C sort)"
-SC_IMPORTERS="$(grep -RIlE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerCore([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null | LC_ALL=C sort || true)"
+SC_IMPORTERS="$(grep -RIlE --include="*.swift" \
+    '^[[:space:]]*(@[A-Za-z_][A-Za-z0-9_]*(\([^)]*\))?([[:space:]]|$))*import[[:space:]]+([a-z]+[[:space:]]+)?StowerCore([[:space:].]|$)' \
+    Sources/StowerMacUI/ 2>/dev/null | LC_ALL=C sort || true)"
 if [ "$SC_IMPORTERS" != "$SC_ALLOWED" ]; then
     echo "ERROR: only these StowerMacUI files may import StowerCore:" >&2
     echo "$SC_ALLOWED" | sed 's/^/       allowed: /' >&2
