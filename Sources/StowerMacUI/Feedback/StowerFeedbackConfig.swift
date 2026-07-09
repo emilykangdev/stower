@@ -1,4 +1,3 @@
-import Foundation
 import StowerCore
 
 /// The app-side feedback endpoint identity, resolved once at launch.
@@ -9,13 +8,9 @@ import StowerCore
 /// wrong URL fails every send closed (`StowerFeedbackClient` → `.failed`), not
 /// because it is secret.
 ///
-/// Resolution mirrors `StowerLicenseConfig`: the compiled default (`staging` in
-/// a `DEBUG` build, `production` otherwise), then a `STOWER_FEEDBACK_ENDPOINT`
-/// `ProcessInfo` override applied **in DEBUG only**. A Release build pins the
-/// compiled `production` URL and ignores the override (`effectiveConfig` passes
-/// `allowOverrides: false`), so a launch-environment variable cannot swap the
-/// endpoint in a shipped build; a DEBUG dev/test/CI run can point a build at a
-/// throwaway Deno deploy without recompiling.
+/// Resolves to the compiled default for the current `StowerEnvironment`
+/// (mirroring `StowerLicenseConfig`): `staging` in a `DEBUG` build,
+/// `production` otherwise.
 internal struct StowerFeedbackConfig: Sendable, Equatable {
     /// The Deno Deploy relay URL a feedback POST is sent to.
     internal let endpointURL: String
@@ -28,15 +23,14 @@ internal struct StowerFeedbackConfig: Sendable, Equatable {
 
     /// Staging endpoint.
     ///
-    /// The same single v0 deploy as `production`. A DEBUG dev points at a
-    /// throwaway relay via `STOWER_FEEDBACK_ENDPOINT` (or a later second deploy)
-    /// rather than spamming the real inbox.
+    /// The same single v0 deploy as `production` (a later second deploy could
+    /// give staging its own throwaway relay to avoid spamming the real inbox).
     internal static let staging = StowerFeedbackConfig(
         endpointURL: "https://stower-feedback.emilykangdev.deno.net"
     )
 
     /// The compiled default for a given build variant (PAR-62 — replaces this
-    /// type's own independent `#if DEBUG` detection with `StowerEnvironment`,
+    /// type's own independent Debug/Release detection with `StowerEnvironment`,
     /// the app's single source of truth for Debug/Release).
     internal static func compiledDefault(
         for environment: StowerEnvironment
@@ -50,51 +44,6 @@ internal struct StowerFeedbackConfig: Sendable, Equatable {
     /// The compiled default for the build this binary was actually compiled as.
     internal static let compiledDefault: StowerFeedbackConfig = compiledDefault(for: .current)
 
-    /// Applies the `STOWER_FEEDBACK_ENDPOINT` environment override over `compiled`.
-    ///
-    /// Pure (the environment is injected) so the override/fallback logic is unit
-    /// tested without mutating `ProcessInfo`. An unset or empty value falls back
-    /// to the compiled URL.
-    internal static func resolve(
-        environment: [String: String],
-        compiled: StowerFeedbackConfig
-    ) -> StowerFeedbackConfig {
-        guard let value = environment[endpointEnvKey], !value.isEmpty else { return compiled }
-        return StowerFeedbackConfig(endpointURL: value)
-    }
-
-    /// The effective config: the compiled default with the `STOWER_FEEDBACK_ENDPOINT`
-    /// override applied only when `allowOverrides` is true, else the compiled config
-    /// verbatim.
-    ///
-    /// Pure (environment + flag injected) so both branches are unit tested. Release
-    /// passes `allowOverrides: false` so a launch-environment variable cannot swap
-    /// the configured endpoint; the override is a DEBUG dev/CI affordance.
-    internal static func effectiveConfig(
-        environment: [String: String],
-        compiled: StowerFeedbackConfig,
-        allowOverrides: Bool
-    ) -> StowerFeedbackConfig {
-        guard allowOverrides else { return compiled }
-        return resolve(environment: environment, compiled: compiled)
-    }
-
-    /// The config the app runs with: compiled defaults, plus the
-    /// `STOWER_FEEDBACK_ENDPOINT` override in DEBUG only (Release pins the compiled
-    /// config — see `effectiveConfig`).
-    internal static let resolved: StowerFeedbackConfig = {
-        #if DEBUG
-            let allowOverrides = true
-        #else
-            let allowOverrides = false
-        #endif
-        return effectiveConfig(
-            environment: ProcessInfo.processInfo.environment,
-            compiled: compiledDefault,
-            allowOverrides: allowOverrides
-        )
-    }()
-
-    /// The `ProcessInfo` override key (a DEBUG dev/test/CI points a build at any relay).
-    private static let endpointEnvKey = "STOWER_FEEDBACK_ENDPOINT"
+    /// The config the app runs with: the compiled default for this build.
+    internal static let resolved: StowerFeedbackConfig = compiledDefault
 }
