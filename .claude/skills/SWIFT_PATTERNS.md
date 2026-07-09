@@ -105,7 +105,7 @@ Legend for **Sweep-able**:
 - **Why it spreads:** one back-arrow import collapses the whole dependency story; the
   layering stops being a constraint the AI can rely on.
 - **Good:** dependency arrows point INTO `StowerCore`. Adapters never know about each
-  other. Cross the boundary via the `IndexedItem` protocol.
+  other. Cross the boundary via the `StowerIndexedItem` protocol.
 - **Caught by:** `gate` — `Scripts/precheck.sh` step 5.
 - **Sweep-able:** no — fixing it means moving code across modules, not replacing text.
 
@@ -115,8 +115,8 @@ Legend for **Sweep-able**:
   leaking into `StowerCore`.
 - **Why it spreads:** the index gains a second ingestion path; new sources copy the
   leaky one instead of the protocol.
-- **Good:** adapters produce values conforming to `StowerCore.IndexedItem`; the index
-  only ever sees `IndexedItem`.
+- **Good:** adapters produce values conforming to `StowerCore.StowerIndexedItem`; the
+  index only ever sees `StowerIndexedItem`.
 - **Caught by:** `judgment`.
 - **Sweep-able:** no — an architectural change per ingestion path.
 

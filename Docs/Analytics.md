@@ -119,6 +119,8 @@ to a dot-namespaced `signalName` and a bucketed `parameters` dictionary
 | `boardReached` | `board_reached` | per-launch | `StowerStartupModel.commit` (latched once) |
 | `boardItemClicked(itemType:)` | `board_item_clicked` | per-occurrence | board view models |
 | `featureUsed(feature:surface:)` | `feature_used` | per-occurrence | board view models (e.g. voluntary "buy") |
+| `feedbackOpened(licenseStatus:)` | `feedback_opened` | per-occurrence | `StowerFeedbackModel` — the user opened the in-app feedback sheet |
+| `feedbackSent(licenseStatus:)` | `feedback_sent` | per-occurrence | `StowerFeedbackModel` — feedback accepted by the relay (HTTP 2xx) |
 
 Startup funnel events are driven off `StowerStartupModel.commit` (not `onAppear` or
 adjacent-state matching); the exceptions are `trial_started`, which fires from the

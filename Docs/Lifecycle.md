@@ -128,18 +128,21 @@ identically online or offline, forever.
 This doc is consistent with `licensing-contract.md` v2.0 — same seam
 (`StowerLicenseGating`/`StowerLemonSqueezyClient`/`StowerLicenseStore`/
 `StowerTrialClock`/`StowerLemonSqueezyLicenseGate`), same invariants (I1–I7),
-same pending release gate (Open Questions G1–G3: the real Lemon Squeezy
-`store_id`/`product_id`/checkout URL). Nothing in this doc introduces a
-seam shape the contract doesn't already state; it only draws the picture.
+same pending release gate (Open Questions G2–G3: a test-mode license key to
+verify activation end-to-end, and store/product approval status for live
+payments — G1, the real Lemon Squeezy `store_id`/`product_id`/checkout URL,
+is resolved). Nothing in this doc introduces a seam shape the contract
+doesn't already state; it only draws the picture.
 
 ---
 
 ## 7. Open items
 
-- **G1–G3** (contract §"Open questions"): the real Lemon Squeezy `store_id`,
-  `product_id`, and buyable checkout URL are not yet supplied — until they
-  are, `StowerLicenseConfig.production`/`.staging` ship placeholder values
-  that fail every activation closed.
+- **G2–G3** (contract §"Open questions"): a test-mode Lemon Squeezy license
+  key to verify activation end-to-end, and confirming store/product approval
+  status for live payments. **G1 is resolved** — `StowerLicenseConfig.production`/
+  `.staging` ship real `store_id`/`product_id`/checkout URL values (supplied
+  2026-07-01), not placeholders.
 - **No deep-link return from checkout.** The customer returns to the app
   manually after paying; a `stower://` return scheme that would auto-foreground
   the app and pre-fill the key is a possible future improvement, not built.

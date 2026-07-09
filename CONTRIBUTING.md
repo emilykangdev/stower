@@ -29,7 +29,8 @@ is small, reviewable changes that keep the guardrails green.
 - `brew install swift-format swiftlint` for the lint gate.
 - `swift test` (Swift Testing) requires full Xcode locally, or the framework
   flags that `Scripts/precheck.sh` injects automatically under Command Line
-  Tools. CI uses `macos-15`, where plain `swift test` works.
+  Tools. CI uses `macos-26` (required for FoundationModels / the macOS 26
+  deployment target), where plain `swift test` works.
 
 ## AI-assisted contributions
 

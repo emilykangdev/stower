@@ -43,13 +43,11 @@ An unset or empty string override falls back to the compiled field; a
 `STOWER_STORE_ID` / `STOWER_PRODUCT_ID` value that fails to parse as `Int`
 also falls back rather than crash.
 
-**Known pending release gate:** both `StowerLicenseConfig.production` and
-`.staging` currently ship with placeholder values (`checkoutURL: ""`,
-`storeID: 0`, `productID: 0`). A `storeID`/`productID` of `0` fails every
-`/activate` response closed (no real Lemon Squeezy product has id `0`), so
-activation cannot succeed until Emily supplies the real store id, product id,
-checkout URL, and a test-mode license key to verify against. This is a known
-open input, not a bug — see `licensing-contract.md` §"Open questions."
+**G1 resolved (2026-07-01):** both `StowerLicenseConfig.production` and
+`.staging` ship real values — a live `store_id`/`product_id`/checkout URL,
+not placeholders. What's still open is a test-mode license key to verify
+activation end-to-end (G2) and confirming store/product approval status for
+live payments (G3) — see `licensing-contract.md` §"Open questions."
 
 ---
 
