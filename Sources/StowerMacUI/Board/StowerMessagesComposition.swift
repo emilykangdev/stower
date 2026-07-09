@@ -53,12 +53,11 @@ internal struct StowerMessagesComposition {
     /// fallback). Only a true disk-level failure throws, which propagates as a startup
     /// failure like any other essential store.
     internal init() throws {
-        // The build-variant Application Support subfolder — Debug and Release now
-        // resolve to distinct folders (PAR-62), so a Debug run never mixes drafts/
-        // triage/interaction-events/reply-cache into Release's real data. Computed
-        // via each call site for now; `StowerMessagesStorageLocation` composes this
-        // with demo-mode isolation starting commit 4.
-        let folderName = StowerEnvironment.current.applicationSupportDirectoryName
+        // The storage-location Application Support subfolder — Debug, Debug-demo,
+        // and Release now resolve to distinct folders (PAR-62), so a Debug run
+        // against real data, a Debug run against demo data, and a Release run
+        // never mix drafts/triage/interaction-events/reply-cache into each other.
+        let folderName = StowerMessagesStorageLocation.current.applicationSupportDirectoryName
         let (provider, demoContactsResolver) = Self.makeEngine(inFolder: folderName)
         startup = StowerMessagesStartupAdapter(engine: provider)
         contacts = StowerContactsAccess()
@@ -153,6 +152,29 @@ internal struct StowerMessagesComposition {
         } catch {
             return StowerNoOpInteractionRecorder()
         }
+    }
+
+    // swiftlint:disable:next orphaned_doc_comment
+    /// Pure URL resolution, given an explicit folder name.
+    ///
+    /// No store is opened, no file is created beyond `FileManager`'s own harmless
+    /// `.applicationSupportDirectory` lookup. Exists so `StowerMessagesCompositionTests`
+    /// can assert all 4 stores share one folder name WITHOUT calling `init()` (which
+    /// opens real database connections against the REAL ambient `StowerDebug/` folder a
+    /// live app instance may be using concurrently — exactly the collision this
+    /// file's storage-location isolation closes elsewhere; a naive composition-root
+    /// test would silently reintroduce it). The named tuple mirrors `init()`'s own
+    /// four stores, with no single-use result type only a test would construct.
+    // swiftlint:disable:next large_tuple
+    internal static func resolvedURLs(forFolder folderName: String) -> (
+        draftURL: URL?, triageURL: URL?, eventsURL: URL?, cacheURL: URL?
+    ) {
+        (
+            StowerDraftStore.defaultURL(inFolder: folderName),
+            StowerTriageStore.defaultURL(inFolder: folderName),
+            StowerInteractionEventStore.defaultURL(inFolder: folderName),
+            StowerDebtBoardProvider.cacheURL(inFolder: folderName)
+        )
     }
 }
 
