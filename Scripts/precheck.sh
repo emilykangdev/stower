@@ -489,3 +489,46 @@ if [ -n "$keychain_hits" ]; then
     echo "       here (precheck.sh). Keep any 'Keychain' rationale in prose, not API tokens. (6q)" >&2
     exit 1
 fi
+
+# 6r — The Application-Support folder-name literals "Stower"/"StowerDebug"/
+#      "StowerDebugDemo" may be defined (as code, not doc-comment prose) by EXACTLY
+#      these files: StowerEnvironment.swift and StowerMessagesStorageLocation.swift,
+#      the PAR-62 single source of truth for the name, plus two files with an
+#      unrelated, confirmed-legitimate exact use of "Stower" — StowerCLISupport.swift's
+#      own preserved CLI-only folder (excluded by the PAR-62 plan's Non-goals) and
+#      StowerLemonSqueezyLicenseGate.swift's unrelated Lemon Squeezy `instance_name`
+#      default. A hardcoded literal anywhere else silently reintroduces the exact
+#      per-call-site drift PAR-62 closed — derive the folder name from
+#      StowerEnvironment.current / StowerMessagesStorageLocation.current instead.
+#      EXACT quoted-string match only (not a substring check) so this never trips on
+#      the dozens of user-facing strings that merely mention "Stower" in a sentence
+#      ("Buy Stower", "Stower couldn't prepare your board", ...). awk (not grep) so a
+#      pure-comment line (a doc-comment prose example, e.g. `(e.g. "Stower",
+#      "StowerDebug")`) cannot trip it — same idiom as 6q above. Tests/ is
+#      intentionally out of scope: assertions legitimately compare against the literal
+#      expected value. Closed allowlist (do not weaken/delete to go green); compared
+#      as a SORTED SET.
+FL_ALLOWED="$(printf '%s\n' \
+    "Sources/StowerCLI/StowerCLISupport.swift" \
+    "Sources/StowerCore/StowerEnvironment.swift" \
+    "Sources/StowerMacUI/Board/StowerMessagesStorageLocation.swift" \
+    "Sources/StowerMacUI/Startup/StowerLemonSqueezyLicenseGate.swift" \
+    | LC_ALL=C sort)"
+folder_literal_pat='"(Stower|StowerDebug|StowerDebugDemo)"'
+folder_literal_hits="$(find Sources/ -name '*.swift' -type f -print0 2>/dev/null \
+    | xargs -0 awk -v pat="$folder_literal_pat" '
+        /^[[:space:]]*\/\//     { next }
+        ($0 ~ pat)              { print FILENAME ":" FNR ": " $0 }
+    ' 2>/dev/null)"
+FL_HITTERS="$(printf '%s\n' "$folder_literal_hits" | grep -v '^$' | cut -d: -f1 | LC_ALL=C sort -u)"
+if [ "$FL_HITTERS" != "$FL_ALLOWED" ]; then
+    printf '%s\n' "$folder_literal_hits" >&2
+    echo "ERROR: the Application-Support folder-name literals \"Stower\"/\"StowerDebug\"/" >&2
+    echo "       \"StowerDebugDemo\" may only appear (as code) in:" >&2
+    echo "$FL_ALLOWED" | sed 's/^/       allowed: /' >&2
+    echo "       Found in:" >&2
+    echo "${FL_HITTERS:-<none>}" | sed 's/^/       /' >&2
+    echo "       Derive the folder name from StowerEnvironment.current /" >&2
+    echo "       StowerMessagesStorageLocation.current instead of hardcoding it. (6r)" >&2
+    exit 1
+fi
