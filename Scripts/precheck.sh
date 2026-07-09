@@ -137,12 +137,16 @@ if [ "$SM_IMPORTERS" != "$SM_ALLOWED" ]; then
     exit 1
 fi
 
-# 6c — StowerCore may be imported by EXACTLY this StowerMacUI file: the shared
+# 6c — StowerCore may be imported by EXACTLY these StowerMacUI files: the shared
 #      composition root that resolves each store's build-variant Application
-#      Support folder via StowerEnvironment (PAR-62). Closed allowlist (do not
-#      weaken/delete to go green); compared as a SORTED SET.
+#      Support folder via StowerEnvironment (PAR-62), and the License/Feedback
+#      config types that share build-variant identity with the rest of the app
+#      via StowerEnvironment instead of their own independent #if DEBUG. Closed
+#      allowlist (do not weaken/delete to go green); compared as a SORTED SET.
 SC_ALLOWED="$(printf '%s\n' \
     "Sources/StowerMacUI/Board/StowerMessagesComposition.swift" \
+    "Sources/StowerMacUI/Feedback/StowerFeedbackConfig.swift" \
+    "Sources/StowerMacUI/Startup/StowerLicenseConfig.swift" \
     | LC_ALL=C sort)"
 SC_IMPORTERS="$(grep -RIlE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[:space:]]+StowerCore([[:space:]]|$)' Sources/StowerMacUI/ 2>/dev/null | LC_ALL=C sort || true)"
 if [ "$SC_IMPORTERS" != "$SC_ALLOWED" ]; then

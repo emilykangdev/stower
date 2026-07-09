@@ -1,4 +1,5 @@
 import Foundation
+import StowerCore
 
 /// The app-side feedback endpoint identity, resolved once at launch.
 ///
@@ -34,14 +35,20 @@ internal struct StowerFeedbackConfig: Sendable, Equatable {
         endpointURL: "https://stower-feedback.emilykangdev.deno.net"
     )
 
-    /// The compiled default for this build configuration.
-    internal static let compiledDefault: StowerFeedbackConfig = {
-        #if DEBUG
-            return staging
-        #else
-            return production
-        #endif
-    }()
+    /// The compiled default for a given build variant (PAR-62 — replaces this
+    /// type's own independent `#if DEBUG` detection with `StowerEnvironment`,
+    /// the app's single source of truth for Debug/Release).
+    internal static func compiledDefault(
+        for environment: StowerEnvironment
+    ) -> StowerFeedbackConfig {
+        switch environment {
+        case .debug: return staging
+        case .release: return production
+        }
+    }
+
+    /// The compiled default for the build this binary was actually compiled as.
+    internal static let compiledDefault: StowerFeedbackConfig = compiledDefault(for: .current)
 
     /// Applies the `STOWER_FEEDBACK_ENDPOINT` environment override over `compiled`.
     ///

@@ -117,7 +117,7 @@ let package = Package(
             // tests drive StowerFakeMessagesEngine, which conforms to the engine's
             // StowerDebtBoardProviding.
             name: "StowerMacUITests",
-            dependencies: ["StowerMacUI", "StowerMessages"],
+            dependencies: ["StowerCore", "StowerMacUI", "StowerMessages"],
             path: "Tests/StowerMacUITests"
         ),
     ]

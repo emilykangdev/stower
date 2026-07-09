@@ -1,4 +1,5 @@
 import Foundation
+import StowerCore
 
 /// The app-side Lemon Squeezy identity, resolved once at launch.
 ///
@@ -58,14 +59,20 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
         productID: 1_189_590
     )
 
-    /// The compiled default for this build configuration.
-    internal static let compiledDefault: StowerLicenseConfig = {
-        #if DEBUG
-            return staging
-        #else
-            return production
-        #endif
-    }()
+    /// The compiled default for a given build variant (PAR-62 — replaces this
+    /// type's own independent `#if DEBUG` detection with `StowerEnvironment`,
+    /// the app's single source of truth for Debug/Release).
+    internal static func compiledDefault(
+        for environment: StowerEnvironment
+    ) -> StowerLicenseConfig {
+        switch environment {
+        case .debug: return staging
+        case .release: return production
+        }
+    }
+
+    /// The compiled default for the build this binary was actually compiled as.
+    internal static let compiledDefault: StowerLicenseConfig = compiledDefault(for: .current)
 
     /// Applies the per-field `STOWER_*` environment overrides over `compiled`.
     ///
