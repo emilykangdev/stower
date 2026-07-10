@@ -70,9 +70,9 @@ generate_keys -x /dev/stdout
 #      (The CI workflow passes the key via --ed-key-file from the SPARKLE_EDDSA_PRIVATE_KEY secret.)
 ```
 
-The public key `8Nq8KadFjHjsmYuH6XPxC/QXW8kUhAkICj3Gfsw97ZM=` is already set in
-`project.pbxproj` as `INFOPLIST_KEY_SUPublicEDKey`. It ships in every build and
-cannot be changed without breaking all installed copies.
+The public key `8URRsANNg7iLie8EzVVv5piaF0MtoBcGCmg+O6ZDzas=` is already set in
+`StowerMac/Info.plist` as `SUPublicEDKey`. It ships in every build and cannot be
+changed without breaking all installed copies.
 
 Required GitHub secret: `SPARKLE_EDDSA_PRIVATE_KEY`
 
@@ -125,7 +125,7 @@ curl -s https://updates.stower.app/messages/appcast.xml | head -5
 
 ### P5 — Public EdDSA key in Info.plist
 
-Already done: `SUPublicEDKey` is set to `8Nq8KadFjHjsmYuH6XPxC/QXW8kUhAkICj3Gfsw97ZM=`
+Already done: `SUPublicEDKey` is set to `8URRsANNg7iLie8EzVVv5piaF0MtoBcGCmg+O6ZDzas=`
 in `StowerMac/Info.plist` (`StowerUpdaterController` reads `SUFeedURL`/`SUPublicEDKey`
 from the built `Info.plist`). No action needed.
 
