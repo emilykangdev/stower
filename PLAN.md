@@ -6,6 +6,40 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
 
 ## Status
 
+- 2026-07-09: **Debug/Release/demo Application Support isolation (PAR-61/PAR-62, PR #57) + Sparkle EdDSA key rotation (PR #58) — prepping release v0.2.2.**
+  New `StowerEnvironment` (`StowerCore`) is the single compile-time source of truth for
+  Debug vs. Release, replacing four stores' (`StowerDraftStore`, `StowerTriageStore`,
+  `StowerInteractionEventStore`, `StowerDebtBoardProvider`) copy-pasted `"Stower"` literal
+  with an `inFolder:`-parameterized entry point that validates the folder name (I11). The
+  app's composition root resolves `StowerEnvironment.current.applicationSupportDirectoryName`
+  once and passes it explicitly, so a Debug build's local data now lives under
+  `Application Support/StowerDebug/` instead of silently sharing Release's
+  `Application Support/Stower/` folder. `StowerMessagesStorageLocation` (`StowerMacUI`)
+  layers on top of that (`.debug`/`.debugDemo`/`.release`) so a Debug-against-demo-data run
+  no longer mixes its drafts/triage/interaction-events/reply-verdicts into the same folder as
+  a Debug-against-real-data run. New precheck guard **6r** bans hardcoded
+  `"Stower"`/`"StowerDebug"`/`"StowerDebugDemo"` folder-name literals outside the two files
+  that own them, closing the gap where a future call site could reintroduce per-call-site
+  drift. Also deleted the dead `STOWER_*` env-var override mechanism (`STOWER_CHECKOUT_URL`/
+  `STOWER_STORE_ID`/`STOWER_PRODUCT_ID`/`STOWER_FEEDBACK_ENDPOINT`) from
+  `StowerLicenseConfig`/`StowerFeedbackConfig` — confirmed zero real usage repo-wide — and
+  unified both configs' `compiledDefault` on `StowerEnvironment`. Separately, PR #58 rotated
+  the Sparkle EdDSA keypair; `StowerMac/Info.plist`'s `SUPublicEDKey` now ships
+  `8URRsANNg7iLie8EzVVv5piaF0MtoBcGCmg+O6ZDzas=` — **note this is a one-way-door change per
+  `Docs/Release.md`'s own P1 warning: an app already installed with the OLD public key can
+  only verify updates signed with the OLD private key, so unless the CI signing secret was
+  rotated in lockstep with a transition plan, existing installs may not auto-update past this
+  release and will need a manual reinstall.** Docs synced in the same PRs: `Docs/Analytics.md`,
+  `Docs/DataModel.md`, `Docs/Lifecycle.md`, `Docs/Release.md`, `Sources/StowerCore/README.md`,
+  `CONTRIBUTING.md`. `Docs/EnvironmentVariables.md` and `Docs/licensing-contract.md` still
+  described the deleted `STOWER_*` override mechanism (`effectiveConfig(allowOverrides:)`) as
+  live — caught by Codex review on the docs PR (#60) and corrected in a follow-up commit here,
+  not in PR #57. Release notes authored: `Docs/release-notes/0.2.2.md`, with a manual-download
+  fallback line for the key-rotation risk above. `Scripts/precheck.sh` green locally (549
+  tests); CI build checks green on PR #60 (the `codex` review check failed on an unrelated
+  infra error — `gpt-5.6-sol` unavailable on the account, not a finding about this diff).
+  Manual update-transition dogfood (`Docs/Release.md`) remains pending before tagging
+  `messages-v0.2.2`.
 - 2026-07-04: **Legacy diagnostics Keychain migration removed; Keychain-item APIs locked out (branch `remove-legacy-keychain-migration`, PR #54).**
   The diagnostics install record (`DiagnosticsInstallRecord`) now lives **only** in `UserDefaults`
   (`StowerDiagnosticsStorageLocation.defaultsKey`). The earlier launch-path read of a legacy Keychain item —

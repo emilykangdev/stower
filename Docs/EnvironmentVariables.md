@@ -5,10 +5,11 @@
 > the app's only network call is a direct, keyless `POST` to
 > `https://api.lemonsqueezy.com/v1/licenses/activate`.
 
-The licensing system reads **no OS environment variables in Release** and no
-server-side env vars at all — there is no server. In a **DEBUG** build only,
-three `STOWER_*` `ProcessInfo` values can override the compiled
-`StowerLicenseConfig` defaults, for local dev/test/CI. Grounded in
+The licensing system reads **no OS environment variables at all, in any
+build** — there is no server, and (as of PAR-62) no `STOWER_*` `ProcessInfo`
+override mechanism either. `StowerLicenseConfig` resolves to one of two
+compiled constants selected by `StowerEnvironment.current` (`StowerCore`),
+full stop. Grounded in
 `Sources/StowerMacUI/Startup/StowerLicenseConfig.swift`.
 
 ---
@@ -21,27 +22,20 @@ live in one place, `StowerLicenseConfig`
 **public** — `/v1/licenses/activate` itself needs no API key, so nothing here
 is a secret to protect.
 
-| Field | What it is | DEBUG override env var |
-|-------|-----------|------------------------|
-| `checkoutURL` | The Lemon Squeezy checkout URL the Buy action opens | `STOWER_CHECKOUT_URL` |
-| `storeID` | Stower's Lemon Squeezy `store_id`; an `/activate` response's `meta.store_id` must match this before the key is accepted | `STOWER_STORE_ID` |
-| `productID` | Stower's Lemon Squeezy `product_id`; an `/activate` response's `meta.product_id` must match this before the key is accepted | `STOWER_PRODUCT_ID` |
+| Field | What it is |
+|-------|-----------|
+| `checkoutURL` | The Lemon Squeezy checkout URL the Buy action opens |
+| `storeID` | Stower's Lemon Squeezy `store_id`; an `/activate` response's `meta.store_id` must match this before the key is accepted |
+| `productID` | Stower's Lemon Squeezy `product_id`; an `/activate` response's `meta.product_id` must match this before the key is accepted |
 
-`StowerLicenseConfig` resolves in two layers:
-
-1. **Compiled default** — `StowerLicenseConfig.staging` in a `DEBUG` build,
-   `StowerLicenseConfig.production` otherwise (`compiledDefault`).
-2. **`STOWER_*` `ProcessInfo` override, DEBUG only** — `effectiveConfig(environment:compiled:allowOverrides:)`
-   applies `STOWER_CHECKOUT_URL` / `STOWER_STORE_ID` / `STOWER_PRODUCT_ID` over
-   the compiled default only when `allowOverrides` is `true`. `StowerLicenseConfig.resolved`
-   passes `allowOverrides: true` in `DEBUG`, `false` otherwise — so a **Release**
-   build always pins the compiled `production` config and **ignores** these env
-   vars entirely (`STOWER_*` cannot swap the store/product identity a shipped
-   binary trusts).
-
-An unset or empty string override falls back to the compiled field; a
-`STOWER_STORE_ID` / `STOWER_PRODUCT_ID` value that fails to parse as `Int`
-also falls back rather than crash.
+`StowerLicenseConfig.resolved` is exactly `compiledDefault(for: .current)`:
+`StowerLicenseConfig.staging` in a `DEBUG` build, `StowerLicenseConfig.production`
+otherwise. There is no override layer — a `STOWER_CHECKOUT_URL` /
+`STOWER_STORE_ID` / `STOWER_PRODUCT_ID` `ProcessInfo` override mechanism
+(`effectiveConfig(environment:compiled:allowOverrides:)`) existed here before
+PAR-62 and was deleted as dead code (a full-repo grep found zero real callers
+outside its own definition/tests); DEBUG and Release both simply pin their
+compiled default now.
 
 **G1 resolved (2026-07-01):** both `StowerLicenseConfig.production` and
 `.staging` ship real values — a live `store_id`/`product_id`/checkout URL,
@@ -63,10 +57,9 @@ environment:
   `TRIAL_DURATION_SECONDS` smoke-test lever. Shortening the trial for manual
   testing means changing the constant locally, not setting an env var.
 - The only remaining "test vs. prod" distinction is the `staging` vs.
-  `production` `StowerLicenseConfig` compiled default (§1) plus the DEBUG-only
-  `STOWER_*` overrides, both of which point at the same public Lemon Squeezy
-  `/activate` endpoint — only the store/product/checkout values differ, and
-  only in DEBUG.
+  `production` `StowerLicenseConfig` compiled default (§1), both of which
+  point at the same public Lemon Squeezy `/activate` endpoint — only the
+  store/product/checkout values differ.
 
 ---
 
@@ -85,7 +78,7 @@ days:
 These are parsed from `CommandLine.arguments` in `StowerLemonSqueezyLicenseGate.init()`
 and are compile-stripped from a Release build — a customer build has no path
 to them. They are launch arguments, not environment variables, and are
-unrelated to the `STOWER_*` config overrides in §1.
+unrelated to `StowerLicenseConfig` (§1).
 
 ---
 

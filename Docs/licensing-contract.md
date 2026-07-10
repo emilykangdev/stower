@@ -233,11 +233,11 @@ internal struct StowerLicenseConfig: Sendable, Equatable {
   `/activate` needs no API key. `storeID`/`productID` are load-bearing only
   in that a placeholder `0` would fail every activation closed, not because
   they are secret.
-- Resolution: compiled default (`staging` in `DEBUG`, `production`
-  otherwise) → optional `STOWER_CHECKOUT_URL` / `STOWER_STORE_ID` /
-  `STOWER_PRODUCT_ID` `ProcessInfo` override, applied **only in DEBUG**
-  (`effectiveConfig(allowOverrides:)`; Release always pins the compiled
-  config). See `EnvironmentVariables.md` §1.
+- Resolution: `resolved` is exactly `compiledDefault(for: .current)` —
+  `staging` in `DEBUG`, `production` otherwise. No override layer exists (the
+  pre-PAR-62 `STOWER_CHECKOUT_URL`/`STOWER_STORE_ID`/`STOWER_PRODUCT_ID`
+  `ProcessInfo` override / `effectiveConfig(allowOverrides:)` was deleted as
+  dead code). See `EnvironmentVariables.md` §1.
 - **Both `.production` and `.staging` ship real values** (supplied
   2026-07-01) — a live `store_id`/`product_id`/checkout URL, not
   placeholders (G1 resolved, §"Open questions"). What remains open is a
@@ -489,9 +489,9 @@ trial → paywall → activate lifecycle.
   store/product match, the `.couldNotReach`/`.invalid`/`.activated`
   classification, malformed-body handling), `StowerLicenseStore`
   read/write/clear, `StowerTrialClock.state(now:)` (seed-once behavior,
-  active vs. expired boundary), `StowerLicenseConfig.resolve`/`effectiveConfig`
-  (env override precedence, DEBUG vs. Release gating, malformed-int
-  fallback), `StowerLicenseDebugArguments.parse` (flag matrix), and
+  active vs. expired boundary), `StowerLicenseConfig.compiledDefault(for:)`
+  (DEBUG resolves to `staging`, Release resolves to `production`, I6),
+  `StowerLicenseDebugArguments.parse` (flag matrix), and
   `StowerLicenseEntryView.normalize(_:)` (paste-forgiveness prefixes).
 - **`StowerStartupModel` tests**: the generation-guard invariant (I4) — a
   superseded `activate(key:)` result never persists or commits; the
