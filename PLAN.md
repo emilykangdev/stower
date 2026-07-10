@@ -30,9 +30,16 @@ phone PWA hitting a local Mac server v2; iOS Photos-only MAS app v3.
   only verify updates signed with the OLD private key, so unless the CI signing secret was
   rotated in lockstep with a transition plan, existing installs may not auto-update past this
   release and will need a manual reinstall.** Docs synced in the same PRs: `Docs/Analytics.md`,
-  `Docs/DataModel.md`, `Docs/EnvironmentVariables.md`, `Docs/Lifecycle.md`, `Docs/Release.md`,
-  `Docs/licensing-contract.md`, `Sources/StowerCore/README.md`, `CONTRIBUTING.md`. Release
-  notes authored: `Docs/release-notes/0.2.2.md`. `Scripts/precheck.sh` green.
+  `Docs/DataModel.md`, `Docs/Lifecycle.md`, `Docs/Release.md`, `Sources/StowerCore/README.md`,
+  `CONTRIBUTING.md`. `Docs/EnvironmentVariables.md` and `Docs/licensing-contract.md` still
+  described the deleted `STOWER_*` override mechanism (`effectiveConfig(allowOverrides:)`) as
+  live — caught by Codex review on the docs PR (#60) and corrected in a follow-up commit here,
+  not in PR #57. Release notes authored: `Docs/release-notes/0.2.2.md`, with a manual-download
+  fallback line for the key-rotation risk above. `Scripts/precheck.sh` green locally (549
+  tests); CI build checks green on PR #60 (the `codex` review check failed on an unrelated
+  infra error — `gpt-5.6-sol` unavailable on the account, not a finding about this diff).
+  Manual update-transition dogfood (`Docs/Release.md`) remains pending before tagging
+  `messages-v0.2.2`.
 - 2026-07-04: **Legacy diagnostics Keychain migration removed; Keychain-item APIs locked out (branch `remove-legacy-keychain-migration`, PR #54).**
   The diagnostics install record (`DiagnosticsInstallRecord`) now lives **only** in `UserDefaults`
   (`StowerDiagnosticsStorageLocation.defaultsKey`). The earlier launch-path read of a legacy Keychain item —
