@@ -37,7 +37,12 @@ deployment target; `macos-26` default Xcode ships SDK 26.5 ≥ 26.4.
 
 The EdDSA private key is the only thing that can sign a future update your users
 will trust. **Losing it permanently strands every existing install** — they can
-never receive another update.
+never receive another update. **Deliberately rotating it has the same
+user-facing consequence as losing it**: an app already installed with the OLD
+public key can only verify updates signed with the OLD private key, so a
+rotation strands existing installs on their current version unless they
+manually redownload (see `Docs/release-notes/0.2.2.md` for the real instance
+of this and its manual-download fallback).
 
 ```bash
 # Install Sparkle release tools. The Homebrew cask installs only "Sparkle Test
@@ -134,7 +139,7 @@ from the built `Info.plist`). No action needed.
 ```text
 GitHub repository → Settings → Environments → New environment → name: release
   → Add required reviewers (yourself for solo)
-  → Add secrets: all five secrets from P1–P3 above
+  → Add secrets: all six secrets from P1–P3 above
   → Deployment branches and tags: Selected branches and tags
       Add rule: tags matching messages-v*
       Add rule: branch main  ← required so workflow_dispatch dry-runs can access secrets

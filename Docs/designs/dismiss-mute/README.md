@@ -1,5 +1,11 @@
 # Dismiss / Mute — approved design references
 
+> **Historical design-time snapshot, not living UI documentation.** This
+> captures the approved design at the time this feature was built (confirmed
+> shipped — `StowerMutedSendersButton`, `StowerDismissUndoBar`,
+> `StowerBoardViewTriage`). Later UI copy/behavior changes are not
+> reflected here and this file is not expected to track them.
+
 Committed visual + textual references for the board-triage feature (dismiss a message,
 mute a contact). These are the **approved** directions only — rejected variants are not
 copied here. Source briefs:

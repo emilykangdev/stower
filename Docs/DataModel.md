@@ -129,7 +129,7 @@ erDiagram
     chat {
         LIFECYCLE _ "TEMPORARY — read-only chat.db snapshot copy"
         int  ROWID                 PK
-        int  style                    "45 = 1:1 (StowerSourceChatRow.directStyle); else group"
+        int  style                    "45 = 1:1 (StowerSourceChatRow.directChatStyle); else group"
         text chat_identifier
         text display_name
     }

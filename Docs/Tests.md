@@ -28,7 +28,7 @@ func staleLoadDiscarded() { ... }
 @Test("undecodable storage defaults diagnostics on")
 func undecodableStorageDefaultsOn() { ... }
 
-@Suite("StowerDiagnosticsConsent") struct StowerAnalyticsConsentTests { ... }
+@Suite("StowerDebtBoardProvider") struct StowerDebtBoardProviderTests { ... }
 ```
 
 ```swift
