@@ -4,7 +4,7 @@
 
 The Photos data-source adapter. Enumerates the photo library via PhotoKit,
 runs an on-device caption pipeline (FastVLM over MLX) plus Vision OCR, and
-emits `IndexedItem` values for `StowerCore` to index. It owns everything that
+emits `StowerIndexedItem` values for `StowerCore` to index. It owns everything that
 is Photos-specific so `StowerCore` stays source-agnostic.
 
 This module is the one the v3 iOS Photos-only app links (alongside
@@ -18,7 +18,7 @@ architecture exists to prevent.
 - FastVLM caption job runner (MLX-backed). See `tmp/research/` for the
   exemplar repos and the FastVLM/mlx-swift references.
 - Vision OCR pass for text-in-image.
-- Mapping layer producing `StowerCore.IndexedItem` values.
+- Mapping layer producing `StowerIndexedItem` values.
 
 ## Constraints
 

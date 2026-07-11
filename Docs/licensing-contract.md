@@ -127,7 +127,7 @@ internal protocol StowerLicenseGating: Sendable {
   error carried by `StowerStartupState.needsLicense(StowerLicenseGateError?)`
 - Production conformer: **`StowerLemonSqueezyLicenseGate`**
   (`Sources/StowerMacUI/Startup/StowerLemonSqueezyLicenseGate.swift`), wired
-  at `StowerRootView.swift:95` (`StowerLemonSqueezyLicenseGate()`)
+  at `StowerRootView.swift:121` (`StowerLemonSqueezyLicenseGate()`)
 - Consumed by: `StowerStartupModel` (calls `licenseState(now:)` on every
   startup run and on `refreshLicenseIfOnBoard()`; calls `activate(key:)` +
   `persist(key:instanceID:)` from `activate(key:)`, under a generation guard
@@ -296,7 +296,7 @@ exist anywhere in this codebase.
 
 **Root view wiring** — `Sources/StowerMacUI/Views/StowerRootView.swift`
 
-- Constructs `StowerLemonSqueezyLicenseGate()` (line 95).
+- Constructs `StowerLemonSqueezyLicenseGate()` (line 121).
 - `openCheckout()` opens `StowerLicenseConfig.resolved.checkoutURL` via
   `NSWorkspace.shared.open` and sets a `boughtThisSession` flag (drives the F2
   banner state below).
