@@ -7,9 +7,11 @@ waiting on you (**"Your turn"**), or one you asked that never got answered
 in Messages.app with a saved reply ready to send — Stower never sends
 anything itself.
 
-Nothing leaves your Mac. There is no server that ever sees your message
-content — see [`SECURITY.md`](SECURITY.md) for the full breakdown of what
-that means and how it's enforced, not just promised.
+Your message content never leaves your Mac — no server ever sees it. The app
+does make a small number of other network calls (an anonymous usage-analytics
+signal, crash reports, a license check) that carry no message content; see
+[`SECURITY.md`](SECURITY.md) for the honest, itemized breakdown of exactly
+what leaves the device and what doesn't.
 
 > **Status:** the Messages board, drafts, and deep-link flow are built and
 > shipping (`StowerMac`). A standalone recall CLI (`stower`, below) and a
@@ -108,8 +110,12 @@ flowchart TD
 ## Permissions
 
 Stower needs **Full Disk Access** (to read `~/Library/Messages/chat.db`) and
-**Contacts** (to resolve phone numbers to names) — both mediated by macOS's
-normal system permission prompts, nothing bypassed. See
+**Contacts** (to resolve phone numbers to names). These are granted
+differently: Contacts uses macOS's normal system permission prompt (Allow /
+Don't Allow). Full Disk Access has no such prompt on macOS — the app's
+onboarding screen walks you to System Settings → Privacy & Security → Full
+Disk Access to grant it manually, the same manual step every Mac app
+needing this access requires. See
 [`Docs/Permissions.md`](Docs/Permissions.md) for exactly how each is
 requested, and [`SECURITY.md`](SECURITY.md) for how that access is scoped and
 what it is (and isn't) used for.
@@ -156,8 +162,9 @@ swift build -c release
 .build/release/stower search "quarterly numbers" --arm fts   # keyword-only, no model needed
 ```
 
-The model and index default to `~/Library/Application Support/Stower/`.
-Override with `--model-path` / `--index-dir`. Re-running `index` embeds only
+The index defaults to `~/Library/Application Support/Stower/Index/` and the
+model to `~/Library/Application Support/Stower/Models/default/`. Override
+either with `--index-dir` / `--model-path`. Re-running `index` embeds only
 new messages (the cache survives rebuilds).
 
 ## What Stower can see (a `chat.db` limitation)
