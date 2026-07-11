@@ -140,12 +140,14 @@ swift test
 Line Tools only, run it through `./Scripts/precheck.sh`, which injects the
 required framework flags automatically.
 
-## The `stower` CLI (recall over your Messages)
+## The `stower` CLI (internal dev tool, not customer-facing)
 
-Independent of the `StowerMac` app, `stower` is a CLI that indexes a window
-of your local Messages and searches it with a hybrid of FTS5 keyword
+`stower` is a build-from-source-only CLI used internally during development
+to exercise the recall engine directly — it is not the product, isn't
+packaged in any release, and no user needs it to use Stower. It indexes a
+window of your local Messages and searches it with a hybrid of FTS5 keyword
 matching and bge-small embeddings, fused by reciprocal-rank fusion —
-everything on-device.
+everything on-device. Independent of the `StowerMac` app.
 
 ```bash
 # 1. Convert the embedding model once (downloads weights from Hugging Face,
@@ -198,13 +200,13 @@ rule set, imported by `CLAUDE.md`).
 
 ## About the maintainer
 
-Stower is built solo, primarily through AI-assisted development under close
-review — see `AGENTS.md`/`CONTRIBUTING.md` for exactly how that review works
-(mechanical lint/build/test gates on every commit, a static-guard family in
-`Scripts/precheck.sh` enforcing architectural invariants, signed commits, a
-SHA-pinned release pipeline). If you're evaluating this repo as a sample of that
-process for contract macOS/Swift work, `Docs/` and `Scripts/precheck.sh` are
-the most representative places to look.
+Stower is built solo, entirely with plan/loop-driven development with AI —
+see `AGENTS.md` for exactly how that works (mechanical lint/build/test gates
+on every commit, a static-guard family in `Scripts/precheck.sh` enforcing
+architectural invariants, signed commits, a SHA-pinned release pipeline). If
+you're evaluating this repo as a sample of that process for contract
+macOS/Swift work, `Docs/` and `Scripts/precheck.sh` are the most
+representative places to look.
 
 ## License
 
