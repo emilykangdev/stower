@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stower 0.2.2</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    max-width: 44rem;
+    margin: 2.5rem auto;
+    padding: 0 1.5rem;
+    color: #1d1d1f;
+    background: #ffffff;
+  }
+  h1, h2, h3, h4, h5, h6 { line-height: 1.25; margin: 1.6em 0 0.5em; }
+  h1 { font-size: 1.5rem; }
+  h2 { font-size: 1.2rem; }
+  h3 { font-size: 1.05rem; }
+  ul { padding-left: 1.4rem; }
+  li { margin: 0.25em 0; }
+  code {
+    font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: rgba(127, 127, 127, 0.15);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+  }
+  a { color: #0066cc; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #f5f5f7; background: #1d1d1f; }
+    a { color: #6ab0ff; }
+  }
+</style>
+</head>
+<body>
+<h2>Stower 0.2.2</h2>
+<h3>Under the hood</h3>
+<ul>
+  <li>Rotated the update-signing key used to verify app updates. If your copy of Stower doesn't offer this update automatically, download the latest version directly from <a href="https://stower.app">stower.app</a>.</li>
+  <li>Debug and internal demo builds now keep fully separate local data from a real release install — internal hardening with no change to how the shipped app stores your data.</li>
+</ul>
+</body>
+</html>
