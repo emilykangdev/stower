@@ -88,8 +88,12 @@ there's less to trust in the first place:
     could identify you are stripped or the whole report is dropped rather
     than sent partially redacted (see `Docs/CrashReporting.md`).
   - **A feedback relay**, only if you explicitly open the in-app feedback
-    form and submit something — this one is not default-on, it only ever
-    sends what you choose to type and send.
+    form and submit something — this one is not default-on. Along with
+    the message you type (and an email address, only if you choose to add
+    one), it also sends a few non-content identifiers: your app version,
+    macOS version, coarse license status (e.g. trial/licensed), and an
+    opaque license-instance ID if you have one. No message content,
+    contacts, or file paths ride along.
 - **Read-only access.** Stower reads your Messages database; it does not
   and cannot send messages on your behalf. Replying is always a manual,
   deliberate action you take yourself in the real Messages app.

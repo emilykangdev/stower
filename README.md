@@ -35,7 +35,10 @@ what leaves the device and what doesn't.
   "Out of scope for v1").
 - **Dismiss / mute**, with undo, for threads or senders you don't want
   surfaced.
-- **Fast keyword search** across your local message history.
+
+Fast hybrid keyword + semantic search over your local message history exists
+as a library (`StowerCore`) and a CLI (`stower`, below) — it is not yet wired
+into the `StowerMac` app's UI.
 
 ## Architecture
 
@@ -78,7 +81,6 @@ flowchart TD
     convert -->|"one-time, offline"| model
 
     cli["stower CLI<br/>index · search · eval"]
-    mac["StowerMac<br/>the shipping app"]
     msgs["StowerMessages<br/>chat.db reader + Contacts"]
 
     subgraph core["StowerCore"]
@@ -101,7 +103,6 @@ flowchart TD
     embedder -->|"vectors"| store
 
     cli -->|"② search / eval"| retriever
-    mac -->|"② board + search"| retriever
     retriever -->|"keyword arm"| index
     retriever -->|"semantic arm (cosine)"| store
     retriever -->|"query vector"| embedder
@@ -200,8 +201,8 @@ rule set, imported by `CLAUDE.md`).
 Stower is built solo, primarily through AI-assisted development under close
 review — see `AGENTS.md`/`CONTRIBUTING.md` for exactly how that review works
 (mechanical lint/build/test gates on every commit, a static-guard family in
-`Scripts/precheck.sh` enforcing architectural invariants, signed commits,
-pinned CI Actions). If you're evaluating this repo as a sample of that
+`Scripts/precheck.sh` enforcing architectural invariants, signed commits, a
+SHA-pinned release pipeline). If you're evaluating this repo as a sample of that
 process for contract macOS/Swift work, `Docs/` and `Scripts/precheck.sh` are
 the most representative places to look.
 
