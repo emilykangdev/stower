@@ -10,6 +10,29 @@ scheme or architecture that didn't exist yet at the time.
 
 ## Status
 
+- 2026-07-13: **Full Disk Access replaced with App Sandbox + a security-scoped Messages bookmark (branch `fda-bookmark-spike`).**
+  `StowerMac.entitlements` gains `app-sandbox`, `files.user-selected.read-only`, `network.client`,
+  and Sparkle's `-spks`/`-spki` temp-exceptions; `project.pbxproj` flips `ENABLE_APP_SANDBOX` to
+  `YES` (Debug + Release) — verified via `codesign -d --entitlements` on a real Debug build.
+  `StowerChatDatabaseReader` drops `defaultSourceURL`; gains a bookmark-resolving production init
+  (`loadMessagesAccessBookmark`/`resolveBookmark`/`onBookmarkRefreshed`) and a `#if DEBUG`
+  `demoSourceURL` init. `StowerChatSnapshot`'s security scope now brackets
+  `makeValidatedSnapshot`'s whole body, not just `copySource`. `StowerMessagesError`.
+  `fullDiskAccessMissing` → `messagesAccessMissing`; `StowerStartupState.needsFullDiskAccess(path:)`
+  → `.needsMessagesAccess` (no payload) / `.needsMessagesAccessStillMissing(detail:)`.
+  New `StowerMessagesAccessPicker` (`StowerMacUI`'s 2nd public symbol, shared by the GUI app,
+  `StowerCLI`, and a new `StowerChatDBInspector` executable — none persist except the GUI, which
+  writes to `StowerUserDefaultsItem`). `StowerMessagesDropper` drops the synthetic ⌘V paste and
+  Accessibility entirely (App Sandbox blocks `CGEventPost` outright) — "Reply in Messages" now
+  only copies + opens the conversation. `Scripts/inspect-chatdb-shapes.sh` deleted, replaced by
+  the compiled `stower-chatdb-inspector` (a bash script cannot host a sandbox). `precheck.sh`
+  guard 6d deleted (the picker legitimately touches `FileManager`); guard 6e unchanged. Analytics
+  events renamed `fda_permission_*` → `messages_access_*`. 552 tests passing (89 suites);
+  `Scripts/precheck.sh` and a Debug `xcodebuild` both green. Docs swept repo-wide; `PLAN.md`'s
+  dated Status log relocated verbatim to this file (JC5). Known accepted gaps logged in
+  `tmp/OPEN_QUESTIONS.md`: `Docs/release-notes/0.2.0.md`'s historical FDA mention left
+  unrewritten, and `SearchCommand.swift`/`StowerRetriever.swift`'s `rrfDampening` parameter is a
+  pre-existing, unrelated substring match on the FDA sweep grep.
 - 2026-07-09: **Debug/Release/demo Application Support isolation (PAR-61/PAR-62, PR #57) + Sparkle EdDSA key rotation (PR #58) — prepping release v0.2.2.**
   New `StowerEnvironment` (`StowerCore`) is the single compile-time source of truth for
   Debug vs. Release, replacing four stores' (`StowerDraftStore`, `StowerTriageStore`,
