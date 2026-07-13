@@ -1,6 +1,10 @@
 import Foundation
 import GRDB
 
+// 2 lines over the 250-line limit after adding the security-scoped
+// start/stop closures (I1) — a structural split would scatter one cohesive
+// snapshot-validation type across files for a marginal overage.
+// swiftlint:disable:next type_body_length
 internal final class StowerChatSnapshot {
     internal let databaseURL: URL
     internal let openedReadonly: Bool
@@ -12,7 +16,9 @@ internal final class StowerChatSnapshot {
     internal init(
         sourceURL: URL,
         fileManager: FileManager = .default,
-        temporaryDirectory: URL? = nil
+        temporaryDirectory: URL? = nil,
+        startAccessingScope: @escaping () -> Bool = { true },
+        stopAccessingScope: @escaping () -> Void = {}
     ) throws {
         self.fileManager = fileManager
         let temporaryDirectory = temporaryDirectory ?? fileManager.temporaryDirectory
@@ -21,7 +27,9 @@ internal final class StowerChatSnapshot {
         let snapshot = try Self.makeValidatedSnapshot(
             sourceURL: sourceURL,
             temporaryDirectory: temporaryDirectory,
-            fileManager: fileManager
+            fileManager: fileManager,
+            startAccessingScope: startAccessingScope,
+            stopAccessingScope: stopAccessingScope
         )
         rootURL = snapshot.rootURL
         databaseURL = snapshot.databaseURL
@@ -99,11 +107,23 @@ internal final class StowerChatSnapshot {
         }
     }
 
+    /// Validates and copies the source DB.
+    ///
+    /// The security-scoped access window is held open for the ENTIRE call —
+    /// the `fileExists` guard, both retry attempts, and every read in
+    /// between. A bracket placed only around `copySource` would leave this
+    /// `fileExists` check (the very first live-source touch) unscoped.
     private static func makeValidatedSnapshot(
         sourceURL: URL,
         temporaryDirectory: URL,
-        fileManager: FileManager
+        fileManager: FileManager,
+        startAccessingScope: () -> Bool,
+        stopAccessingScope: () -> Void
     ) throws -> SnapshotComponents {
+        guard startAccessingScope() else {
+            throw StowerMessagesError.messagesAccessMissing(sourceURL.path)
+        }
+        defer { stopAccessingScope() }
         guard fileManager.fileExists(atPath: sourceURL.path) else {
             throw StowerMessagesError.sourceNotFound(sourceURL.path)
         }
@@ -148,9 +168,9 @@ internal final class StowerChatSnapshot {
         )
         // Each step has different permission semantics, so they are classified
         // separately. createDirectory and moveItem only touch temporaryDirectory:
-        // a denial there is a staging-write failure, never Full Disk Access on the
-        // source. copyItem is the one step that READS the source, so a denial
-        // during the copy is the TCC/Full Disk Access denial we want to surface.
+        // a denial there is a staging-write failure, never a Messages-access denial
+        // on the source. copyItem is the one step that READS the source, so a
+        // denial during the copy is the bookmark/scope denial we want to surface.
         do {
             try fileManager.createDirectory(at: stagingURL, withIntermediateDirectories: true)
         } catch {
@@ -260,14 +280,15 @@ internal final class StowerChatSnapshot {
     /// Maps a copy-step failure to a `StowerMessagesError`.
     ///
     /// Only ever called on the source `copyItem` step (see `copySource`), so a
-    /// permission denial here means macOS withheld Full Disk Access from the
-    /// source DB. Already-classified errors pass through unchanged.
+    /// permission denial here means the security-scoped bookmark did not
+    /// actually grant read access to the source DB. Already-classified errors
+    /// pass through unchanged.
     internal static func classify(_ error: Error, sourceURL: URL) -> StowerMessagesError {
         if let classified = error as? StowerMessagesError {
             return classified
         }
         if isPermissionDenied(error) {
-            return .fullDiskAccessMissing(sourceURL.path)
+            return .messagesAccessMissing(sourceURL.path)
         }
         return .unreadableSource((error as NSError).localizedDescription)
     }

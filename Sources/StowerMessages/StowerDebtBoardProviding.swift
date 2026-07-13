@@ -21,7 +21,7 @@ public protocol StowerDebtBoardProviding: Sendable {
     /// is already cached for, and excludes the rest (cold start returns empty
     /// lists). Throws `languageModelUnavailable(reason)` before opening the
     /// database when the model is unavailable, and a typed `StowerMessagesError`
-    /// when the source can't be read (e.g. missing Full Disk Access).
+    /// when the source can't be read (e.g. missing Messages access).
     func loadDebtBoard(config: StowerDebtConfig, now: Date) async throws -> StowerDebtBoard
 
     /// Returns the newest `limit` messages of one chat, ordered oldest-first for

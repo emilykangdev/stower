@@ -203,7 +203,7 @@ internal struct StowerDebtBoardProviderTests {
         for reason in reasons {
             let provider = StowerDebtBoardProvider(
                 readerFactory: {
-                    throw StowerMessagesError.fullDiskAccessMissing("/should-not-open")
+                    throw StowerMessagesError.messagesAccessMissing("/should-not-open")
                 },
                 languageModelJudge: StowerSpyReplyJudge(),
                 cache: nil,
@@ -222,10 +222,10 @@ internal struct StowerDebtBoardProviderTests {
         }
     }
 
-    @Test("a supported model still surfaces a Full Disk Access error from the reader")
-    internal func supportedSurfacesFDA() async throws {
+    @Test("a supported model still surfaces a messages-access error from the reader")
+    internal func supportedSurfacesMessagesAccessMissing() async throws {
         let provider = StowerDebtBoardProvider(
-            readerFactory: { throw StowerMessagesError.fullDiskAccessMissing("/x") },
+            readerFactory: { throw StowerMessagesError.messagesAccessMissing("/x") },
             languageModelJudge: StowerSpyReplyJudge(),
             cache: nil
         )
@@ -233,8 +233,8 @@ internal struct StowerDebtBoardProviderTests {
             _ = try await provider.loadDebtBoard(config: config(), now: now)
             Issue.record("expected loadDebtBoard to throw")
         } catch let error as StowerMessagesError {
-            guard case .fullDiskAccessMissing = error else {
-                Issue.record("expected fullDiskAccessMissing, got \(error)")
+            guard case .messagesAccessMissing = error else {
+                Issue.record("expected messagesAccessMissing, got \(error)")
                 return
             }
         }

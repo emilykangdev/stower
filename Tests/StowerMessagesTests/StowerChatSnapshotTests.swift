@@ -29,6 +29,68 @@ internal struct StowerChatSnapshotTests {
         #expect(!FileManager.default.fileExists(atPath: copiedURL.deletingLastPathComponent().path))
     }
 
+    @Test("(I1) the security scope is started and stopped exactly once, in order, on success")
+    internal func scopeBracketedOnceOnSuccess() throws {
+        let fixture = try StowerFixtureDatabase()
+        defer { fixture.remove() }
+        let temp = fixture.rootURL.appendingPathComponent("snapshots", isDirectory: true)
+        try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+        let recorder = StowerScopeCallRecorder()
+
+        _ = try StowerChatSnapshot(
+            sourceURL: fixture.databaseURL,
+            temporaryDirectory: temp,
+            startAccessingScope: {
+                recorder.record("start"); return true
+            },
+            stopAccessingScope: { recorder.record("stop") }
+        )
+
+        #expect(recorder.calls == ["start", "stop"])
+    }
+
+    @Test("(I1) the security scope is started and stopped exactly once after both retries fail")
+    internal func scopeBracketedOnceOnRetryFailure() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "stower-invalid-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("chat.db")
+        try Data("not sqlite".utf8).write(to: source)
+        let recorder = StowerScopeCallRecorder()
+
+        #expect(throws: StowerMessagesError.self) {
+            _ = try StowerChatSnapshot(
+                sourceURL: source,
+                temporaryDirectory: root,
+                startAccessingScope: {
+                    recorder.record("start"); return true
+                },
+                stopAccessingScope: { recorder.record("stop") }
+            )
+        }
+
+        #expect(recorder.calls == ["start", "stop"])
+    }
+
+    @Test(
+        "(I1) a scope that fails to start throws messagesAccessMissing before touching the source"
+    )
+    internal func scopeStartFailureThrowsMessagesAccessMissing() throws {
+        let fixture = try StowerFixtureDatabase()
+        defer { fixture.remove() }
+
+        #expect(throws: StowerMessagesError.self) {
+            _ = try StowerChatSnapshot(
+                sourceURL: fixture.databaseURL,
+                startAccessingScope: { false },
+                stopAccessingScope: {}
+            )
+        }
+    }
+
     @Test("recovers WAL frames copied from a live database")
     internal func walRecovery() throws {
         let fixture = try StowerFixtureDatabase(useWriteAheadLog: true)
@@ -61,7 +123,7 @@ internal struct StowerChatSnapshotTests {
         }
     }
 
-    @Test("classifies permission failures as missing Full Disk Access")
+    @Test("classifies permission failures as missing Messages access")
     internal func permissionClassification() {
         let error = NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))
         let classified = StowerChatSnapshot.classify(
@@ -69,13 +131,13 @@ internal struct StowerChatSnapshotTests {
             sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
         )
 
-        guard case .fullDiskAccessMissing = classified else {
-            Issue.record("Expected a Full Disk Access error.")
+        guard case .messagesAccessMissing = classified else {
+            Issue.record("Expected a messages-access-missing error.")
             return
         }
     }
 
-    @Test("classifies a copy denial with a nested POSIX error as missing Full Disk Access")
+    @Test("classifies a copy denial with a nested POSIX error as missing Messages access")
     internal func wrappedCopyPermissionClassification() {
         let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))
         let copyDenied = NSError(
@@ -88,14 +150,16 @@ internal struct StowerChatSnapshotTests {
             sourceURL: URL(fileURLWithPath: "/fixture/chat.db")
         )
 
-        guard case .fullDiskAccessMissing = classified else {
-            Issue.record("Expected a Full Disk Access error for the wrapped copy denial.")
+        guard case .messagesAccessMissing = classified else {
+            Issue.record("Expected a messages-access-missing error for the wrapped copy denial.")
             return
         }
     }
 
-    @Test("reports an unwritable staging directory as unreadableSource, not Full Disk Access")
-    internal func unwritableStagingIsNotFullDiskAccess() throws {
+    @Test(
+        "reports an unwritable staging directory as unreadableSource, not messages-access-missing"
+    )
+    internal func unwritableStagingIsNotMessagesAccessMissing() throws {
         let fixture = try StowerFixtureDatabase()
         defer { fixture.remove() }
         let readonlyRoot = fixture.rootURL.appendingPathComponent("ro", isDirectory: true)
@@ -130,5 +194,17 @@ internal struct StowerChatSnapshotTests {
     private func modificationDate(_ url: URL) throws -> Date {
         let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
         return try #require(values.contentModificationDate)
+    }
+}
+
+/// Records `startAccessingScope`/`stopAccessingScope` calls in order (I1).
+///
+/// `makeValidatedSnapshot` runs synchronously and single-threaded, so a plain
+/// class recorder (no locking) is sufficient here.
+private final class StowerScopeCallRecorder {
+    private(set) var calls: [String] = []
+
+    func record(_ call: String) {
+        calls.append(call)
     }
 }

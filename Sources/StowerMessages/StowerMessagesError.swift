@@ -5,8 +5,9 @@ public enum StowerMessagesError: Error, LocalizedError, Sendable {
     /// The configured Source DB does not exist.
     case sourceNotFound(String)
 
-    /// macOS denied access to the Messages data directory.
-    case fullDiskAccessMissing(String)
+    /// Stower does not have a working security-scoped bookmark for the
+    /// Messages folder (never granted, revoked, or unresolvable).
+    case messagesAccessMissing(String)
 
     /// The Source DB could not be copied or opened.
     case unreadableSource(String)
@@ -29,8 +30,8 @@ public enum StowerMessagesError: Error, LocalizedError, Sendable {
         switch self {
         case .sourceNotFound(let path):
             return "Messages database not found at \(path)."
-        case .fullDiskAccessMissing:
-            return "Full Disk Access is required to read Messages."
+        case .messagesAccessMissing:
+            return "Stower needs access to your Messages folder to continue."
         case .unreadableSource(let reason):
             return "Unable to read Messages: \(reason)"
         case .invalidSnapshot:
