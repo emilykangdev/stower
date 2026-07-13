@@ -59,6 +59,19 @@ public actor StowerChatDatabaseReader {
             // iter 2) — .withSecurityScope alone is documented by Apple to
             // grant read/write on resolution, which the entitlement can't
             // actually honor.
+            //
+            // Re-creating a bookmark from an already-resolved security-scoped
+            // URL itself counts as "using" the scoped resource, not merely
+            // reading its contents — without an active start/stop bracket this
+            // throws NSCocoaErrorDomain Code=256 ("Could not open() the item"),
+            // which `try?` was silently swallowing, so the self-heal never
+            // actually persisted a refreshed bookmark (Cursor Bugbot finding).
+            let didStartScope = resolved.url.startAccessingSecurityScopedResource()
+            defer {
+                if didStartScope {
+                    resolved.url.stopAccessingSecurityScopedResource()
+                }
+            }
             let refreshedBookmark = try? resolved.url.bookmarkData(
                 options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
                 includingResourceValuesForKeys: nil,

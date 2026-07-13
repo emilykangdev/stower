@@ -5,6 +5,7 @@ import StowerMessages
 /// Errors the inspector's run can surface, beyond the picker's own errors.
 internal enum StowerChatDBInspectorError: Error, LocalizedError {
     case cancelled
+    case accessDenied
     case redactionGuardTripped
     case sqliteUnavailable
 
@@ -12,6 +13,9 @@ internal enum StowerChatDBInspectorError: Error, LocalizedError {
         switch self {
         case .cancelled:
             return "no Messages folder selected — cancelled"
+        case .accessDenied:
+            return "could not access the granted Messages folder — the bookmark "
+                + "resolved but security-scoped access failed"
         case .redactionGuardTripped:
             return "redaction guard tripped — content-shaped data detected in the report. "
                 + "Output withheld; nothing was printed. Investigate the queries before "
@@ -40,7 +44,7 @@ internal enum StowerChatDBInspectorRunner {
         )
 
         guard resolvedURL.startAccessingSecurityScopedResource() else {
-            throw StowerChatDBInspectorError.cancelled
+            throw StowerChatDBInspectorError.accessDenied
         }
         defer { resolvedURL.stopAccessingSecurityScopedResource() }
 

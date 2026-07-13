@@ -97,7 +97,7 @@ private struct StowerAccessSteps: View {
         VStack(alignment: .leading, spacing: Self.lineSpacing) {
             Text(
                 "In the dialog that opens, select the Messages folder and click Open. "
-                    + "Here's the path:"
+                    + "Here's how:"
             )
             .foregroundStyle(.secondary)
             stepRow(1, "Click Select Messages Folder below.")

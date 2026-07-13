@@ -82,12 +82,18 @@ internal struct StowerChatSnapshotTests {
         let fixture = try StowerFixtureDatabase()
         defer { fixture.remove() }
 
-        #expect(throws: StowerMessagesError.self) {
+        do {
             _ = try StowerChatSnapshot(
                 sourceURL: fixture.databaseURL,
                 startAccessingScope: { false },
                 stopAccessingScope: {}
             )
+            Issue.record("Expected a messages-access-missing error.")
+        } catch let error as StowerMessagesError {
+            guard case .messagesAccessMissing = error else {
+                Issue.record("Expected messagesAccessMissing, got \(error).")
+                return
+            }
         }
     }
 

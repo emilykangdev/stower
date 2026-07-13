@@ -43,16 +43,43 @@ internal enum StowerChatDBInspectorSQLite {
         process.standardOutput = stdout
         process.standardError = stderr
         try process.run()
+        // Drain both pipes CONCURRENTLY with the process running, never after
+        // `waitUntilExit()`: a report section large enough to fill a pipe's
+        // buffer would make `sqlite3` block on write() while this thread sits
+        // blocked in `waitUntilExit()` — a permanent, timeout-less deadlock
+        // (CodeRabbit finding).
+        let group = DispatchGroup()
+        let outputBox = StowerPipeDrainBox()
+        let errorBox = StowerPipeDrainBox()
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            outputBox.data = stdout.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            errorBox.data = stderr.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
         process.waitUntilExit()
-        let outputData = stdout.fileHandleForReading.readDataToEndOfFile()
+        group.wait()
         guard process.terminationStatus == 0 else {
-            let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
-            let message = String(data: errorData, encoding: .utf8) ?? "sqlite3 failed"
+            let message = String(data: errorBox.data, encoding: .utf8) ?? "sqlite3 failed"
             throw StowerChatDBInspectorSQLiteError.nonZeroExit(message)
         }
-        return String(data: outputData, encoding: .utf8)?
+        return String(data: outputBox.data, encoding: .utf8)?
             .trimmingCharacters(in: .newlines) ?? ""
     }
+}
+
+/// Hands one pipe's drained `Data` from its background drain task back to the
+/// caller after `DispatchGroup.wait()`.
+///
+/// `@unchecked Sendable`: safe because the group's `enter`/`leave`/`wait`
+/// establish a happens-before edge — the drain task's single write to `data`
+/// always completes before `wait()` returns and the caller reads it.
+private final class StowerPipeDrainBox: @unchecked Sendable {
+    var data = Data()
 }
 
 /// A `sqlite3` CLI invocation failure.

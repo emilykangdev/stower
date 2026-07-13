@@ -51,9 +51,36 @@ public enum StowerMessagesAccessPicker {
 
     /// Pre-navigates the panel straight to the Messages folder so the user
     /// never has to find a hidden Library folder themselves.
+    ///
+    /// Built from `realHomeDirectory()`, not `FileManager
+    /// .homeDirectoryForCurrentUser` — under this app's App Sandbox
+    /// entitlement, that API resolves to the sandbox container's `Data`
+    /// directory rather than the real `~`, which would pre-navigate the
+    /// panel to a path that doesn't exist (Cursor Bugbot finding).
     private static var defaultDirectoryURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Messages", isDirectory: true)
+        Self.realHomeDirectory()
+            .appendingPathComponent(Self.messagesDirectoryPath, isDirectory: true)
+    }
+
+    /// The user's Messages directory, relative to their real home folder.
+    private static let messagesDirectoryPath = "Library/Messages"
+
+    /// The real on-disk user home directory, unaffected by App Sandbox
+    /// container redirection.
+    ///
+    /// Reads `pw_dir` from the password database (the Apple DTS-recommended
+    /// pattern) instead of `FileManager.homeDirectoryForCurrentUser`, which a
+    /// sandboxed process cannot use for this purpose. Falls back to that API
+    /// only if the password-database lookup itself fails.
+    private static func realHomeDirectory() -> URL {
+        guard let passwd = getpwuid(getuid()) else {
+            return FileManager.default.homeDirectoryForCurrentUser
+        }
+        return URL(
+            fileURLWithFileSystemRepresentation: passwd.pointee.pw_dir,
+            isDirectory: true,
+            relativeTo: nil
+        )
     }
 
     private static let panelMessage =
