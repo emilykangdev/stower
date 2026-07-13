@@ -43,7 +43,7 @@ public enum StowerMessagesAccessPicker {
             throw StowerMessagesAccessPickerError.selectionMissingDatabase
         }
         return try selectedURL.bookmarkData(
-            options: .withSecurityScope,
+            options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )

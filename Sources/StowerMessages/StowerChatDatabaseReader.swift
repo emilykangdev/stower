@@ -54,8 +54,13 @@ public actor StowerChatDatabaseReader {
             )
         }
         if resolved.isStale {
+            // .securityScopeAllowOnlyReadAccess matches the app's read-only
+            // files.user-selected entitlement (Codex finding, ship-with-codex
+            // iter 2) — .withSecurityScope alone is documented by Apple to
+            // grant read/write on resolution, which the entitlement can't
+            // actually honor.
             let refreshedBookmark = try? resolved.url.bookmarkData(
-                options: .withSecurityScope,
+                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
                 includingResourceValuesForKeys: nil,
                 relativeTo: nil
             )
