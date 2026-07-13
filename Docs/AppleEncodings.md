@@ -17,15 +17,18 @@ columns exist) and the adapter rationale in `Docs/StowerMessages.md`.
 
 ## How to (re-)measure — without leaking content
 
-Every empirical claim below comes from `Scripts/inspect-chatdb-shapes.sh`, a
-read-only, redaction-by-construction diagnostic that copies the live `chat.db`,
-runs fixed aggregate queries against the copy, and prints **only structural,
-redacted aggregates** (histograms, prefix shapes, counts) — never message text,
-handles, chat ids, or full GUIDs. Re-run it to refresh the numbers here:
+Every empirical claim below comes from `stower-chatdb-inspector` (the
+`StowerChatDBInspector` executable target — the compiled, App-Sandbox-
+compatible replacement for the deleted `Scripts/inspect-chatdb-shapes.sh`,
+JC6), a read-only, redaction-by-construction diagnostic that copies the live
+`chat.db` via its own ephemeral Messages-access picker, runs fixed aggregate
+queries against the copy, and prints **only structural, redacted aggregates**
+(histograms, prefix shapes, counts) — never message text, handles, chat ids,
+or full GUIDs. Re-run it to refresh the numbers here:
 
 ```bash
-./Scripts/inspect-chatdb-shapes.sh --diagnose   # safety: every section "clean"
-./Scripts/inspect-chatdb-shapes.sh              # the redacted shape report
+swift run stower-chatdb-inspector              # the redacted shape report
+swift run stower-chatdb-inspector --self-test   # safety: guard still catches content
 ```
 
 **Last measured: 2026-06-13** (Emily's machine, macOS; `n = 18 383` message
@@ -202,8 +205,8 @@ rows**, i.e. a near-non-issue.
 
 - `Docs/DataModel.md` — which tables/columns exist and their lifecycle.
 - `Docs/StowerMessages.md` — the adapter that consumes these encodings.
-- `Scripts/inspect-chatdb-shapes.sh` — the read-only diagnostic that produced
-  every number here.
+- `Sources/StowerChatDBInspector/` (`stower-chatdb-inspector`) — the read-only
+  diagnostic that produced every number here.
 - `Sources/StowerMessages/StowerMessageDate.swift`,
   `StowerMessageQuery.swift`, `StowerMessageMapper.swift`,
   `StowerAttributedBodyDecoder.swift` — the decoders.

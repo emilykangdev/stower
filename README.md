@@ -110,13 +110,12 @@ flowchart TD
 
 ## Permissions
 
-Stower needs **Full Disk Access** (to read `~/Library/Messages/chat.db`) and
+Stower needs **Messages access** (to read `~/Library/Messages/chat.db`) and
 **Contacts** (to resolve phone numbers to names). These are granted
 differently: Contacts uses macOS's normal system permission prompt (Allow /
-Don't Allow). Full Disk Access has no such prompt on macOS — the app's
-onboarding screen walks you to System Settings → Privacy & Security → Full
-Disk Access to grant it manually, the same manual step every Mac app
-needing this access requires. See
+Don't Allow). Messages access uses a standard "Open" dialog (`NSOpenPanel`) —
+the app's onboarding screen walks you through selecting your Messages folder,
+which grants Stower read access to only that folder, not your whole disk. See
 [`Docs/Permissions.md`](Docs/Permissions.md) for exactly how each is
 requested, and [`SECURITY.md`](SECURITY.md) for how that access is scoped and
 what it is (and isn't) used for.
@@ -154,9 +153,9 @@ everything on-device. Independent of the `StowerMac` app.
 #    writes a Core ML package to ~/Library/Application Support/Stower/Models/).
 uv run Scripts/convert-embedding-model.py --model BAAI/bge-small-en-v1.5
 
-# 2. Grant Full Disk Access AND Contacts to your terminal app, in
-#    System Settings → Privacy & Security. Full Disk Access requires fully
-#    quitting and reopening the terminal afterward to take effect.
+# 2. Grant Contacts to your terminal app, in System Settings → Privacy &
+#    Security. Messages access is granted per-run: `stower index` presents
+#    its own picker — select ~/Library/Messages when it opens.
 
 # 3. Index the last 180 days, then search. Use a release build for real timings.
 swift build -c release

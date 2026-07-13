@@ -67,7 +67,7 @@ Analytics is **default-on**. `StowerDiagnosticsConsent.isEnabled` returns `true`
 no record exists yet (fresh install). The user is shown the
 `StowerAnalyticsConsentCard` once, after ~60 seconds of *foreground board* time
 (`StowerRootView.consentCardDelay`, JC7) — after they've seen value, never at startup
-or at the FDA permission cliff. The countdown cancels on resign-active / board
+or at the messages-access permission cliff. The countdown cancels on resign-active / board
 disappearance and re-arms on return; the shown-once flag lives in `UserDefaults`
 (`StowerDiagnosticsConsent.shownDefaultsKey`). One-click off also lives in a Privacy
 pane (`StowerSettingsView` → `StowerPrivacySettingsView`) in the app's `Settings { }`
@@ -114,8 +114,8 @@ to a dot-namespaced `signalName` and a bucketed `parameters` dictionary
 | `paywallReached(error:)` | `paywall_reached` | per-occurrence | `StowerStartupModel.commit` (`.needsLicense`) |
 | `checkoutOpened` | `checkout_opened` | per-occurrence | `StowerRootView.openCheckout()` (only after the browser actually opened) |
 | `activated` | `activated` | per-occurrence | `StowerStartupModel.activate(key:)` (on `.activated`, before the rerun) |
-| `fdaPermissionRequested` | `fda_permission_requested` | per-run | `StowerStartupModel.commit` (`.needsFullDiskAccess`) |
-| `fdaPermissionResolved(granted:)` | `fda_permission_resolved` | per-run | only at `.connectedPreparingBoard` (board proves access) |
+| `messagesAccessRequested` | `messages_access_requested` | per-run | `StowerStartupModel.commit` (`.needsMessagesAccess`) |
+| `messagesAccessResolved(granted:)` | `messages_access_resolved` | per-run | only at `.connectedPreparingBoard` (board proves access) |
 | `boardReached` | `board_reached` | per-launch | `StowerStartupModel.commit` (latched once) |
 | `boardItemClicked(itemType:)` | `board_item_clicked` | per-occurrence | board view models |
 | `featureUsed(feature:surface:)` | `feature_used` | per-occurrence | board view models (e.g. voluntary "buy") |
@@ -127,11 +127,11 @@ adjacent-state matching); the exceptions are `trial_started`, which fires from t
 `runStartup` license read via `emitTrialStartedIfNeeded`, and
 `checkout_opened`/`activated`, which fire at their action sites
 (`StowerRootView.openCheckout()` / `StowerStartupModel.activate(key:)`).
-`fda_permission_resolved` fires only when a run that entered
-an FDA state reaches `.connectedPreparingBoard` — `.checkingMessages` commits
-optimistically and can still fall back to `.needsFullDiskAccessStillMissing`, so the
-board load is the only proof access actually works. FDA *denial* is therefore measured
-as a `fda_permission_requested` with no following `fda_permission_resolved`.
+`messages_access_resolved` fires only when a run that entered
+a messages-access state reaches `.connectedPreparingBoard` — `.checkingMessages` commits
+optimistically and can still fall back to `.needsMessagesAccessStillMissing`, so the
+board load is the only proof access actually works. Denial is therefore measured
+as a `messages_access_requested` with no following `messages_access_resolved`.
 
 ## Reporting seam
 

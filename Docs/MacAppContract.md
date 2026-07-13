@@ -235,8 +235,9 @@ BEFORE any board work, and routes by the typed reason:
 - `.unavailable(.modelNotReady)` → downloading/preparing screen; retry later.
 - `.unavailable(.unknown)` → generic on-device-model-unavailable screen.
 
-The check is cheap and public — no entitlement, Info.plist string, prompt, FDA
-prompt, or network call. **Availability is also enforced inside the engine:**
+The check is cheap and public — no entitlement, Info.plist string, prompt,
+Messages-access picker, or network call. **Availability is also enforced inside
+the engine:**
 `loadDebtBoard` re-resolves availability on every call and throws
 `languageModelUnavailable(reason)` BEFORE opening `chat.db`, so an unsupported or
 AI-off machine never touches private Messages data — and a mid-session change
@@ -247,11 +248,11 @@ is already a trusted on-device verdict, so there is no per-row trust flag to rea
 
 | Permission | On absence | App contract |
 |---|---|---|
-| **Full Disk Access** | `loadDebtBoard` throws `StowerMessagesError.fullDiskAccessMissing` | **Hard gate.** The app must have an onboarding/empty state that catches this typed error and walks the user to System Settings. Nothing works without it. |
+| **Messages access** | `loadDebtBoard` throws `StowerMessagesError.messagesAccessMissing` | **Hard gate.** The app must have an onboarding/empty state that catches this typed error and walks the user through the `NSOpenPanel` picker. Nothing works without it. |
 | **Contacts** | silently degrades — `counterpart` falls back to the raw handle | **Soft.** Never an error, never blocks the board. Names just look worse. Optional "improve names" prompt. |
 
 `StowerMessagesError` is the typed error surface (`sourceNotFound`,
-`fullDiskAccessMissing`, `unreadableSource`, `invalidSnapshot`, `invalidRow`,
+`messagesAccessMissing`, `unreadableSource`, `invalidSnapshot`, `invalidRow`,
 `invalidArgument`). The app switches on it for its error UI.
 
 ### 5d. The snapshot & the cache (engine-owned, app-aware)
@@ -328,7 +329,7 @@ that with real users; it's a learn-by-shipping question, not a blocker.
    `judged+failed==total`, reload when `changedChatIDs` is non-empty.** Never
    block paint on the model; never show a raw empty board at cold start.
 4. Model availability is a typed, public startup check; an unavailable model
-   throws `languageModelUnavailable` before `chat.db` opens. Full Disk Access is a
+   throws `languageModelUnavailable` before `chat.db` opens. Messages access is a
    hard, typed gate — build the onboarding for it. Contacts is soft. The cache and
    snapshot manage themselves.
 5. Engine decides truth + order; app decides looks + timing + navigation.

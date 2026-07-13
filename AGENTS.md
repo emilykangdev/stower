@@ -123,8 +123,8 @@ code:
 - Tests go in `Tests/<ModuleName>Tests/`. One file per type under test.
 - Subsystem rationale lives in `Docs/<Subsystem>.md`. Update it when the
   rationale changes — not when the code changes.
-- After each meaningful commit, update `PLAN.md`'s "Status" section so the
-  next session can re-enter without re-reading the diff.
+- After each meaningful commit, update `Docs/BuildLog.md`'s "Status" section so
+  the next session can re-enter without re-reading the diff.
 - When writing or editing a plan/spec/doc, refer to real codebase symbols
   (types, functions, views, state cases) by their **exact names** — e.g.
   `StowerModelUnavailableView`, not "the model screen". Invented English

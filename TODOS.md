@@ -36,8 +36,9 @@ Deferred work with context, written by the 2026-06-12 /autoplan review of
   "file" / "sticker" instead, join the `attachment` table via `message_attachment_join`
   and read its `uti` / `mime_type` (metadata only, never the file bytes — e.g.
   `public.jpeg`→photo, `public.audio`→voice note, `public.movie`→video). Verify the
-  attachment-table schema with `Scripts/inspect-chatdb-shapes.sh` before relying on column
-  names (same verify-first lesson as the `associated_message_guid` prefix). Also splits
+  attachment-table schema with `stower-chatdb-inspector` (`Sources/StowerChatDBInspector/`)
+  before relying on column names (same verify-first lesson as the
+  `associated_message_guid` prefix). Also splits
   sticker-vs-photo. Decided coarse for v1 on 2026-06-13. Effort: S-M.
   Depends on: relationship-debt engine landed.
 - [ ] **`conversationStates` should decode only last-act bodies, not the whole window** —
