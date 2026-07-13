@@ -18,6 +18,11 @@ internal struct StowerChatDBInspectorCopy {
 
     /// Copies `sourceDatabaseURL` (+ `-wal`/`-shm` siblings, if present) into a
     /// fresh temp directory and checkpoints the copy's WAL frames in-place.
+    ///
+    /// A copied `chat.db` holds real message content, so a failure partway
+    /// through (e.g. a sidecar copy throwing after the database itself
+    /// copied) must not leave that copy behind in `/tmp` — every throwing
+    /// step removes `root` before rethrowing (Codex P2 finding).
     internal static func makeCheckpointedCopy(
         of sourceDatabaseURL: URL
     ) throws -> StowerChatDBInspectorCopy {
@@ -27,6 +32,27 @@ internal struct StowerChatDBInspectorCopy {
             isDirectory: true
         )
         try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        do {
+            let destination = try copyDatabaseAndSidecars(
+                from: sourceDatabaseURL,
+                into: root,
+                fileManager: fileManager
+            )
+            checkpointIfNeeded(at: destination, fileManager: fileManager)
+            return StowerChatDBInspectorCopy(rootURL: root, databaseURL: destination)
+        } catch {
+            try? fileManager.removeItem(at: root)
+            throw error
+        }
+    }
+
+    /// Copies the database file and its `-wal`/`-shm` siblings (if present)
+    /// into `root`, returning the copied database's URL.
+    private static func copyDatabaseAndSidecars(
+        from sourceDatabaseURL: URL,
+        into root: URL,
+        fileManager: FileManager
+    ) throws -> URL {
         let destination = root.appendingPathComponent(sourceDatabaseURL.lastPathComponent)
         try fileManager.copyItem(at: sourceDatabaseURL, to: destination)
         for suffix in ["-wal", "-shm"] {
@@ -35,27 +61,27 @@ internal struct StowerChatDBInspectorCopy {
             let destinationSidecar = URL(fileURLWithPath: destination.path + suffix)
             try fileManager.copyItem(at: sourceSidecar, to: destinationSidecar)
         }
-        // Folding WAL frames in BEFORE querying matters: an immutable/read-only
-        // open of a WAL-mode database does not replay the WAL, so un-checkpointed
-        // recent rows would be silently omitted from every count otherwise. A
-        // checkpoint failure isn't fatal (the bash original only warned, never
-        // aborted), but it must not vanish silently either.
-        if fileManager.fileExists(atPath: destination.path + "-wal") {
-            do {
-                _ = try StowerChatDBInspectorSQLite.execute(
-                    databasePath: destination.path,
-                    sql: "PRAGMA journal_mode=DELETE;"
-                )
-            } catch {
-                FileHandle.standardError.write(
-                    Data(
-                        "WARNING: could not checkpoint the copied WAL; very recent rows may "
-                            .utf8
-                    )
-                )
-                FileHandle.standardError.write(Data("be omitted from the counts below.\n".utf8))
-            }
+        return destination
+    }
+
+    /// Folds copied WAL frames into `destination` before querying.
+    ///
+    /// An immutable/read-only open of a WAL-mode database does not replay the
+    /// WAL, so un-checkpointed recent rows would be silently omitted from
+    /// every count otherwise. A checkpoint failure isn't fatal (the bash
+    /// original only warned, never aborted), but it must not vanish silently.
+    private static func checkpointIfNeeded(at destination: URL, fileManager: FileManager) {
+        guard fileManager.fileExists(atPath: destination.path + "-wal") else { return }
+        do {
+            _ = try StowerChatDBInspectorSQLite.execute(
+                databasePath: destination.path,
+                sql: "PRAGMA journal_mode=DELETE;"
+            )
+        } catch {
+            FileHandle.standardError.write(
+                Data("WARNING: could not checkpoint the copied WAL; very recent rows may ".utf8)
+            )
+            FileHandle.standardError.write(Data("be omitted from the counts below.\n".utf8))
         }
-        return StowerChatDBInspectorCopy(rootURL: root, databaseURL: destination)
     }
 }

@@ -52,6 +52,14 @@ public struct StowerRootView: View {
     /// Drives the F1 purchase-confirmation alert.
     @State internal var showPurchaseThanks = false
 
+    /// The picker's own error description, or `nil` to hide the alert.
+    ///
+    /// Set when `presentMessagesAccessPicker()` throws (e.g. the selected
+    /// folder has no Messages database). A user cancellation never sets this
+    /// (Codex P2 finding: cancellation and a genuine validation failure must
+    /// not both collapse to silence).
+    @State private var pickerErrorMessage: String?
+
     /// Whether the analytics disclosure card is currently showing.
     ///
     /// Set to `true` after ~60 seconds of foreground board time, once, if the
@@ -210,6 +218,19 @@ public struct StowerRootView: View {
             } message: {
                 Text(Self.purchaseThanksMessage)
             }
+            .alert(
+                Self.pickerErrorTitle,
+                isPresented: Binding(
+                    get: { pickerErrorMessage != nil },
+                    set: { isPresented in
+                        if !isPresented { pickerErrorMessage = nil }
+                    }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(pickerErrorMessage ?? "")
+            }
     }
 
     @ViewBuilder private var screen: some View {
@@ -306,17 +327,23 @@ public struct StowerRootView: View {
     /// Presents the picker, persists a freshly granted bookmark, and re-runs
     /// the startup check.
     ///
-    /// A user cancellation or a validation failure (the selected folder has no
-    /// Messages database) both collapse to `nil` via `try?` — either way
-    /// nothing is persisted and the user stays on the same onboarding screen
-    /// to try again.
+    /// A user cancellation (`nil`) is silent by design — nothing went wrong,
+    /// the user just closed the panel, and they stay on the same onboarding
+    /// screen to try again. A THROWN error (e.g. the selected folder has no
+    /// Messages database) is a genuine failure and must not collapse to the
+    /// same silence — it is surfaced via `pickerErrorMessage`'s alert so a
+    /// wrong-folder selection doesn't look like a dead button (Codex P2 finding).
     @MainActor
     private func presentMessagesAccessPicker() {
-        guard let bookmark = try? StowerMessagesAccessPicker.presentAndCreateBookmark() else {
-            return
+        do {
+            guard let bookmark = try StowerMessagesAccessPicker.presentAndCreateBookmark() else {
+                return
+            }
+            messagesAccessBookmarkStore.write(bookmark)
+            model.checkAgain()
+        } catch {
+            pickerErrorMessage = error.localizedDescription
         }
-        messagesAccessBookmarkStore.write(bookmark)
-        model.checkAgain()
     }
 
     /// Fires when the app returns to the foreground; drives the on-board license
@@ -335,6 +362,9 @@ public struct StowerRootView: View {
     private static let purchaseThanksTitle = "You're all set."
     private static let purchaseThanksMessage =
         "Thanks for buying Stower — your license is active on this Mac. Enjoy."
+
+    /// The Messages-access picker's error alert title.
+    private static let pickerErrorTitle = "Couldn't Use That Folder"
 
     private static let minWidth: CGFloat = 520
     private static let minHeight: CGFloat = 360
