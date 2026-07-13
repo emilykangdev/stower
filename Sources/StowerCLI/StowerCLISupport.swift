@@ -94,13 +94,13 @@ internal func stowerWarnIfContactsDenied() {
     )
 }
 
-/// Reports the upgraded Full Disk Access remedy: which app, which path, restart.
-internal func stowerReportFullDiskAccess(path: String) {
+/// Reports a missing/rejected Messages-access grant: what happened, what to do next.
+internal func stowerReportMessagesAccessMissing(detail: String) {
     stowerStandardError(
         """
-        Full Disk Access is required to read \(path).
-        Grant it to your terminal app in System Settings → Privacy & Security → Full Disk Access,
-        then fully quit and reopen the terminal (a restart of the app is required to take effect).
+        Stower needs access to your Messages folder: \(detail).
+        Run this command again and, in the dialog that opens, select the Messages folder
+        and click Open.
         """
     )
 }
