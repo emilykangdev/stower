@@ -3,9 +3,9 @@
 Stower is a macOS app that reads your iMessage conversations, entirely
 on-device, and shows you the ones you're letting slip: a real question still
 waiting on you (**"Your turn"**), or one you asked that never got answered
-(**"Maybe follow up"**). One click deep-links you into the exact conversation
-in Messages.app with a saved reply ready to send — Stower never sends
-anything itself.
+(**"Maybe follow up"**). One click copies your saved reply to the clipboard and deep-links you into
+the exact conversation in Messages.app, ready to paste (⌘V) and send —
+Stower never sends anything itself.
 
 Your message content never leaves your Mac — no server ever sees it. The app
 does make a small number of other network calls (an anonymous usage-analytics
@@ -16,7 +16,9 @@ what leaves the device and what doesn't.
 > **Status:** the Messages board, drafts, and deep-link flow are built and
 > shipping (`StowerMac`). A standalone recall CLI (`stower`, below) and a
 > planned Photos surface live in the same monorepo at different maturity
-> levels. See [`PLAN.md`](PLAN.md) for detailed status.
+> levels. See [`Docs/BuildLog.md`](Docs/BuildLog.md) for the dated,
+> engineer-facing status log, or [`Docs/Roadmap.md`](Docs/Roadmap.md) for
+> naming, module boundaries, and feature order.
 
 ## What it does
 
@@ -29,8 +31,10 @@ what leaves the device and what doesn't.
   you're in the thread. Stower saves it and shows it across every
   conversation, so a half-written reply is never stuck invisibly in one
   compose field.
-- **Deep-link + paste** — one click opens the exact conversation in
-  Messages.app and stages your draft in the compose field, ready to send.
+- **Deep-link + paste** — one click copies your draft to the clipboard and
+  opens the exact conversation in Messages.app, ready for you to paste (⌘V)
+  into the compose field and send. App Sandbox means Stower cannot post a
+  synthetic paste or drive Accessibility, so the paste step is always manual.
   Stower never transmits a message itself (see [`AGENTS.md`](AGENTS.md)'s
   "Out of scope for v1").
 - **Dismiss / mute**, with undo, for threads or senders you don't want

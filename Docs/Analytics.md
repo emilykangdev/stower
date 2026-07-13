@@ -3,7 +3,7 @@
 ## Why
 
 Anonymous funnel analytics for the Mac app: enough to see how many people launch,
-clear the hardware/license/Full-Disk-Access gates, and reach the board — without
+clear the hardware/license/messages-access gates, and reach the board — without
 ever collecting anything that could identify a person or expose Messages data.
 The whole subsystem lives in `Sources/StowerMacUI/Analytics/` and is **app-internal**:
 it sits above the engine-adapter wall (`MacAppContract.md` §9) and imports no engine

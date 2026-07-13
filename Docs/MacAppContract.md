@@ -86,12 +86,20 @@ The whole consumable surface is one protocol. Concrete type:
 
 ```swift
 let provider = StowerDebtBoardProvider(
-    sourceURL: .defaultSourceURL,         // the chat.db to read
-    contactsResolver: .live,              // name enrichment; degrades on denial
+    loadMessagesAccessBookmark: { bookmarkStore.readData() },  // security-scoped bookmark; nil → messagesAccessMissing
+    contactsResolver: .live(),            // name enrichment; degrades on denial
+    onBookmarkRefreshed: { bookmarkStore.write($0) },          // App Sandbox may re-mint the bookmark on resolve
     cacheURL: .defaultCacheURL,           // verdict cache; nil/fault → empty board until refresh rebuilds
     windowDays: 180                       // how far back facts are read (NOT per-call)
 )
 ```
+
+The app never holds a `chat.db` `sourceURL` directly — under App Sandbox, Messages
+access is a security-scoped bookmark the user grants once via an `NSOpenPanel`
+picker (`StowerMessagesAccessPicker`) and the app persists and re-resolves on each
+launch. `loadMessagesAccessBookmark` reads the persisted bookmark data;
+`onBookmarkRefreshed` writes back a re-minted bookmark when the OS refreshes it
+during resolution.
 
 `windowDays` is a **construction** concern, not a per-call knob. It must be ≥ any
 `unansweredForDays` the app will ask for, or `loadDebtBoard` throws
