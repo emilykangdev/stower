@@ -37,12 +37,24 @@ internal struct StowerChatDBInspectorCopy {
         }
         // Folding WAL frames in BEFORE querying matters: an immutable/read-only
         // open of a WAL-mode database does not replay the WAL, so un-checkpointed
-        // recent rows would be silently omitted from every count otherwise.
+        // recent rows would be silently omitted from every count otherwise. A
+        // checkpoint failure isn't fatal (the bash original only warned, never
+        // aborted), but it must not vanish silently either.
         if fileManager.fileExists(atPath: destination.path + "-wal") {
-            _ = try? StowerChatDBInspectorSQLite.execute(
-                databasePath: destination.path,
-                sql: "PRAGMA journal_mode=DELETE;"
-            )
+            do {
+                _ = try StowerChatDBInspectorSQLite.execute(
+                    databasePath: destination.path,
+                    sql: "PRAGMA journal_mode=DELETE;"
+                )
+            } catch {
+                FileHandle.standardError.write(
+                    Data(
+                        "WARNING: could not checkpoint the copied WAL; very recent rows may "
+                            .utf8
+                    )
+                )
+                FileHandle.standardError.write(Data("be omitted from the counts below.\n".utf8))
+            }
         }
         return StowerChatDBInspectorCopy(rootURL: root, databaseURL: destination)
     }
