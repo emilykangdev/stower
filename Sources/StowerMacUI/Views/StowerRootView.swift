@@ -83,6 +83,12 @@ public struct StowerRootView: View {
     internal let settings: StowerSystemSettingsOpener
     internal let analyticsReporter: any StowerAnalyticsReporting
 
+    /// The persisted security-scoped bookmark for the user's granted Messages folder.
+    ///
+    /// Written here after the user grants access via `StowerMessagesAccessPicker`.
+    /// The engine itself never persists (JC2).
+    internal let messagesAccessBookmarkStore: any StowerLeaseStorage
+
     /// The dismissal seam for the trial badge.
     ///
     /// Reads and writes the UserDefaults flag that hides the (pre-F3) badge
@@ -121,6 +127,7 @@ public struct StowerRootView: View {
             licenseGate: StowerLemonSqueezyLicenseGate(),
             settings: StowerSystemSettingsOpener(),
             badgeDismissal: StowerUserDefaultsBadgeDismissal(),
+            messagesAccessBookmarkStore: composition.messagesAccessBookmarkStore,
             flusher: flusher
         )
     }
@@ -140,15 +147,15 @@ public struct StowerRootView: View {
         interactions: any StowerInteractionRecording = StowerNoOpInteractionRecorder(),
         triage: any StowerTriageStoring = StowerInMemoryTriageStore(),
         undoManager: UndoManager = UndoManager(),
-        dropper: StowerMessagesDropper = StowerMessagesDropper(
-            perform: { _ in },
-            isAccessibilityTrusted: { false }
-        ),
+        dropper: StowerMessagesDropper = StowerMessagesDropper(perform: { _ in }),
         contacts: StowerContactsAccess = .denied,
         analyticsReporter: any StowerAnalyticsReporting = StowerNoOpAnalyticsReporter(),
         licenseGate: any StowerLicenseGating,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
         badgeDismissal: any StowerTrialBadgeDismissing = StowerUserDefaultsBadgeDismissal(),
+        messagesAccessBookmarkStore: any StowerLeaseStorage = StowerUserDefaultsItem(
+            key: StowerMessagesComposition.messagesAccessBookmarkKey
+        ),
         flusher: StowerTerminationFlusher? = nil
     ) {
         let startupModel = StowerStartupModel(
@@ -184,6 +191,7 @@ public struct StowerRootView: View {
         self.settings = settings
         self.badgeDismissal = badgeDismissal
         self.analyticsReporter = analyticsReporter
+        self.messagesAccessBookmarkStore = messagesAccessBookmarkStore
     }
 
     /// The startup screen for the current state, cross-fading on change.
@@ -194,9 +202,9 @@ public struct StowerRootView: View {
             .task { model.start() }
             .onDisappear { model.cancel() }
             // F1 lives at the root, not inside the board case: a successful
-            // activation's startup rerun can stop short of the board (FDA
-            // onboarding, model unavailable), and the confirmation must present
-            // over whichever screen the rerun lands on.
+            // activation's startup rerun can stop short of the board (messages-
+            // access onboarding, model unavailable), and the confirmation must
+            // present over whichever screen the rerun lands on.
             .alert(Self.purchaseThanksTitle, isPresented: $showPurchaseThanks) {
                 Button("OK", role: .cancel) {}
             } message: {
@@ -223,10 +231,10 @@ public struct StowerRootView: View {
                 onCheckAgain: { model.checkAgain() },
                 onOpenAppleIntelligence: { settings.openPane(.appleIntelligence) }
             )
-        case .needsFullDiskAccess:
-            fdaView(stillMissing: false)
-        case .needsFullDiskAccessStillMissing:
-            fdaView(stillMissing: true)
+        case .needsMessagesAccess:
+            messagesAccessView(stillMissing: false)
+        case .needsMessagesAccessStillMissing:
+            messagesAccessView(stillMissing: true)
         case .connectedPreparingBoard:
             ZStack(alignment: .bottom) {
                 StowerBoardView(
@@ -286,13 +294,29 @@ public struct StowerRootView: View {
         }
     }
 
-    private func fdaView(stillMissing: Bool) -> some View {
-        StowerFDAOnboardingView(
+    private func messagesAccessView(stillMissing: Bool) -> some View {
+        StowerMessagesAccessOnboardingView(
             stillMissing: stillMissing,
-            onOpenSettings: { settings.openPane(.fullDiskAccess) },
+            onPresentPicker: { presentMessagesAccessPicker() },
             onCheckAgain: { model.checkAgain() },
             onQuit: { NSApplication.shared.terminate(nil) }
         )
+    }
+
+    /// Presents the picker, persists a freshly granted bookmark, and re-runs
+    /// the startup check.
+    ///
+    /// A user cancellation or a validation failure (the selected folder has no
+    /// Messages database) both collapse to `nil` via `try?` — either way
+    /// nothing is persisted and the user stays on the same onboarding screen
+    /// to try again.
+    @MainActor
+    private func presentMessagesAccessPicker() {
+        guard let bookmark = try? StowerMessagesAccessPicker.presentAndCreateBookmark() else {
+            return
+        }
+        messagesAccessBookmarkStore.write(bookmark)
+        model.checkAgain()
     }
 
     /// Fires when the app returns to the foreground; drives the on-board license

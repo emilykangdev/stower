@@ -39,6 +39,15 @@ internal struct StowerMessagesComposition {
     /// The "Reply in Messages" bridge.
     internal let dropper: StowerMessagesDropper
 
+    /// The persisted security-scoped bookmark for the user's granted Messages
+    /// folder.
+    ///
+    /// Exposed so `StowerRootView`'s onboarding flow can write a freshly
+    /// created bookmark here after the user grants access via
+    /// `StowerMessagesAccessPicker` — the engine itself never persists
+    /// anything (JC2).
+    internal let messagesAccessBookmarkStore: StowerUserDefaultsItem
+
     /// Builds the shared provider, both adapters, and the precious draft store.
     ///
     /// The engine is built with an **empty** `StowerContactsResolver()`, so it emits
@@ -58,7 +67,12 @@ internal struct StowerMessagesComposition {
         // against real data, a Debug run against demo data, and a Release run
         // never mix drafts/triage/interaction-events/reply-cache into each other.
         let folderName = StowerMessagesStorageLocation.current.applicationSupportDirectoryName
-        let (provider, demoContactsResolver) = Self.makeEngine(inFolder: folderName)
+        let bookmarkStore = StowerUserDefaultsItem(key: Self.messagesAccessBookmarkKey)
+        messagesAccessBookmarkStore = bookmarkStore
+        let (provider, demoContactsResolver) = Self.makeEngine(
+            inFolder: folderName,
+            bookmarkStore: bookmarkStore
+        )
         startup = StowerMessagesStartupAdapter(engine: provider)
         contacts = StowerContactsAccess()
         // Build one live reporter shared across the startup funnel and the board.
@@ -101,42 +115,61 @@ internal struct StowerMessagesComposition {
     ///
     /// A DEBUG-only `STOWER_MESSAGES_DB` override points the provider at a curated
     /// database (e.g. the demo db) without touching the user's real Messages history —
-    /// `nil` (always so in Release) keeps the engine's default source. When that
-    /// override is active, the board also resolves names from an in-memory table of
-    /// fake contacts so the demo shows names, not raw handles, without touching the
-    /// real address book or the production `.live()` resolution path. The returned
-    /// factory is `nil` outside demo mode (and always in Release).
+    /// absent (always so in Release) keeps the production, bookmark-backed source.
+    /// When the override is active, the board also resolves names from an in-memory
+    /// table of fake contacts so the demo shows names, not raw handles, without
+    /// touching the real address book or the production `.live()` resolution path.
+    /// The returned factory is `nil` outside demo mode (and always in Release).
     ///
-    /// - Parameter folderName: The build-variant Application Support subfolder the
-    ///   provider's verdict cache lives under, passed explicitly (never the default
-    ///   parameter — the default resolves the SAME variant folder today, but relying
-    ///   on it here would silently stop tracking the composition root's own folder
-    ///   name if the two ever diverge, e.g. once demo mode gets its own folder).
+    /// The production branch never captures a fixed bookmark `Data`: it passes a
+    /// `loadMessagesAccessBookmark` closure that re-reads `StowerUserDefaultsItem`
+    /// on every call, so a bookmark granted after this composition root ran takes
+    /// effect on the very next load/refresh, not only after a relaunch (JC2).
+    ///
+    /// - Parameters:
+    ///   - folderName: The build-variant Application Support subfolder the
+    ///     provider's verdict cache lives under, passed explicitly (never the
+    ///     default parameter — the default resolves the SAME variant folder
+    ///     today, but relying on it here would silently stop tracking the
+    ///     composition root's own folder name if the two ever diverge, e.g.
+    ///     once demo mode gets its own folder).
+    ///   - bookmarkStore: The composition root's single bookmark-storage
+    ///     instance, reused here rather than constructed a second time.
     /// - Returns: The shared provider and, in demo mode only, the fake-contacts
     ///   resolver factory (`nil` outside demo mode and always in Release).
-    private static func makeEngine(inFolder folderName: String) -> (
+    private static func makeEngine(
+        inFolder folderName: String,
+        bookmarkStore: StowerUserDefaultsItem
+    ) -> (
         provider: StowerDebtBoardProvider,
         demoContactsResolver: (@Sendable () -> StowerContactsResolver)?
     ) {
         let cacheURL = StowerDebtBoardProvider.cacheURL(inFolder: folderName)
-        guard let overrideURL = StowerMessagesSourceOverride.resolved else {
-            let provider = StowerDebtBoardProvider(
-                contactsResolver: StowerContactsResolver(),
-                cacheURL: cacheURL
-            )
-            return (provider, nil)
-        }
+        #if DEBUG
+            if let overrideURL = StowerMessagesSourceOverride.resolved {
+                let provider = StowerDebtBoardProvider(
+                    demoSourceURL: overrideURL,
+                    contactsResolver: StowerContactsResolver(),
+                    cacheURL: cacheURL
+                )
+                return (provider, { StowerContactsResolver(mapping: StowerDemoContacts.mapping) })
+            }
+        #endif
         let provider = StowerDebtBoardProvider(
-            sourceURL: overrideURL,
+            loadMessagesAccessBookmark: { bookmarkStore.readData() },
             contactsResolver: StowerContactsResolver(),
+            onBookmarkRefreshed: { bookmarkStore.write($0) },
             cacheURL: cacheURL
         )
-        #if DEBUG
-            return (provider, { StowerContactsResolver(mapping: StowerDemoContacts.mapping) })
-        #else
-            return (provider, nil)
-        #endif
+        return (provider, nil)
     }
+
+    /// The `UserDefaults` key holding the security-scoped bookmark `Data` for
+    /// the user's granted Messages folder.
+    ///
+    /// `internal` (not `private`) so `StowerRootView`'s default constructs the
+    /// exact same-keyed store without duplicating the literal.
+    internal static let messagesAccessBookmarkKey = "messagesAccessBookmark"
 
     /// Opens the interaction recorder best-effort, degrading to a no-op on any fault.
     private static func openInteractionRecorder(
@@ -318,4 +351,16 @@ private struct StowerLiveInteractionRecorder: StowerInteractionRecording {
             return .senderUnmuted(handleKey: handleKey, surface: surface, occurredAt: occurredAt)
         }
     }
+}
+
+/// Re-exports the engine's Messages-database file name for the picker's
+/// selection validation (JC4).
+///
+/// `StowerMessagesAccessPicker` must never hardcode the database's file name
+/// literal (guard 6e) and must never `import StowerMessages` directly (guard
+/// 6b's closed 4-file allowlist — this file is already one of the four). This
+/// re-export satisfies both guards with a one-line addition here.
+internal enum StowerMessagesAccessConstants {
+    /// The Messages database's file name inside the granted folder.
+    internal static let databaseFileName = StowerChatDatabaseReader.databaseFileName
 }

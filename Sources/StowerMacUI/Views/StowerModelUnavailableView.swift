@@ -5,7 +5,7 @@ import SwiftUI
 /// Each of the four `StowerStartupModelUnavailableReason` values gets its own
 /// treatment: `deviceNotEligible` is the one terminal dead end (no retry); the
 /// others offer a deep link or a Check Again. See the four-reasons table in the
-/// FDA-onboarding plan — the single source for this copy's intent.
+/// messages-access-onboarding plan — the single source for this copy's intent.
 internal struct StowerModelUnavailableView: View {
     internal let reason: StowerStartupModelUnavailableReason
     internal let onCheckAgain: () -> Void

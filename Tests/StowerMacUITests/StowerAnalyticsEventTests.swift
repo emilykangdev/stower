@@ -43,16 +43,17 @@ import Testing
         #expect(StowerAnalyticsEvent.activated.signalName == "activated")
     }
 
-    @Test internal func fdaRequestedSignalName() {
+    @Test internal func messagesAccessRequestedSignalName() {
         #expect(
-            StowerAnalyticsEvent.fdaPermissionRequested.signalName == "fda_permission_requested"
+            StowerAnalyticsEvent.messagesAccessRequested.signalName
+                == "messages_access_requested"
         )
     }
 
-    @Test internal func fdaResolvedSignalName() {
+    @Test internal func messagesAccessResolvedSignalName() {
         #expect(
-            StowerAnalyticsEvent.fdaPermissionResolved(granted: true).signalName
-                == "fda_permission_resolved"
+            StowerAnalyticsEvent.messagesAccessResolved(granted: true).signalName
+                == "messages_access_resolved"
         )
     }
 
@@ -121,13 +122,13 @@ import Testing
         )
     }
 
-    @Test internal func fdaResolvedGrantedParams() {
+    @Test internal func messagesAccessResolvedGrantedParams() {
         #expect(
-            StowerAnalyticsEvent.fdaPermissionResolved(granted: true).parameters["granted"]
+            StowerAnalyticsEvent.messagesAccessResolved(granted: true).parameters["granted"]
                 == "true"
         )
         #expect(
-            StowerAnalyticsEvent.fdaPermissionResolved(granted: false).parameters["granted"]
+            StowerAnalyticsEvent.messagesAccessResolved(granted: false).parameters["granted"]
                 == "false"
         )
     }
@@ -167,7 +168,7 @@ import Testing
 
     @Test internal func emptyParamEventsHaveNoParams() {
         for event: StowerAnalyticsEvent in [
-            .appLaunched, .sessionEnded, .fdaPermissionRequested, .boardReached, .trialStarted,
+            .appLaunched, .sessionEnded, .messagesAccessRequested, .boardReached, .trialStarted,
             .checkoutOpened, .activated
         ] {
             #expect(event.parameters.isEmpty, "Expected \(event.signalName) to have no parameters")

@@ -25,12 +25,12 @@ import Testing
         }
     }
 
-    @Test("fullDiskAccessMissing maps to .fullDiskAccessMissing, keeping the path")
-    internal func mapsFullDiskAccessMissingKeepingPath() async throws {
-        let path = "~/Library/Messages/chat.db"
+    @Test("messagesAccessMissing maps to .messagesAccessMissing, keeping the detail")
+    internal func mapsMessagesAccessMissingKeepingDetail() async throws {
+        let detail = "~/Library/Messages/chat.db"
         #expect(
-            try await failure(from: .fullDiskAccessMissing(path))
-                == .fullDiskAccessMissing(path: path)
+            try await failure(from: .messagesAccessMissing(detail))
+                == .messagesAccessMissing(detail: detail)
         )
     }
 

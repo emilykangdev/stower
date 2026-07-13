@@ -3,9 +3,6 @@ import Foundation
 
 /// A System Settings pane this app deep-links the user to.
 internal enum StowerSystemSettingsPane: Sendable {
-    /// Privacy & Security → Full Disk Access.
-    case fullDiskAccess
-
     /// Apple Intelligence & Siri.
     case appleIntelligence
 
@@ -53,8 +50,6 @@ internal struct StowerSystemSettingsOpener: Sendable {
     /// parse — in which case `openPane` uses the general-settings fallback.
     internal static func paneURL(for pane: StowerSystemSettingsPane) -> URL? {
         switch pane {
-        case .fullDiskAccess:
-            return URL(string: fullDiskAccessURLString)
         case .appleIntelligence:
             return URL(string: appleIntelligenceURLString)
         case .contacts:
@@ -66,10 +61,6 @@ internal struct StowerSystemSettingsOpener: Sendable {
     internal static var generalSettingsURL: URL? {
         URL(string: generalSettingsURLString)
     }
-
-    /// Confirm on macOS 26 — see the opener's QA checklist item in the plan.
-    private static let fullDiskAccessURLString =
-        "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
 
     /// Confirm on macOS 26 — see the opener's QA checklist item in the plan.
     private static let appleIntelligenceURLString =

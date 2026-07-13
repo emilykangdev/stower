@@ -5,7 +5,7 @@ import Foundation
 /// A 1:1 copy of the engine's `StowerModelUnavailableReason`, kept under a
 /// distinct name so the SwiftUI views can route on it without importing the
 /// engine. The adapter translates the engine reason into this; each reason's
-/// screen treatment is the four-reasons table in the FDA-onboarding plan.
+/// screen treatment is the four-reasons table in the messages-access-onboarding plan.
 internal enum StowerStartupModelUnavailableReason: Sendable, Equatable {
     /// The Mac can't run Apple Intelligence — terminal; no retry.
     case deviceNotEligible

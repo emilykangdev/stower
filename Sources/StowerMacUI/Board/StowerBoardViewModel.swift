@@ -258,10 +258,7 @@ internal final class StowerBoardViewModel {
         interactions: any StowerInteractionRecording = StowerNoOpInteractionRecorder(),
         triage: any StowerTriageStoring = StowerInMemoryTriageStore(),
         undoManager: UndoManager = UndoManager(),
-        dropper: StowerMessagesDropper = StowerMessagesDropper(
-            perform: { _ in },
-            isAccessibilityTrusted: { false }
-        ),
+        dropper: StowerMessagesDropper = StowerMessagesDropper(perform: { _ in }),
         contacts: StowerContactsAccess = .denied,
         isDemoMode: Bool = StowerMessagesSourceOverride.isActive,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),

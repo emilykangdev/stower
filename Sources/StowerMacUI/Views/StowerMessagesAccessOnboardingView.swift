@@ -1,14 +1,14 @@
 import SwiftUI
 
-/// The Full Disk Access onboarding screen — the trust moment.
+/// The Messages-access onboarding screen — the trust moment.
 ///
 /// It leads with reassurance (local-only, on-device, Messages-only) before
-/// sending a nervous user to a global System Settings toggle and gives a numbered
-/// recovery path. When access is still missing after a Check Again, it shows
-/// escalating quit-and-reopen copy — a distinct sub-state, not a silent re-render.
-internal struct StowerFDAOnboardingView: View {
+/// asking the user to select their Messages folder in the picker. When access
+/// is still missing after a Check Again, it shows escalating quit-and-reopen
+/// copy — a distinct sub-state, not a silent re-render.
+internal struct StowerMessagesAccessOnboardingView: View {
     internal let stillMissing: Bool
-    internal let onOpenSettings: () -> Void
+    internal let onPresentPicker: () -> Void
     internal let onCheckAgain: () -> Void
     internal let onQuit: () -> Void
 
@@ -24,7 +24,7 @@ internal struct StowerFDAOnboardingView: View {
                 if stillMissing {
                     StowerStillMissingCallout()
                 }
-                StowerNumberedSteps()
+                StowerAccessSteps()
             }
         } actions: {
             actionButtons
@@ -33,7 +33,7 @@ internal struct StowerFDAOnboardingView: View {
 
     @ViewBuilder private var actionButtons: some View {
         VStack(spacing: Self.actionSpacing) {
-            Button("Open System Settings", action: onOpenSettings)
+            Button("Select Messages Folder…", action: onPresentPicker)
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
             Button("Check Again", action: onCheckAgain)
@@ -74,8 +74,8 @@ private struct StowerTrustBlock: View {
 private struct StowerStillMissingCallout: View {
     var body: some View {
         Label(
-            "Stower still can't see Messages. After turning it on, macOS may need you to quit "
-                + "and reopen Stower.",
+            "Stower still can't see Messages. The previously selected folder may no longer "
+                + "be accessible — select it again below.",
             systemImage: "exclamationmark.triangle.fill"
         )
         .font(.callout)
@@ -90,18 +90,18 @@ private struct StowerStillMissingCallout: View {
     private static let tintOpacity: Double = 0.15
 }
 
-/// The why-and-how: one reason sentence plus the numbered Settings path.
-private struct StowerNumberedSteps: View {
+/// The why-and-how: one reason sentence plus the numbered picker path.
+private struct StowerAccessSteps: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Self.lineSpacing) {
             Text(
-                "Full Disk Access is the macOS toggle that lets an app read the Messages "
-                    + "database. Here's the path:"
+                "In the dialog that opens, select the Messages folder and click Open. "
+                    + "Here's the path:"
             )
             .foregroundStyle(.secondary)
-            stepRow(1, "Open System Settings.")
-            stepRow(2, "Turn on Stower under Full Disk Access.")
-            stepRow(3, "If it still says access is missing, quit and reopen Stower.")
+            stepRow(1, "Click Select Messages Folder below.")
+            stepRow(2, "Select the Messages folder and click Open.")
+            stepRow(3, "If it still says access is missing, try again.")
         }
         .font(.callout)
     }

@@ -43,8 +43,8 @@ extension StowerRootView {
     ///
     /// Success is keyed off `activate(key:)`'s return value, NOT the rerun's
     /// terminal state: a successful activation persists the license before the
-    /// rerun, and that rerun can legitimately stop short of the board (FDA
-    /// onboarding, `StowerModelUnavailableView`). The user still paid and
+    /// rerun, and that rerun can legitimately stop short of the board
+    /// (messages-access onboarding, `StowerModelUnavailableView`). The user still paid and
     /// activated, so F1 must fire on every success path — the alert is attached
     /// at `StowerRootView.body`'s root, so it presents over whichever screen
     /// the rerun lands on.
@@ -137,7 +137,7 @@ extension StowerRootView {
     /// The delay before showing the analytics consent card after the board appears.
     ///
     /// ~60 seconds of foreground board time (JC7 — after the user has seen value,
-    /// not at startup or at the FDA permission cliff).
+    /// not at startup or at the messages-access permission cliff).
     fileprivate static let consentCardDelay: Duration = .seconds(60)
 
     /// Seconds per day, for computing the F3 threshold instant from

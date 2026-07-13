@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// The app-owned failure screen for non-FDA, non-model failures.
+/// The app-owned failure screen for non-messages-access, non-model failures.
 ///
 /// Copy is derived per error family — never a raw engine string — and the screen
 /// always offers a retry, because `.failed` means "something went wrong this run,"
-/// not "you can't use Stower." The FDA and model-unavailable cases never route
-/// here; they are handled with a generic recovery message defensively.
+/// not "you can't use Stower." The messages-access and model-unavailable cases
+/// never route here; they are handled with a generic recovery message
+/// defensively.
 internal struct StowerFailureView: View {
     internal let failure: StowerStartupFailure
     internal let onRetry: () -> Void
@@ -28,7 +29,7 @@ internal struct StowerFailureView: View {
             return "Something's misconfigured"
         case .unreadable, .invalidData:
             return "Couldn't read your Messages"
-        case .fullDiskAccessMissing, .modelUnavailable, .unexpected:
+        case .messagesAccessMissing, .modelUnavailable, .unexpected:
             return "Something went wrong"
         }
     }
@@ -47,7 +48,7 @@ internal struct StowerFailureView: View {
         case .invalidData:
             return "Stower reached your Messages data but it looked malformed. Try again in a "
                 + "moment."
-        case .fullDiskAccessMissing, .modelUnavailable, .unexpected:
+        case .messagesAccessMissing, .modelUnavailable, .unexpected:
             return "Stower hit an unexpected problem during startup. Try again, and contact "
                 + "support if it keeps happening."
         }

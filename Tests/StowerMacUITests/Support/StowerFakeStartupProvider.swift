@@ -24,10 +24,11 @@ internal enum StowerFakeStartupCall: Sendable, Equatable {
 /// A permanent Tests-only `StowerStartupProviding` double (an `actor`, so the
 /// `Sendable` boundary holds without `@unchecked`).
 ///
-/// Scriptable per the five routing scenarios the FDA slice tests: FDA-missing,
-/// preflight-unavailable (per reason), unavailable-mid-load, invalid-config, and
-/// the non-FDA failures. It records call order so a test can assert availability
-/// runs before the load and that a preflight-unavailable never reaches the load.
+/// Scriptable per the five routing scenarios the messages-access slice tests:
+/// messages-access-missing, preflight-unavailable (per reason),
+/// unavailable-mid-load, invalid-config, and the non-messages-access
+/// failures. It records call order so a test can assert availability runs
+/// before the load and that a preflight-unavailable never reaches the load.
 internal actor StowerFakeStartupProvider: StowerStartupProviding {
     private let availability: StowerStartupModelAvailability
     private let loadBehaviors: [StowerFakeLoadBehavior]

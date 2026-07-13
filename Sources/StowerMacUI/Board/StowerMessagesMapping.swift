@@ -20,7 +20,7 @@ internal enum StowerMessagesMapping {
     /// breaks the build until it is mapped here.
     internal static func mapError(_ error: StowerMessagesError) -> StowerStartupFailure {
         switch error {
-        case .fullDiskAccessMissing(let path): return .fullDiskAccessMissing(path: path)
+        case .messagesAccessMissing(let detail): return .messagesAccessMissing(detail: detail)
         case .languageModelUnavailable(let reason): return .modelUnavailable(mapReason(reason))
         case .sourceNotFound: return .sourceMissing
         case .unreadableSource: return .unreadable

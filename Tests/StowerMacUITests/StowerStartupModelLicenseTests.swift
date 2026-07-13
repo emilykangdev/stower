@@ -46,17 +46,17 @@ import Testing
         #expect(model.state == .connectedPreparingBoard)
     }
 
-    @Test("a licensed state still routes an FDA-missing load to the FDA screen")
-    internal func licensedStateRoutesFDAFailure() async {
-        let path = "/var/db"
+    @Test("a licensed state still routes a messages-access-missing load to the access screen")
+    internal func licensedStateRoutesMessagesAccessFailure() async {
+        let detail = "/var/db"
         let provider = StowerFakeStartupProvider(
-            loadBehaviors: [.failure(.fullDiskAccessMissing(path: path))]
+            loadBehaviors: [.failure(.messagesAccessMissing(detail: detail))]
         )
         let gate = StowerFakeLicenseGate(states: [.licensed])
         let model = makeModel(provider: provider, licenseGate: gate)
         model.start()
         await model.activeRun?.value
-        #expect(model.state == .needsFullDiskAccess(path: path))
+        #expect(model.state == .needsMessagesAccess)
     }
 
     @Test("an expired state routes to needsLicense(nil) — the paywall/key-entry screen")
@@ -168,13 +168,13 @@ import Testing
     }
 
     @Test("a successful activate returns true even when the rerun stops short of the board")
-    internal func activateSuccessReturnsTrueWhenRerunStopsOnFDA() async {
-        // The persisted-license rerun routes to FDA onboarding, not the board —
-        // the F1 confirmation is keyed off activate's return value, so it must
-        // report success here regardless of the rerun's terminal state.
-        let path = "/var/db"
+    internal func activateSuccessReturnsTrueWhenRerunStopsOnMessagesAccess() async {
+        // The persisted-license rerun routes to messages-access onboarding, not the
+        // board — the F1 confirmation is keyed off activate's return value, so it
+        // must report success here regardless of the rerun's terminal state.
+        let detail = "/var/db"
         let provider = StowerFakeStartupProvider(
-            loadBehaviors: [.failure(.fullDiskAccessMissing(path: path))]
+            loadBehaviors: [.failure(.messagesAccessMissing(detail: detail))]
         )
         let gate = StowerFakeLicenseGate(
             states: [.expired, .licensed],
@@ -190,7 +190,7 @@ import Testing
 
         #expect(activated)
         #expect(gate.persistCalls.map(\.key) == ["KEY"])
-        #expect(model.state == .needsFullDiskAccess(path: path))
+        #expect(model.state == .needsMessagesAccess)
     }
 
     @Test("an invalid activation commits needsLicense(.invalid)")

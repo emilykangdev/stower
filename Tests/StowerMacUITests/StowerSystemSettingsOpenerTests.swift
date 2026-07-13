@@ -10,7 +10,6 @@ import Testing
 @Suite @MainActor internal struct StowerSystemSettingsOpenerTests {
     @Test("both required pane URLs and the fallback construct")
     internal func paneURLsConstruct() {
-        #expect(StowerSystemSettingsOpener.paneURL(for: .fullDiskAccess) != nil)
         #expect(StowerSystemSettingsOpener.paneURL(for: .appleIntelligence) != nil)
         #expect(StowerSystemSettingsOpener.paneURL(for: .contacts) != nil)
         #expect(StowerSystemSettingsOpener.generalSettingsURL != nil)
@@ -23,15 +22,6 @@ import Testing
         opener.openPane(.contacts)
         #expect(recorder.opened.count == 1)
         #expect(recorder.opened.first == StowerSystemSettingsOpener.paneURL(for: .contacts))
-    }
-
-    @Test("openPane opens the Full Disk Access pane URL and does not fall back")
-    internal func opensFullDiskAccessPane() {
-        let recorder = StowerOpenedURLRecorder()
-        let opener = StowerSystemSettingsOpener(open: { recorder.record($0) })
-        opener.openPane(.fullDiskAccess)
-        #expect(recorder.opened.count == 1)
-        #expect(recorder.opened.first == StowerSystemSettingsOpener.paneURL(for: .fullDiskAccess))
     }
 
     @Test("openPane opens the Apple Intelligence pane URL and does not fall back")
@@ -50,9 +40,11 @@ import Testing
         let recorder = StowerOpenedURLRecorder()
         recorder.result = false  // every open "fails", forcing the fallback attempt
         let opener = StowerSystemSettingsOpener(open: { recorder.record($0) })
-        opener.openPane(.fullDiskAccess)
+        opener.openPane(.appleIntelligence)
         #expect(recorder.opened.count == 2)
-        #expect(recorder.opened.first == StowerSystemSettingsOpener.paneURL(for: .fullDiskAccess))
+        #expect(
+            recorder.opened.first == StowerSystemSettingsOpener.paneURL(for: .appleIntelligence)
+        )
         #expect(recorder.opened.last == StowerSystemSettingsOpener.generalSettingsURL)
     }
 }

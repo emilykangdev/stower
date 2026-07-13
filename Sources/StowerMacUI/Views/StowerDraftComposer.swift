@@ -132,9 +132,10 @@ internal struct StowerDraftComposer: View {
                 .buttonStyle(.borderedProminent)
                 // Stays enabled even without a deep link: `StowerMessagesDropper.drop`
                 // always writes the draft to the clipboard first and only skips the
-                // open/paste when `deepLink` is nil, so the promised copy-only fallback
-                // stays reachable for rows the engine can't form an `sms:` URL for.
-                Text("Never sent — Stower drops your draft into Messages for you to send.")
+                // conversation open when `deepLink` is nil, so the promised copy-only
+                // fallback stays reachable for rows the engine can't form an `sms:` URL
+                // for.
+                Text("Draft copied — press ⌘V to paste it into Messages.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

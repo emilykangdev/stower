@@ -5,22 +5,22 @@ import Foundation
 /// Split into this extension (the same split-across-files posture as
 /// `StowerBoardViewModel`'s `Drafts`/`Load`/`Triage` extensions) so the primary
 /// file stays focused on the startup state machine itself. All state this
-/// extension reads/writes (`wasAwaitingFDA`, `boardReachedThisLaunch`,
+/// extension reads/writes (`wasAwaitingMessagesAccess`, `boardReachedThisLaunch`,
 /// `trialStartedThisLaunch`, `hardwareCheckedThisRun`, `reporter`) is declared
 /// `internal` on the primary type, since a stored property can't live in an
 /// extension.
 extension StowerStartupModel {
     /// Emits the appropriate funnel analytics event for a committed state.
     ///
-    /// Uses the `wasAwaitingFDA` latch so `fda_permission_resolved` fires
-    /// exactly once per run that entered an FDA state, and the
+    /// Uses the `wasAwaitingMessagesAccess` latch so `messages_access_resolved`
+    /// fires exactly once per run that entered a messages-access state, and the
     /// `boardReachedThisLaunch` flag so `board_reached` fires once per launch.
     /// Driven off `commit` (not adjacent-state matching or `onAppear`) per
     /// Eng F1/F2.
     ///
     /// `hardware_checked` fires from every TERMINAL state a `runStartup` run can
     /// reach — `.modelUnavailable` (false) or any of `.needsLicense`,
-    /// `.connectedPreparingBoard`, `.needsFullDiskAccess(StillMissing)`, `.failed`
+    /// `.connectedPreparingBoard`, `.needsMessagesAccess(StillMissing)`, `.failed`
     /// (true, since all four are only reachable once the model preflight AND
     /// `loadDebtBoard` agree the model is available) — never from the
     /// `.checkingMessages` commit itself, which is optimistic UI-only
@@ -29,15 +29,16 @@ extension StowerStartupModel {
     /// `.modelUnavailable`, so reporting `true` there would conflict with a
     /// `false` reported moments later for the same run.
     ///
-    /// `fda_permission_resolved(granted:true)` fires only at
+    /// `messages_access_resolved(granted:true)` fires only at
     /// `.connectedPreparingBoard` — NOT at `.checkingMessages`. The board is
     /// entered optimistically: `.checkingMessages` commits before
     /// `loadDebtBoard` runs, and that load can still throw
-    /// `fullDiskAccessMissing` and route to `.needsFullDiskAccessStillMissing`.
+    /// `messagesAccessMissing` and route to `.needsMessagesAccessStillMissing`.
     /// Resolving at `.checkingMessages` would record a false "granted" for every
-    /// user who returned from the FDA screen without granting. Reaching the board
-    /// is the only proof access actually works. FDA denial is measured as
-    /// `fda_permission_requested` without a subsequent `fda_permission_resolved`.
+    /// user who returned from the picker without granting. Reaching the board
+    /// is the only proof access actually works. Denial is measured as
+    /// `messages_access_requested` without a subsequent
+    /// `messages_access_resolved`.
     internal func emitFunnelEvent(for state: StowerStartupState) {
         switch state {
         case .modelUnavailable(let reason):
@@ -48,17 +49,17 @@ extension StowerStartupModel {
             emitHardwareCheckedIfNeeded(supported: true, reason: nil)
             reporter.report(.paywallReached(error: error))
 
-        case .needsFullDiskAccess:
+        case .needsMessagesAccess:
             emitHardwareCheckedIfNeeded(supported: true, reason: nil)
-            reporter.report(.fdaPermissionRequested)
-            wasAwaitingFDA = true
+            reporter.report(.messagesAccessRequested)
+            wasAwaitingMessagesAccess = true
 
         case .connectedPreparingBoard:
             emitHardwareCheckedIfNeeded(supported: true, reason: nil)
-            resolveFDAIfNeeded()
+            resolveMessagesAccessIfNeeded()
             emitBoardReachedIfNeeded()
 
-        case .failed, .needsFullDiskAccessStillMissing:
+        case .failed, .needsMessagesAccessStillMissing:
             emitHardwareCheckedIfNeeded(supported: true, reason: nil)
 
         case .checkingModel, .checkingMessages:
@@ -81,15 +82,15 @@ extension StowerStartupModel {
         reporter.report(.hardwareChecked(supported: supported, reason: reason))
     }
 
-    /// Emits `fda_permission_resolved(granted:true)` when the FDA latch is set.
+    /// Emits `messages_access_resolved(granted:true)` when the awaiting latch is set.
     ///
-    /// Fires once per run that entered a `needsFullDiskAccess` state, only after
+    /// Fires once per run that entered a `needsMessagesAccess` state, only after
     /// the board is reached (access proven); clears the latch afterward so it
     /// cannot double-fire.
-    internal func resolveFDAIfNeeded() {
-        guard wasAwaitingFDA else { return }
-        reporter.report(.fdaPermissionResolved(granted: true))
-        wasAwaitingFDA = false
+    internal func resolveMessagesAccessIfNeeded() {
+        guard wasAwaitingMessagesAccess else { return }
+        reporter.report(.messagesAccessResolved(granted: true))
+        wasAwaitingMessagesAccess = false
     }
 
     /// Emits `board_reached` at most once per launch via the `boardReachedThisLaunch` latch.
