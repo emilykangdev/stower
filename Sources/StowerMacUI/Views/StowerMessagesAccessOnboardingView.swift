@@ -53,9 +53,10 @@ internal struct StowerMessagesAccessOnboardingView: View {
 private struct StowerTrustBlock: View {
     var body: some View {
         Label(
-            "Stower contacts our licensing server only to manage your free trial and "
-                + "purchase — nothing else. Your messages never leave your Mac, and judging "
-                + "runs on an on-device model only.",
+            "Your messages never leave your Mac — judging runs on an on-device model "
+                + "only. Stower also contacts our licensing server to manage your free "
+                + "trial and purchase, and (optionally, off anytime in Settings → Privacy) "
+                + "sends anonymous analytics and crash reports.",
             systemImage: "checkmark.shield.fill"
         )
         .font(.callout.weight(.medium))
