@@ -27,9 +27,16 @@ All data is fake (555-01xx numbers, invented text) per the repo's rule against
 real Messages data in fixtures. Dates are anchored to "now" at run time so the
 board always shows fresh, in-window threads.
 
-Usage:  python3 Scripts/generate-demo-db.py
+Usage:  python3 Scripts/generate-demo-db.py [--output PATH]
+
+--output defaults to the path below. Scripts/run-app-demo.sh passes an explicit
+--output pointing INSIDE the sandboxed app's container
+(~/Library/Containers/<bundle-id>/Data/Library/Application Support/...) — since
+App Sandbox (ENABLE_APP_SANDBOX=YES) redirects the unsandboxed default path
+below out of the app's reachable region entirely.
 """
 
+import argparse
 import os
 import sqlite3
 import time
@@ -247,10 +254,19 @@ MAYBE_FOLLOW_UP_FIRST_AGE_DAYS = 12
 
 
 def main():
-    os.makedirs(os.path.dirname(DEMO_DB_PATH), exist_ok=True)
-    if os.path.exists(DEMO_DB_PATH):
-        os.remove(DEMO_DB_PATH)
-    conn = sqlite3.connect(DEMO_DB_PATH)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output",
+        default=DEMO_DB_PATH,
+        help="Where to write the demo chat.db (default: %(default)s)",
+    )
+    args = parser.parse_args()
+    output_path = os.path.expanduser(args.output)
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if os.path.exists(output_path):
+        os.remove(output_path)
+    conn = sqlite3.connect(output_path)
     cur = conn.cursor()
     create_schema(cur)
 
@@ -268,7 +284,7 @@ def main():
     print(
         f"Wrote {len(threads)} demo threads "
         f"({len(YOUR_TURN)} Your turn + {len(MAYBE_FOLLOW_UP)} Maybe follow up) "
-        f"to {DEMO_DB_PATH}"
+        f"to {output_path}"
     )
 
 

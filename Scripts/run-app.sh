@@ -30,5 +30,6 @@ echo "==> Quitting any running copy and launching the fresh build standalone…"
 pkill -x "$EXECUTABLE_NAME" 2>/dev/null || true
 sleep 1
 open "$APP"
-echo "==> Launched. In the app: grant Full Disk Access if asked, then on the board"
-echo "    click 'Show names' in the banner and Allow the Contacts prompt."
+echo "==> Launched. In the app: if asked, select your Messages folder in the picker"
+echo "    that opens, then on the board click 'Show names' in the banner and Allow"
+echo "    the Contacts prompt."
