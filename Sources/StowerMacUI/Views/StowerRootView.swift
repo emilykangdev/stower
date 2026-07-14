@@ -52,6 +52,14 @@ public struct StowerRootView: View {
     /// Drives the F1 purchase-confirmation alert.
     @State internal var showPurchaseThanks = false
 
+    /// The picker's own error description, or `nil` to hide the alert.
+    ///
+    /// Set when `presentMessagesAccessPicker()` throws (e.g. the selected
+    /// folder has no Messages database). A user cancellation never sets this
+    /// (Codex P2 finding: cancellation and a genuine validation failure must
+    /// not both collapse to silence).
+    @State private var pickerErrorMessage: String?
+
     /// Whether the analytics disclosure card is currently showing.
     ///
     /// Set to `true` after ~60 seconds of foreground board time, once, if the
@@ -82,6 +90,12 @@ public struct StowerRootView: View {
 
     internal let settings: StowerSystemSettingsOpener
     internal let analyticsReporter: any StowerAnalyticsReporting
+
+    /// The persisted security-scoped bookmark for the user's granted Messages folder.
+    ///
+    /// Written here after the user grants access via `StowerMessagesAccessPicker`.
+    /// The engine itself never persists (JC2).
+    internal let messagesAccessBookmarkStore: any StowerLeaseStorage
 
     /// The dismissal seam for the trial badge.
     ///
@@ -121,6 +135,7 @@ public struct StowerRootView: View {
             licenseGate: StowerLemonSqueezyLicenseGate(),
             settings: StowerSystemSettingsOpener(),
             badgeDismissal: StowerUserDefaultsBadgeDismissal(),
+            messagesAccessBookmarkStore: composition.messagesAccessBookmarkStore,
             flusher: flusher
         )
     }
@@ -140,15 +155,15 @@ public struct StowerRootView: View {
         interactions: any StowerInteractionRecording = StowerNoOpInteractionRecorder(),
         triage: any StowerTriageStoring = StowerInMemoryTriageStore(),
         undoManager: UndoManager = UndoManager(),
-        dropper: StowerMessagesDropper = StowerMessagesDropper(
-            perform: { _ in },
-            isAccessibilityTrusted: { false }
-        ),
+        dropper: StowerMessagesDropper = StowerMessagesDropper(perform: { _ in }),
         contacts: StowerContactsAccess = .denied,
         analyticsReporter: any StowerAnalyticsReporting = StowerNoOpAnalyticsReporter(),
         licenseGate: any StowerLicenseGating,
         settings: StowerSystemSettingsOpener = StowerSystemSettingsOpener(),
         badgeDismissal: any StowerTrialBadgeDismissing = StowerUserDefaultsBadgeDismissal(),
+        messagesAccessBookmarkStore: any StowerLeaseStorage = StowerUserDefaultsItem(
+            key: StowerMessagesComposition.messagesAccessBookmarkKey
+        ),
         flusher: StowerTerminationFlusher? = nil
     ) {
         let startupModel = StowerStartupModel(
@@ -184,6 +199,7 @@ public struct StowerRootView: View {
         self.settings = settings
         self.badgeDismissal = badgeDismissal
         self.analyticsReporter = analyticsReporter
+        self.messagesAccessBookmarkStore = messagesAccessBookmarkStore
     }
 
     /// The startup screen for the current state, cross-fading on change.
@@ -194,13 +210,26 @@ public struct StowerRootView: View {
             .task { model.start() }
             .onDisappear { model.cancel() }
             // F1 lives at the root, not inside the board case: a successful
-            // activation's startup rerun can stop short of the board (FDA
-            // onboarding, model unavailable), and the confirmation must present
-            // over whichever screen the rerun lands on.
+            // activation's startup rerun can stop short of the board (messages-
+            // access onboarding, model unavailable), and the confirmation must
+            // present over whichever screen the rerun lands on.
             .alert(Self.purchaseThanksTitle, isPresented: $showPurchaseThanks) {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(Self.purchaseThanksMessage)
+            }
+            .alert(
+                Self.pickerErrorTitle,
+                isPresented: Binding(
+                    get: { pickerErrorMessage != nil },
+                    set: { isPresented in
+                        if !isPresented { pickerErrorMessage = nil }
+                    }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(pickerErrorMessage ?? "")
             }
     }
 
@@ -223,10 +252,10 @@ public struct StowerRootView: View {
                 onCheckAgain: { model.checkAgain() },
                 onOpenAppleIntelligence: { settings.openPane(.appleIntelligence) }
             )
-        case .needsFullDiskAccess:
-            fdaView(stillMissing: false)
-        case .needsFullDiskAccessStillMissing:
-            fdaView(stillMissing: true)
+        case .needsMessagesAccess:
+            messagesAccessView(stillMissing: false)
+        case .needsMessagesAccessStillMissing:
+            messagesAccessView(stillMissing: true)
         case .connectedPreparingBoard:
             ZStack(alignment: .bottom) {
                 StowerBoardView(
@@ -286,13 +315,35 @@ public struct StowerRootView: View {
         }
     }
 
-    private func fdaView(stillMissing: Bool) -> some View {
-        StowerFDAOnboardingView(
+    private func messagesAccessView(stillMissing: Bool) -> some View {
+        StowerMessagesAccessOnboardingView(
             stillMissing: stillMissing,
-            onOpenSettings: { settings.openPane(.fullDiskAccess) },
+            onPresentPicker: { presentMessagesAccessPicker() },
             onCheckAgain: { model.checkAgain() },
             onQuit: { NSApplication.shared.terminate(nil) }
         )
+    }
+
+    /// Presents the picker, persists a freshly granted bookmark, and re-runs
+    /// the startup check.
+    ///
+    /// A user cancellation (`nil`) is silent by design — nothing went wrong,
+    /// the user just closed the panel, and they stay on the same onboarding
+    /// screen to try again. A THROWN error (e.g. the selected folder has no
+    /// Messages database) is a genuine failure and must not collapse to the
+    /// same silence — it is surfaced via `pickerErrorMessage`'s alert so a
+    /// wrong-folder selection doesn't look like a dead button (Codex P2 finding).
+    @MainActor
+    private func presentMessagesAccessPicker() {
+        do {
+            guard let bookmark = try StowerMessagesAccessPicker.presentAndCreateBookmark() else {
+                return
+            }
+            messagesAccessBookmarkStore.write(bookmark)
+            model.checkAgain()
+        } catch {
+            pickerErrorMessage = error.localizedDescription
+        }
     }
 
     /// Fires when the app returns to the foreground; drives the on-board license
@@ -311,6 +362,9 @@ public struct StowerRootView: View {
     private static let purchaseThanksTitle = "You're all set."
     private static let purchaseThanksMessage =
         "Thanks for buying Stower — your license is active on this Mac. Enjoy."
+
+    /// The Messages-access picker's error alert title.
+    private static let pickerErrorTitle = "Couldn't Use That Folder"
 
     private static let minWidth: CGFloat = 520
     private static let minHeight: CGFloat = 360

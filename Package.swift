@@ -14,6 +14,11 @@ let package = Package(
         // The target name alone does not name the binary; the explicit executable
         // product is what makes `swift run stower` resolve (eng Codex 6).
         .executable(name: "stower", targets: ["StowerCLI"]),
+        // A dev-only diagnostic (JC6/JC7): presents its own ephemeral Messages-access
+        // picker (never persisted, same shape as StowerCLI) and reports redacted
+        // chat.db structural shapes. Replaces the deleted
+        // Scripts/inspect-chatdb-shapes.sh, which could not host an App Sandbox.
+        .executable(name: "stower-chatdb-inspector", targets: ["StowerChatDBInspector"]),
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
@@ -81,9 +86,23 @@ let package = Package(
             dependencies: [
                 "StowerCore",
                 "StowerMessages",
+                // Shares StowerMacUI's StowerMessagesAccessPicker rather than
+                // duplicating the NSOpenPanel/bookmark-creation logic (JC7) — so
+                // testing against the CLI exercises the exact production picker code.
+                "StowerMacUI",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/StowerCLI"
+        ),
+        .executableTarget(
+            name: "StowerChatDBInspector",
+            dependencies: [
+                "StowerMessages",
+                // Shares the same picker as StowerCLI (JC7) — no duplicated
+                // NSOpenPanel/bookmark-creation logic.
+                "StowerMacUI",
+            ],
+            path: "Sources/StowerChatDBInspector"
         ),
         .testTarget(
             name: "StowerCoreTests",

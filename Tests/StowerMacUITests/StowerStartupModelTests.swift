@@ -59,7 +59,7 @@ import Testing
     }
 
     @Test(
-        "an in-load model-unavailable wins over an FDA/source error",
+        "an in-load model-unavailable wins over a messages-access/source error",
         arguments: [
             StowerStartupModelUnavailableReason.deviceNotEligible,
             .appleIntelligenceNotEnabled,
@@ -80,16 +80,16 @@ import Testing
         #expect(model.state == .modelUnavailable(reason))
     }
 
-    @Test("a load FDA failure routes to needsFullDiskAccess with the exact path")
-    internal func fdaFailureRoutesToOnboarding() async {
-        let path = "~/Library/Messages/chat.db"
+    @Test("a load messages-access failure routes to needsMessagesAccess")
+    internal func messagesAccessFailureRoutesToOnboarding() async {
+        let detail = "no Messages folder selected yet"
         let provider = StowerFakeStartupProvider(
-            loadBehaviors: [.failure(.fullDiskAccessMissing(path: path))]
+            loadBehaviors: [.failure(.messagesAccessMissing(detail: detail))]
         )
         let model = makeModel(provider: provider)
         model.start()
         await model.activeRun?.value
-        #expect(model.state == .needsFullDiskAccess(path: path))
+        #expect(model.state == .needsMessagesAccess)
     }
 
     @Test("invalid config routes to .failed; preflight ran once, no extra work")
@@ -107,14 +107,14 @@ import Testing
     }
 
     @Test(
-        "non-FDA failures route to .failed, never to the FDA screen",
+        "non-messages-access failures route to .failed, never to the access screen",
         arguments: [
             StowerStartupFailure.sourceMissing,
             .unreadable,
             .invalidData
         ]
     )
-    internal func nonFDAFailuresRouteToFailed(failure: StowerStartupFailure) async {
+    internal func nonMessagesAccessFailuresRouteToFailed(failure: StowerStartupFailure) async {
         let provider = StowerFakeStartupProvider(loadBehaviors: [.failure(failure)])
         let model = makeModel(provider: provider)
         model.start()
@@ -122,20 +122,22 @@ import Testing
         #expect(model.state == .failed(failure))
     }
 
-    @Test("Check Again reruns the flow; a second FDA result escalates to still-missing")
+    @Test(
+        "Check Again reruns the flow; a second messages-access result escalates to still-missing"
+    )
     internal func checkAgainRerunsAndEscalates() async {
-        let path = "~/Library/Messages/chat.db"
+        let detail = "no Messages folder selected yet"
         let provider = StowerFakeStartupProvider(
-            loadBehaviors: [.failure(.fullDiskAccessMissing(path: path))]
+            loadBehaviors: [.failure(.messagesAccessMissing(detail: detail))]
         )
         let model = makeModel(provider: provider)
         model.start()
         await model.activeRun?.value
-        #expect(model.state == .needsFullDiskAccess(path: path))
+        #expect(model.state == .needsMessagesAccess)
 
         model.checkAgain()
         await model.activeRun?.value
-        #expect(model.state == .needsFullDiskAccessStillMissing(path: path))
+        #expect(model.state == .needsMessagesAccessStillMissing(detail: detail))
         #expect(await provider.loadCallCount == 2)
     }
 

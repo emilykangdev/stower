@@ -124,12 +124,12 @@ row.
   items. A message joined to multiple chats is indexed once using deterministic
   query order.
 
-- **Full Disk Access required.** `chat.db` access needs FDA, which is a
-  user-granted TCC permission for a specific binary path — *not* an
-  entitlement. The Mac app target therefore CANNOT enable App Sandbox
-  (sandbox blocks FDA). This forfeits Mac App Store distribution for the
-  unified app — an accepted tradeoff (see the brief and Apple data-access
-  research, Section 13).
+- **Messages access via a security-scoped bookmark.** `chat.db` access needs a
+  user-granted security-scoped bookmark for `~/Library/Messages` (`NSOpenPanel`
+  → `bookmarkData(.withSecurityScope)`), not blanket disk access. The Mac app
+  target runs under App Sandbox (`ENABLE_APP_SANDBOX = YES`); see
+  `Docs/Permissions.md` for the grant flow and `Docs/MacAppContract.md` for the
+  engine/app split.
 
 - **macOS 26 Tahoe AppleScript group-chat regression.** Out of scope for v1
   (no reply sending). Documented here so future contributors don't waste a day
@@ -152,4 +152,5 @@ row.
 
 - Plan: `PLAN.md`
 - Apple data-access constraints (Section 7 chat.db schema, Section 8
-  attributedBody/Madrid, Section 13 FDA): `tmp/research/2026-05-12-apple-data-access.md`
+  attributedBody/Madrid, Section 13 permission-model constraints):
+  `tmp/research/2026-05-12-apple-data-access.md`

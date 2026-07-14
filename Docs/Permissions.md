@@ -1,20 +1,21 @@
 # Permissions (TCC) and how to test them
 
-Stower (the macOS app, `StowerMac`) needs two separate macOS privacy permissions,
-both mediated by Apple's TCC (Transparency, Consent, and Control) subsystem. This
-doc is the canonical model for how they behave and — equally important — the
-**deterministic workflow for testing a permission change**, because the build/run
-loop has bitten us repeatedly.
+Stower (the macOS app, `StowerMac`) needs two separate macOS privacy/access grants.
+Messages access is a Powerbox (`NSOpenPanel`) security-scoped bookmark, not a TCC
+permission; Contacts is mediated by Apple's TCC (Transparency, Consent, and
+Control) subsystem. This doc is the canonical model for how they behave and —
+equally important — the **deterministic workflow for testing a permission
+change**, because the build/run loop has bitten us repeatedly.
 
-## The two permissions
+## The two grants
 
-| Permission | TCC service | Why Stower needs it | How it's granted |
+| Grant | Mechanism | Why Stower needs it | How it's granted |
 |---|---|---|---|
-| **Full Disk Access** | `kTCCServiceSystemPolicyAllFiles` | Read `~/Library/Messages/chat.db` (sandboxed off the normal API) | System Settings → Privacy & Security → **Full Disk Access** → toggle/`+` the app. The app drives the user there via `StowerFDAOnboardingView`. |
-| **Contacts** | `kTCCServiceAddressBook` | Resolve raw handles (`+14155550100`) to names via `StowerContactsResolver.live()` | The app calls `CNContactStore.requestAccess(for:.contacts)`; macOS shows the system prompt; the app then appears in Privacy → **Contacts**. Driven by `StowerContactsAccessBanner` → `StowerBoardViewModel.resolveContactsAccess()`. |
+| **Messages access** | Powerbox security-scoped bookmark (not TCC) | Read `~/Library/Messages/chat.db` under App Sandbox | `NSOpenPanel` pre-navigated to `~/Library/Messages`; the user selects the folder and clicks Open. The app drives the user there via `StowerMessagesAccessOnboardingView` → `StowerMessagesAccessPicker`. |
+| **Contacts** | TCC (`kTCCServiceAddressBook`) | Resolve raw handles (`+14155550100`) to names via `StowerContactsResolver.live()` | The app calls `CNContactStore.requestAccess(for:.contacts)`; macOS shows the system prompt; the app then appears in Privacy → **Contacts**. Driven by `StowerContactsAccessBanner` → `StowerBoardViewModel.resolveContactsAccess()`. |
 
 App build facts that make this work (`StowerMac.xcodeproj`):
-- **Not sandboxed** (`ENABLE_APP_SANDBOX = NO`) + **Hardened Runtime ON**.
+- **Sandboxed** (`ENABLE_APP_SANDBOX = YES`) + **Hardened Runtime ON**.
 - **The Contacts entitlement is REQUIRED.** Because Hardened Runtime is on, the app
   must declare `com.apple.security.personal-information.addressbook` in its
   entitlements (`StowerMac/StowerMac/StowerMac.entitlements`, wired via
@@ -130,9 +131,17 @@ regresses back to a `TaskGroup`/`async let` shape.
    Contacts *after* it has called `requestAccess`. You cannot pre-add it. If Stower
    isn't in that list, it has never successfully requested — full stop. (Confirm with
    the `tccd` log; see below.)
-2. **FDA is identity+path bound; Contacts is signature bound.** Copying the `.app` to
-   a new location (e.g. `/Applications`) **loses the FDA grant** and re-shows the FDA
-   screen. Don't move the bundle between test runs — run it where it was built.
+2. **A security-scoped bookmark is more resilient than the old blanket-disk-access
+   permission model was, but not verified against every relocation scenario.**
+   The old model was identity+path bound — copying the `.app` to a new location
+   lost the grant outright. The bookmark model tolerates the SOURCE folder
+   moving (a stale-but-still-resolvable bookmark self-heals silently, re-saved
+   via `onBookmarkRefreshed` — see Known Gotcha #2 in the migration plan).
+   Whether moving the STOWER APP BUNDLE itself (e.g. to `/Applications`)
+   invalidates a previously granted bookmark has **not** been independently
+   verified — the pre-implementation spike tested same-location relaunch
+   persistence only (see the migration plan's Assumption A5), not bundle
+   relocation. Treat this as unverified either way until tested.
 3. **A permission can only be exercised by a real `.app` bundle.** A command-line tool
    has no `Info.plist`/usage string → `requestAccess` returns `Code=100`, no prompt.
    So "validate the resolver from a script" is impossible for the TCC half; validate
@@ -167,7 +176,8 @@ It does:
    debugger — avoids TCC attribution quirks).
 
 Then, in the app:
-1. If the **Full Disk Access** screen shows, grant it and "Check Again" → the board.
+1. If the **Messages access** screen shows, click "Select Messages Folder…",
+   choose `~/Library/Messages` in the picker, then "Check Again" → the board.
 2. On the board, click **Show names** in the banner.
 3. **Allow** the Contacts prompt → rows flip to names; Stower now appears in
    Privacy → Contacts.

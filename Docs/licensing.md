@@ -44,9 +44,21 @@ Stower will only "upgrade" to the major version X+1 and start releasing new mino
 Every customer gets **30 days to try Stower before paying** — whether you're new or
 an existing customer. Existing customers also get a **discount on upgrades**, as a
 thank-you for sticking with it. Stower can offer this because it's sold **directly,
-not through the Mac App Store**. It needs Full Disk Access to read your iMessages,
-which the App Store doesn't allow (and the App Store can't do upgrade discounts
-anyway).
+not through the Mac App Store**.
+
+> **[Flagged for Emily's review — not silently rewritten.]** This paragraph
+> previously justified selling outside the Mac App Store as a technical
+> necessity tied to the old blanket-disk-access permission model, which Mac
+> App Store submission disallowed. That technical premise is gone: the app now
+> reads Messages via App Sandbox + a security-scoped bookmark, which Mac App
+> Store submission does allow (see `Docs/StowerMessages.md`). Whether to
+> actually pursue Mac App Store distribution is a separate, undecided business
+> call (tracked by issue #64, `Docs/StowerMessages.md`'s Non-goals) — the
+> upgrade-discount and direct-relationship reasoning above may still hold on
+> its own merits, but that's Emily's call to make, not this migration's to
+> assert.
+
+The App Store also can't do the upgrade discounts described below.
 
 Your 30 days are **version-agnostic**: the trial runs whatever the latest major
 version is, not a fixed one.

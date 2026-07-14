@@ -1,3 +1,5 @@
+import Foundation
+import Synchronization
 import Testing
 
 @testable import StowerMessages
@@ -9,7 +11,7 @@ internal struct StowerChatDatabaseReaderTests {
         let fixture = try StowerFixtureDatabase()
         defer { fixture.remove() }
         let reader = try StowerChatDatabaseReader(
-            sourceURL: fixture.databaseURL,
+            demoSourceURL: fixture.databaseURL,
             contactsResolver: contacts
         )
 
@@ -46,12 +48,38 @@ internal struct StowerChatDatabaseReaderTests {
         #expect(items.first(where: { $0.id == "group-incoming" })?.sender == "Sam")
     }
 
+    @Test("(I2) a missing bookmark throws messagesAccessMissing, never a crash")
+    internal func missingBookmarkThrows() {
+        #expect(throws: StowerMessagesError.self) {
+            _ = try StowerChatDatabaseReader(
+                loadMessagesAccessBookmark: { nil },
+                contactsResolver: contacts
+            )
+        }
+    }
+
+    @Test("(I3) a stale-but-resolvable bookmark refreshes once and still opens the snapshot")
+    internal func staleBookmarkRefreshesOnce() throws {
+        let fixture = try StowerFixtureDatabase()
+        defer { fixture.remove() }
+        let refreshedCount = StowerRefreshCallCounter()
+
+        _ = try StowerChatDatabaseReader(
+            loadMessagesAccessBookmark: { Data() },
+            contactsResolver: contacts,
+            onBookmarkRefreshed: { _ in refreshedCount.increment() },
+            resolveBookmark: { _ in (fixture.rootURL, true) }
+        )
+
+        #expect(refreshedCount.value == 1)
+    }
+
     @Test("recent messages are unbounded, newest-N, stable, and chronological")
     internal func recentMessages() async throws {
         let fixture = try StowerFixtureDatabase()
         defer { fixture.remove() }
         let reader = try StowerChatDatabaseReader(
-            sourceURL: fixture.databaseURL,
+            demoSourceURL: fixture.databaseURL,
             contactsResolver: contacts
         )
 
@@ -70,7 +98,7 @@ internal struct StowerChatDatabaseReaderTests {
         let fixture = try StowerFixtureDatabase()
         defer { fixture.remove() }
         let reader = try StowerChatDatabaseReader(
-            sourceURL: fixture.databaseURL,
+            demoSourceURL: fixture.databaseURL,
             contactsResolver: contacts
         )
 
@@ -95,7 +123,7 @@ internal struct StowerChatDatabaseReaderTests {
         let fixture = try StowerFixtureDatabase()
         defer { fixture.remove() }
         let reader = try StowerChatDatabaseReader(
-            sourceURL: fixture.databaseURL,
+            demoSourceURL: fixture.databaseURL,
             contactsResolver: contacts
         )
 
@@ -110,7 +138,7 @@ internal struct StowerChatDatabaseReaderTests {
         let fixture = try StowerFixtureDatabase()
         defer { fixture.remove() }
         let reader = try StowerChatDatabaseReader(
-            sourceURL: fixture.databaseURL,
+            demoSourceURL: fixture.databaseURL,
             contactsResolver: contacts
         )
 
@@ -203,7 +231,7 @@ internal struct StowerChatDatabaseReaderTests {
         let resolver = contacts
         return StowerDebtBoardProvider(
             readerFactory: {
-                try StowerChatDatabaseReader(sourceURL: url, contactsResolver: resolver)
+                try StowerChatDatabaseReader(demoSourceURL: url, contactsResolver: resolver)
             },
             languageModelJudge: judge,
             cache: cache,
@@ -214,5 +242,22 @@ internal struct StowerChatDatabaseReaderTests {
     private var contacts: StowerContactsResolver {
         let mapping = ["+14155550100": "Alex", "sam@example.com": "Sam"]
         return StowerContactsResolver(mapping: mapping)
+    }
+}
+
+/// Counts `onBookmarkRefreshed` calls (I3).
+///
+/// The reader's init runs synchronously and single-threaded, so the `Mutex`
+/// (rather than any real concurrent access) is only here to satisfy the
+/// `@Sendable` closure signature `onBookmarkRefreshed` shares with production.
+private final class StowerRefreshCallCounter: Sendable {
+    private let storage = Mutex(0)
+
+    var value: Int {
+        storage.withLock { $0 }
+    }
+
+    func increment() {
+        storage.withLock { $0 += 1 }
     }
 }

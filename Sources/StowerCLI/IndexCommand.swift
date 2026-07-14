@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import StowerCore
+import StowerMacUI
 import StowerMessages
 
 /// `stower index` — snapshot, ingest, FTS-index, and delta-embed the window.
@@ -51,19 +52,40 @@ internal struct IndexCommand: AsyncParsableCommand {
         print("done: \(items.count) items, model \(embedder.modelFingerprint)")
     }
 
+    /// Presents Stower's shared `StowerMessagesAccessPicker` and ingests the
+    /// selected folder's `chat.db`.
+    ///
+    /// Per JC1, the CLI's grant is per-invocation and never persisted: the
+    /// picker's bookmark `Data` is captured in a one-shot closure and handed
+    /// straight to the reader, never written to `UserDefaults` or any other
+    /// store. **I6 (manual QA, not automated — the CLI test target can't drive
+    /// a real `NSOpenPanel`, per issue #65's accepted posture):** run `stower
+    /// index` twice in a row and confirm the picker is shown both times, with
+    /// no silent reuse across invocations.
     private func ingest(
         locations: StowerLocations,
         clock: ContinuousClock
     ) async throws -> [StowerMessageItem] {
         do {
             let start = clock.now
-            let reader = try StowerChatDatabaseReader()
+            guard
+                let bookmark = try await MainActor.run(body: {
+                    try StowerMessagesAccessPicker.presentAndCreateBookmark()
+                })
+            else {
+                stowerReportMessagesAccessMissing(detail: "no Messages folder selected")
+                throw ExitCode.failure
+            }
+            let reader = try StowerChatDatabaseReader(loadMessagesAccessBookmark: { bookmark })
             let items = try await reader.ingestWindow(days: days)
             print("ingest: \(items.count) messages in \(elapsed(since: start, clock))")
             return items
+        } catch let error as StowerMessagesAccessPickerError {
+            stowerReportMessagesAccessMissing(detail: error.localizedDescription)
+            throw ExitCode.failure
         } catch let error as StowerMessagesError {
-            if case .fullDiskAccessMissing(let path) = error {
-                stowerReportFullDiskAccess(path: path)
+            if case .messagesAccessMissing(let detail) = error {
+                stowerReportMessagesAccessMissing(detail: detail)
             } else {
                 stowerStandardError(error.localizedDescription)
             }

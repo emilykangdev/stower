@@ -65,14 +65,14 @@ import Testing
     @Test("a load failure routes via onFailure and renders no board (I4)")
     internal func loadFailureRoutes() async {
         let spy = StowerSpyBoardDataSource()
-        spy.loadError = .fullDiskAccessMissing(path: "~/Library/Messages/chat.db")
+        spy.loadError = .messagesAccessMissing(detail: "~/Library/Messages/chat.db")
         let recorder = FailureRecorder()
         let model = makeViewModel(spy, recorder: recorder)
 
         model.load()
         await model.loadTaskHandle?.value
 
-        #expect(recorder.failures == [.fullDiskAccessMissing(path: "~/Library/Messages/chat.db")])
+        #expect(recorder.failures == [.messagesAccessMissing(detail: "~/Library/Messages/chat.db")])
         #expect(model.board == nil)
         #expect(model.phase == .preparing)
     }

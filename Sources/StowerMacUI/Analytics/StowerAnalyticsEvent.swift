@@ -68,26 +68,26 @@ internal enum StowerAnalyticsEvent: Sendable {
     /// persisting. **Per-occurrence** (once per successful activation).
     case activated
 
-    /// FDA permission was just requested (the FDA onboarding screen appeared).
+    /// Messages access was just requested (the access onboarding screen appeared).
     ///
     /// Emitted once per startup run when `onCommit` first commits
-    /// `.needsFullDiskAccess`. **Per-run** (the `wasAwaitingFDA` latch prevents
-    /// double-firing under Check Again).
-    case fdaPermissionRequested
+    /// `.needsMessagesAccess`. **Per-run** (the `wasAwaitingMessagesAccess` latch
+    /// prevents double-firing under Check Again).
+    case messagesAccessRequested
 
-    /// The user returned from the FDA screen and access was confirmed.
+    /// The user returned from the access picker and access was confirmed.
     ///
-    /// Emitted via the `wasAwaitingFDA` latch when a run that was ever in an FDA
-    /// state reaches `.connectedPreparingBoard` — the board load is what proves
-    /// access actually works (`.checkingMessages` commits optimistically and can
-    /// still fall back to `.needsFullDiskAccessStillMissing`). **Per-run** (latch
-    /// resets after emission). FDA *denial* is measured as
-    /// `fdaPermissionRequested` without a following `fdaPermissionResolved`, so
-    /// `granted` is always `true` in v1; the parameter is retained for forward
-    /// compatibility.
+    /// Emitted via the `wasAwaitingMessagesAccess` latch when a run that was ever
+    /// in a messages-access state reaches `.connectedPreparingBoard` — the board
+    /// load is what proves access actually works (`.checkingMessages` commits
+    /// optimistically and can still fall back to
+    /// `.needsMessagesAccessStillMissing`). **Per-run** (latch resets after
+    /// emission). Denial is measured as `messagesAccessRequested` without a
+    /// following `messagesAccessResolved`, so `granted` is always `true` in v1;
+    /// the parameter is retained for forward compatibility.
     ///
-    /// - Parameter granted: Whether Full Disk Access was granted.
-    case fdaPermissionResolved(granted: Bool)
+    /// - Parameter granted: Whether Messages access was granted.
+    case messagesAccessResolved(granted: Bool)
 
     /// The board finished loading for the first time this launch.
     ///
@@ -148,8 +148,8 @@ internal enum StowerAnalyticsEvent: Sendable {
         case .paywallReached: return "paywall_reached"
         case .checkoutOpened: return "checkout_opened"
         case .activated: return "activated"
-        case .fdaPermissionRequested: return "fda_permission_requested"
-        case .fdaPermissionResolved: return "fda_permission_resolved"
+        case .messagesAccessRequested: return "messages_access_requested"
+        case .messagesAccessResolved: return "messages_access_resolved"
         case .boardReached: return "board_reached"
         case .boardItemClicked: return "board_item_clicked"
         case .featureUsed: return "feature_used"
@@ -164,7 +164,7 @@ internal enum StowerAnalyticsEvent: Sendable {
     /// phone/email strings appear here.
     internal var parameters: [String: String] {
         switch self {
-        case .appLaunched, .sessionEnded, .fdaPermissionRequested, .boardReached, .trialStarted,
+        case .appLaunched, .sessionEnded, .messagesAccessRequested, .boardReached, .trialStarted,
             .checkoutOpened, .activated:
             return [:]
 
@@ -178,7 +178,7 @@ internal enum StowerAnalyticsEvent: Sendable {
             if let error { params["error"] = Self.gateErrorToken(error) }
             return params
 
-        case .fdaPermissionResolved(let granted):
+        case .messagesAccessResolved(let granted):
             return ["granted": granted ? "true" : "false"]
 
         case .boardItemClicked(let itemType):

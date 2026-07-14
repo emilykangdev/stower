@@ -84,8 +84,8 @@ the single standard.
 
 ## Current state & the unification debt
 
-Most of the suite (~85%, e.g. the board / startup / FDA / config tests) already
-follows this standard. The **analytics / diagnostics / crash-reporting** suites are a
+Most of the suite (~85%, e.g. the board / startup / messages-access / config tests)
+already follows this standard. The **analytics / diagnostics / crash-reporting** suites are a
 holdover of bare camelCase behavioral names (e.g. `analyticsStorageKeyNeverCollidesWithShownFlag`).
 Migrating those to `@Test("…")` is tracked as a **separate, deferred** task — it is
 **not** bundled into unrelated feature work. New tests in those files still follow the

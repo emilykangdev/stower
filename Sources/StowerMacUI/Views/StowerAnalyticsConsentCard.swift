@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The first-run diagnostics disclosure card, shown once after ~60 seconds of
-/// foreground board time (JC7 — after value, never at startup or the FDA cliff).
+/// foreground board time (JC7 — after value, never at startup or the messages-access cliff).
 ///
 /// Presents the honest, equal-weight consent choice: On · Off. No
 /// `.borderedProminent` bias; no "Got it" acknowledgement-as-consent. The card

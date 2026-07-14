@@ -148,11 +148,12 @@ extension StowerBoardViewModel {
         return entry.body
     }
 
-    /// Copies the draft, opens the conversation, and best-effort auto-pastes it.
+    /// Copies the draft to the clipboard and opens the conversation, for the
+    /// user to paste in manually.
     ///
-    /// Never sends (JC5) — there is no send path to reach. Reads the ACTIVE body
+    /// Never sends — there is no send path to reach. Reads the ACTIVE body
     /// only (not the raw store entry): re-clicking "Reply in Messages" after a
-    /// resolve must never paste a resolved draft's stale body.
+    /// resolve must never copy a resolved draft's stale body.
     internal func dropIntoMessages(_ row: StowerBoardRow) {
         dropper.drop(text: activeDraftPreview(key: row.draftKey) ?? "", deepLink: row.deepLink)
     }

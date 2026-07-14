@@ -5,20 +5,106 @@ public actor StowerChatDatabaseReader {
     private let snapshot: StowerChatSnapshot
     private let contacts: StowerContactsResolver
 
-    /// The default local Messages database location.
-    public static var defaultSourceURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Messages/chat.db")
-    }
+    /// The Messages database's file name inside the granted folder.
+    ///
+    /// The one new public surface this type exposes so app-owned UI code (the
+    /// `NSOpenPanel`-driven access picker) can validate a selected folder
+    /// contains the right file without hardcoding the literal itself.
+    public static let databaseFileName = "chat.db"
 
-    /// Creates a reader and one reusable ephemeral Source DB snapshot.
+    /// Creates a reader over a security-scoped bookmark for the Messages folder.
+    ///
+    /// - Parameters:
+    ///   - loadMessagesAccessBookmark: Reads the currently stored bookmark
+    ///     `Data`, or `nil` if none has ever been granted. Invoked once, at
+    ///     init — callers re-invoke this initializer (via `readerFactory()`) to
+    ///     pick up a bookmark granted after a previous attempt failed.
+    ///   - contactsResolver: The handle-to-name resolver; denial degrades to
+    ///     raw handles, never an error.
+    ///   - onBookmarkRefreshed: Called with freshly re-created bookmark `Data`
+    ///     when the stored bookmark resolved but was stale. The engine never
+    ///     persists this itself — persistence is the UI's responsibility.
+    ///   - resolveBookmark: Resolves bookmark `Data` to a URL and its
+    ///     staleness flag. Defaults to the real `URL(resolvingBookmarkData:)`
+    ///     call; injectable so staleness/failure paths are deterministically
+    ///     testable.
+    /// - Throws: `StowerMessagesError.messagesAccessMissing` when no bookmark
+    ///   is stored, or the stored bookmark cannot be resolved.
     public init(
-        sourceURL: URL = StowerChatDatabaseReader.defaultSourceURL,
-        contactsResolver: StowerContactsResolver = .live()
+        loadMessagesAccessBookmark: @Sendable () -> Data?,
+        contactsResolver: StowerContactsResolver = .live(),
+        onBookmarkRefreshed: @escaping @Sendable (Data) -> Void = { _ in },
+        resolveBookmark: (Data) throws -> (url: URL, isStale: Bool) = { data in
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: data,
+                options: .withSecurityScope,
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            return (url, isStale)
+        }
     ) throws {
-        snapshot = try StowerChatSnapshot(sourceURL: sourceURL)
+        guard let bookmark = loadMessagesAccessBookmark() else {
+            throw StowerMessagesError.messagesAccessMissing("no Messages folder selected yet")
+        }
+        guard let resolved = try? resolveBookmark(bookmark) else {
+            throw StowerMessagesError.messagesAccessMissing(
+                "stored Messages access could not be resolved"
+            )
+        }
+        if resolved.isStale {
+            // .securityScopeAllowOnlyReadAccess matches the app's read-only
+            // files.user-selected entitlement (Codex finding, ship-with-codex
+            // iter 2) — .withSecurityScope alone is documented by Apple to
+            // grant read/write on resolution, which the entitlement can't
+            // actually honor.
+            //
+            // Re-creating a bookmark from an already-resolved security-scoped
+            // URL itself counts as "using" the scoped resource, not merely
+            // reading its contents — without an active start/stop bracket this
+            // throws NSCocoaErrorDomain Code=256 ("Could not open() the item"),
+            // which `try?` was silently swallowing, so the self-heal never
+            // actually persisted a refreshed bookmark (Cursor Bugbot finding).
+            let didStartScope = resolved.url.startAccessingSecurityScopedResource()
+            defer {
+                if didStartScope {
+                    resolved.url.stopAccessingSecurityScopedResource()
+                }
+            }
+            let refreshedBookmark = try? resolved.url.bookmarkData(
+                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+            if let refreshedBookmark {
+                onBookmarkRefreshed(refreshedBookmark)
+            }
+        }
+        let resolvedURL = resolved.url
+        snapshot = try StowerChatSnapshot(
+            sourceURL: resolvedURL.appendingPathComponent(Self.databaseFileName),
+            startAccessingScope: { resolvedURL.startAccessingSecurityScopedResource() },
+            stopAccessingScope: { resolvedURL.stopAccessingSecurityScopedResource() }
+        )
         contacts = contactsResolver
     }
+
+    #if DEBUG
+        /// Creates a reader directly over `demoSourceURL`, bypassing the
+        /// bookmark/security-scope machinery entirely.
+        ///
+        /// DEBUG-only: lets demo/dev builds point at a curated database (e.g.
+        /// `Scripts/generate-demo-db.py`'s output) without a picker or a real
+        /// grant. Never compiled into a Release build.
+        public init(
+            demoSourceURL: URL,
+            contactsResolver: StowerContactsResolver = .live()
+        ) throws {
+            snapshot = try StowerChatSnapshot(sourceURL: demoSourceURL)
+            contacts = contactsResolver
+        }
+    #endif
 
     /// Returns decoded, indexable messages from the most recent window.
     public func ingestWindow(
@@ -64,8 +150,9 @@ public actor StowerChatDatabaseReader {
     /// formed.
     ///
     /// - Throws: `StowerMessagesError.invalidArgument` for a negative
-    ///   `windowDays`, or `.unreadableSource` if a snapshot read fails. Full
-    ///   Disk Access is surfaced earlier, at `init`, as `.fullDiskAccessMissing`.
+    ///   `windowDays`, or `.unreadableSource` if a snapshot read fails. Missing
+    ///   Messages access is surfaced earlier, at `init`, as
+    ///   `.messagesAccessMissing`.
     public func conversationStates(
         windowDays: Int = 180,
         now: Date = Date()
@@ -80,8 +167,9 @@ public actor StowerChatDatabaseReader {
     /// `conversationStates`.
     ///
     /// - Throws: `StowerMessagesError.invalidArgument` for a negative
-    ///   `windowDays`, or `.unreadableSource` if a snapshot read fails. Full
-    ///   Disk Access is surfaced earlier, at `init`, as `.fullDiskAccessMissing`.
+    ///   `windowDays`, or `.unreadableSource` if a snapshot read fails. Missing
+    ///   Messages access is surfaced earlier, at `init`, as
+    ///   `.messagesAccessMissing`.
     internal func conversationStateRecords(
         windowDays: Int = 180,
         now: Date = Date()

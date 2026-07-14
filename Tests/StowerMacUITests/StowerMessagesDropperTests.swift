@@ -6,19 +6,19 @@ import Testing
 
 /// "Reply in Messages" populates but NEVER sends (I-NoAutoSend).
 ///
-/// The dropper's effects are recorded through an injected sink, so these assert
-/// exactly what it does — clipboard first (the guaranteed fallback), open, then a
-/// paste only when Accessibility is granted — and that no send/Return effect exists
-/// at all. The `StowerMessagesDropEffect` enum has no send case, so "never sends" is
-/// structural; the precheck grep covers the code level (no AppleScript/IMCore/Return).
+/// The dropper's effects are recorded through an injected sink, so this asserts
+/// exactly what it does — clipboard first (the guaranteed fallback), then open —
+/// and that no send/Return/paste effect exists at all (I5). The
+/// `StowerMessagesDropEffect` enum has no send/paste case, so "never sends,
+/// never auto-pastes" is structural (App Sandbox blocks `CGEventPost` outright);
+/// the precheck grep covers the code level (no AppleScript/IMCore/Return).
 @MainActor
 @Suite internal struct StowerMessagesDropperTests {
-    @Test("granted: copies, opens, and pastes — never a send (I-NoAutoSend)")
-    internal func grantedDrops() throws {
+    @Test("(I5) copies then opens the conversation — never a send or auto-paste")
+    internal func dropsWithDeepLink() throws {
         let effects = Mutex<[StowerMessagesDropEffect]>([])
         let dropper = StowerMessagesDropper(
-            perform: { effect in effects.withLock { $0.append(effect) } },
-            isAccessibilityTrusted: { true }
+            perform: { effect in effects.withLock { $0.append(effect) } }
         )
         let url = try #require(URL(string: "sms:+15551234567"))
 
@@ -27,39 +27,16 @@ import Testing
         #expect(
             effects.withLock { $0 } == [
                 .copyToClipboard("hi there"),
-                .openConversation(url),
-                .pasteIntoMessages
+                .openConversation(url)
             ]
         )
-    }
-
-    @Test("denied: copies, opens, and requests Accessibility — never pastes (I-NoAutoSend)")
-    internal func deniedDrops() throws {
-        let effects = Mutex<[StowerMessagesDropEffect]>([])
-        let dropper = StowerMessagesDropper(
-            perform: { effect in effects.withLock { $0.append(effect) } },
-            isAccessibilityTrusted: { false }
-        )
-        let url = try #require(URL(string: "sms:+15551234567"))
-
-        dropper.drop(text: "draft", deepLink: url)
-
-        #expect(
-            effects.withLock { $0 } == [
-                .copyToClipboard("draft"),
-                .openConversation(url),
-                .requestAccessibility
-            ]
-        )
-        #expect(effects.withLock { $0 }.contains(.pasteIntoMessages) == false)
     }
 
     @Test("a nil deep link still copies to the clipboard (fallback) and stops")
     internal func nilDeepLinkCopiesOnly() {
         let effects = Mutex<[StowerMessagesDropEffect]>([])
         let dropper = StowerMessagesDropper(
-            perform: { effect in effects.withLock { $0.append(effect) } },
-            isAccessibilityTrusted: { true }
+            perform: { effect in effects.withLock { $0.append(effect) } }
         )
 
         dropper.drop(text: "stranded?", deepLink: nil)

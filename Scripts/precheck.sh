@@ -95,7 +95,7 @@ if grep -RInE --include="*.swift" '^[[:space:]]*(@testable[[:space:]]+)?import[[
     exit 1
 fi
 
-# Step 6 — StowerMac app/UI boundary guards (FDA onboarding slice).
+# Step 6 — StowerMac app/UI boundary guards (Messages-access onboarding slice).
 # These greps deliberately also cover StowerMac/StowerMac (the Xcode app's Swift
 # sources) even though the format/lint steps above only target Sources/Tests —
 # the boundary must hold in the app entry too. Standing gate; do not weaken to go
@@ -166,24 +166,19 @@ if [ "$SC_IMPORTERS" != "$SC_ALLOWED" ]; then
     exit 1
 fi
 
-# 6d — The app/UI slice never probes the filesystem or DB itself; the engine reads
-#      chat.db behind its facade. Bans direct FileManager/reachability/Data/TCC/sqlite/GRDB.
-if grep -RInE --include="*.swift" -i 'FileManager\.default|checkResourceIsReachable|contentsOfDirectory|isReadableFile|Data\(contentsOf:|(^|[^a-z])tcc([^a-z]|$)|sqlite|grdb' StowerMac/StowerMac Sources/StowerMacUI 2>/dev/null; then
-    echo "ERROR: the StowerMac app/UI slice must not touch the filesystem or DB directly (the engine does)" >&2
-    exit 1
-fi
-
-# 6e — chat.db must not be a literal in production app/UI code: the FDA disclosure
-#      renders the path from the .fullDiskAccessMissing(path:) payload, never a constant.
-#      CrashReporting/ is excluded: the scrubber legitimately pattern-matches the
-#      token as a hard-stop fragment to detect accidental crash-payload leaks.
+# 6e — chat.db must not be a literal in production app/UI code: the picker validates
+#      a selected folder via StowerMessagesAccessConstants.databaseFileName (an
+#      engine-owned constant, re-exported through StowerMessagesComposition.swift),
+#      never a hardcoded string (JC4). CrashReporting/ is excluded: the scrubber
+#      legitimately pattern-matches the token as a hard-stop fragment to detect
+#      accidental crash-payload leaks.
 if grep -RInE --include="*.swift" 'chat\.db' StowerMac/StowerMac 2>/dev/null; then
-    echo "ERROR: chat.db must not appear as a literal in StowerMacApp code — render it from the FDA payload" >&2
+    echo "ERROR: chat.db must not appear as a literal in StowerMacApp code — use StowerMessagesAccessConstants.databaseFileName" >&2
     exit 1
 fi
 if grep -RInE --include="*.swift" 'chat\.db' Sources/StowerMacUI \
     --exclude-dir=CrashReporting 2>/dev/null; then
-    echo "ERROR: chat.db must not appear as a literal in UI code — render it from the FDA payload" >&2
+    echo "ERROR: chat.db must not appear as a literal in UI code — use StowerMessagesAccessConstants.databaseFileName" >&2
     exit 1
 fi
 

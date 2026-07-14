@@ -97,14 +97,12 @@ there's less to trust in the first place:
 - **Read-only access.** Stower reads your Messages database; it does not
   and cannot send messages on your behalf. Replying is always a manual,
   deliberate action you take yourself in the real Messages app.
-- **Full Disk Access is scoped to what it's for.** Reading `chat.db` (where
-  macOS stores your Messages) requires Full Disk Access — there's no way
-  around that on macOS today, and it's the single biggest reason to be
-  careful about which apps you grant it to. Unlike most permissions, macOS
-  has no system prompt for Full Disk Access at all — Stower's onboarding
-  screen walks you to System Settings to grant it manually, the same
-  manual step every Mac app that needs this access requires — and Stower
-  only uses it to read your Messages database.
+- **Access is scoped to exactly the folder you pick — nothing more.** Stower
+  runs under macOS's App Sandbox and reads `chat.db` (where macOS stores your
+  Messages) through a security-scoped bookmark: a standard "Open" dialog
+  (`NSOpenPanel`) asks you to select your Messages folder, and macOS grants
+  read access to only that folder — not your whole disk. Stower's onboarding
+  screen walks you through this dialog the first time it needs access.
 - **Separate, isolated environments for development and daily use.**
   The version of Stower used for active development/testing never shares
   its data with the version you actually use day to day, so a bug being

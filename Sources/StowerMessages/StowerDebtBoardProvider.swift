@@ -74,23 +74,37 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
             .appendingPathComponent(StowerReplyVerdictCache.fileName)
     }
 
-    /// Creates a provider over the local Messages database.
+    /// Creates a provider over a security-scoped bookmark for the Messages folder.
     ///
     /// - Parameters:
-    ///   - sourceURL: The Messages `chat.db` to read.
+    ///   - loadMessagesAccessBookmark: Reads the currently stored bookmark
+    ///     `Data`, or `nil` if none is stored. Invoked by `readerFactory()` on
+    ///     every cache-miss (a fresh `sharedReader()` or a `refreshedReader()`
+    ///     call) — never captured as a fixed value — so a bookmark granted
+    ///     after this provider was constructed takes effect on the very next
+    ///     load/refresh, not only after a relaunch.
     ///   - contactsResolver: The handle-to-name resolver; denial degrades to raw
     ///     handles (M4), never an error.
+    ///   - onBookmarkRefreshed: Called with freshly re-created bookmark `Data`
+    ///     when the stored bookmark resolved but was stale. This provider never
+    ///     persists it itself — persistence is the caller's (UI's)
+    ///     responsibility.
     ///   - cacheURL: Where to persist trusted verdicts; a fault here leaves the
     ///     cache absent and the board empty until refresh can rebuild it (M9).
     ///   - windowDays: How far back to read facts.
     public init(
-        sourceURL: URL = StowerChatDatabaseReader.defaultSourceURL,
+        loadMessagesAccessBookmark: @escaping @Sendable () -> Data?,
         contactsResolver: StowerContactsResolver = .live(),
+        onBookmarkRefreshed: @escaping @Sendable (Data) -> Void = { _ in },
         cacheURL: URL?,
         windowDays: Int = 180
     ) {
         readerFactory = {
-            try StowerChatDatabaseReader(sourceURL: sourceURL, contactsResolver: contactsResolver)
+            try StowerChatDatabaseReader(
+                loadMessagesAccessBookmark: loadMessagesAccessBookmark,
+                contactsResolver: contactsResolver,
+                onBookmarkRefreshed: onBookmarkRefreshed
+            )
         }
         // Resolve the system judge per call, not once at init: a provider built
         // while Apple Intelligence is still downloading picks the model up when it
@@ -100,6 +114,32 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         cache = cacheURL.flatMap(Self.openCache)
         self.windowDays = windowDays
     }
+
+    #if DEBUG
+        /// Creates a provider directly over `demoSourceURL`, bypassing the
+        /// bookmark/security-scope machinery entirely.
+        ///
+        /// DEBUG-only: mirrors `StowerChatDatabaseReader`'s demo initializer so
+        /// dev/demo builds can point the board at a curated database without a
+        /// picker or a real grant.
+        public init(
+            demoSourceURL: URL,
+            contactsResolver: StowerContactsResolver = .live(),
+            cacheURL: URL?,
+            windowDays: Int = 180
+        ) {
+            readerFactory = {
+                try StowerChatDatabaseReader(
+                    demoSourceURL: demoSourceURL,
+                    contactsResolver: contactsResolver
+                )
+            }
+            resolveLanguageModelJudge = { Self.makeSystemLanguageModelJudge() }
+            modelAvailabilityResolver = { StowerLanguageModelAvailability.current() }
+            cache = cacheURL.flatMap(Self.openCache)
+            self.windowDays = windowDays
+        }
+    #endif
 
     /// Creates a provider from injected dependencies, for tests.
     ///
@@ -158,7 +198,7 @@ public actor StowerDebtBoardProvider: StowerDebtBoardProviding {
         }
         // Availability is checked AFTER config bounds but BEFORE the reader, so an
         // unsupported device never opens the private database. A supported device
-        // still surfaces FDA / source errors normally.
+        // still surfaces messages-access / source errors normally.
         if case .unavailable(let reason) = await modelAvailabilityResolver() {
             throw StowerMessagesError.languageModelUnavailable(reason)
         }

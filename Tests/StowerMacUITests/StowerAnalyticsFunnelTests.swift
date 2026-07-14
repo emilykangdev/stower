@@ -4,7 +4,7 @@ import Testing
 @testable import StowerMacUI
 
 /// Tests the startup funnel analytics emission: per-launch / per-occurrence
-/// semantics, the `wasAwaitingFDA` latch, and a Check-Again sequence (Eng F1/F2).
+/// semantics, the `wasAwaitingMessagesAccess` latch, and a Check-Again sequence (Eng F1/F2).
 ///
 /// Uses `StowerFakeStartupProvider` and `StowerInMemoryAnalyticsReporter` so no
 /// engine or real UserDefaults is involved.
@@ -61,14 +61,14 @@ import Testing
         #expect(boardReachedCount == 1, "board_reached must fire at most once per launch")
     }
 
-    // MARK: — FDA latch
+    // MARK: — Messages-access latch
 
-    @Test("FDA latch: fda_permission_resolved fires after wasAwaitingFDA run reaches board")
-    internal func fdaLatchResolution() async throws {
-        // First run: FDA missing.
+    @Test("Messages-access latch: resolved fires after an awaiting-access run reaches board")
+    internal func messagesAccessLatchResolution() async throws {
+        // First run: messages access missing.
         let provider = StowerFakeStartupProvider(
             loadBehaviors: [
-                .failure(.fullDiskAccessMissing(path: "/var/db")),
+                .failure(.messagesAccessMissing(detail: "/var/db")),
                 .success
             ]
         )
@@ -79,27 +79,27 @@ import Testing
         let run1 = try #require(model.activeRun)
         await run1.value
 
-        let namesAfterFDA = spy.recorded().map(\.signalName)
-        #expect(namesAfterFDA.contains("fda_permission_requested"))
-        #expect(namesAfterFDA.filter { $0 == "fda_permission_resolved" }.isEmpty)
+        let namesAfterMissing = spy.recorded().map(\.signalName)
+        #expect(namesAfterMissing.contains("messages_access_requested"))
+        #expect(namesAfterMissing.filter { $0 == "messages_access_resolved" }.isEmpty)
 
-        // Second run: FDA now granted (provider succeeds).
+        // Second run: messages access now granted (provider succeeds).
         model.checkAgain()
         let run2 = try #require(model.activeRun)
         await run2.value
 
         let namesAfterGrant = spy.recorded().map(\.signalName)
-        #expect(namesAfterGrant.contains("fda_permission_resolved"))
-        let resolvedEvent = spy.recorded().first { $0.signalName == "fda_permission_resolved" }
+        #expect(namesAfterGrant.contains("messages_access_resolved"))
+        let resolvedEvent = spy.recorded().first { $0.signalName == "messages_access_resolved" }
         #expect(resolvedEvent?.parameters["granted"] == "true")
     }
 
-    @Test("fda_permission_requested does not double-fire under Check Again while still missing")
-    internal func fdaRequestedNotDoubledUnderCheckAgain() async throws {
+    @Test("messages_access_requested does not double-fire under Check Again while still missing")
+    internal func messagesAccessRequestedNotDoubledUnderCheckAgain() async throws {
         let provider = StowerFakeStartupProvider(
             loadBehaviors: [
-                .failure(.fullDiskAccessMissing(path: "/var/db")),
-                .failure(.fullDiskAccessMissing(path: "/var/db"))
+                .failure(.messagesAccessMissing(detail: "/var/db")),
+                .failure(.messagesAccessMissing(detail: "/var/db"))
             ]
         )
         let licenseGate = StowerFakeLicenseGate(states: [.licensed, .licensed])
@@ -108,31 +108,31 @@ import Testing
         model.start()
         let run1 = try #require(model.activeRun)
         await run1.value
-        // Second run: still missing (still in the same awaiting-FDA arc).
+        // Second run: still missing (still in the same awaiting-access arc).
         model.checkAgain()
         let run2 = try #require(model.activeRun)
         await run2.value
 
         let requestedCount = spy.recorded()
-            .filter { $0.signalName == "fda_permission_requested" }
+            .filter { $0.signalName == "messages_access_requested" }
             .count
         #expect(
             requestedCount == 1,
-            "fda_permission_requested must fire once per awaiting-FDA arc"
+            "messages_access_requested must fire once per awaiting-access arc"
         )
     }
 
-    @Test("checkingMessages without a board reach does not record fda granted")
-    internal func fdaResolvedNotFiredOnPrematureCheckingMessages() async throws {
+    @Test("checkingMessages without a board reach does not record access granted")
+    internal func messagesAccessResolvedNotFiredOnPrematureCheckingMessages() async throws {
         // Both runs: license valid (so each commits .checkingMessages before the
-        // load), but the board load fails with FDA missing — access was never
-        // actually granted. The second run is the awaiting-FDA recheck that
+        // load), but the board load fails with messages access missing — access was never
+        // actually granted. The second run is the awaiting-access recheck that
         // reaches .checkingMessages with the latch set; granted:true must NOT be
         // recorded because the board (proof of access) is never reached.
         let provider = StowerFakeStartupProvider(
             loadBehaviors: [
-                .failure(.fullDiskAccessMissing(path: "/var/db")),
-                .failure(.fullDiskAccessMissing(path: "/var/db"))
+                .failure(.messagesAccessMissing(detail: "/var/db")),
+                .failure(.messagesAccessMissing(detail: "/var/db"))
             ]
         )
         let licenseGate = StowerFakeLicenseGate(states: [.licensed, .licensed])
@@ -146,7 +146,7 @@ import Testing
         await run2.value
 
         let resolvedCount = spy.recorded()
-            .filter { $0.signalName == "fda_permission_resolved" }
+            .filter { $0.signalName == "messages_access_resolved" }
             .count
         #expect(
             resolvedCount == 0,
@@ -160,8 +160,8 @@ import Testing
 
     // MARK: — Board failure routing
 
-    @Test("handleBoardFailure routing to needsFullDiskAccess emits fda_permission_requested")
-    internal func boardFailureRoutesToFDAEmitsFunnelEvent() async throws {
+    @Test("handleBoardFailure routing to needsMessagesAccess emits messages_access_requested")
+    internal func boardFailureRoutesToMessagesAccessEmitsFunnelEvent() async throws {
         let provider = StowerFakeStartupProvider()
         let spy = StowerInMemoryAnalyticsReporter()
         let model = makeModel(provider: provider, reporter: spy)
@@ -169,13 +169,13 @@ import Testing
         let run = try #require(model.activeRun)
         await run.value
 
-        // Simulate a mid-session board failure: full disk access revoked.
-        model.handleBoardFailure(.fullDiskAccessMissing(path: "/var/db"))
+        // Simulate a mid-session board failure: messages access revoked.
+        model.handleBoardFailure(.messagesAccessMissing(detail: "/var/db"))
 
         let names = spy.recorded().map(\.signalName)
         #expect(
-            names.contains("fda_permission_requested"),
-            "handleBoardFailure routing to needsFullDiskAccess must emit fda_permission_requested"
+            names.contains("messages_access_requested"),
+            "handleBoardFailure routing to needsMessagesAccess must emit messages_access_requested"
         )
     }
 

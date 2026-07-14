@@ -22,25 +22,28 @@ internal enum StowerStartupState: Sendable, Equatable {
     /// Model is available; attempting the board load behind the permission gate.
     case checkingMessages
 
-    /// Full Disk Access is missing; `path` is disclosed behind a disclosure.
-    case needsFullDiskAccess(path: String)
+    /// Messages access has never been granted; the picker's own pre-navigation
+    /// already shows the target, so there's nothing to disclose yet (JC3).
+    case needsMessagesAccess
 
-    /// Still missing after a Check Again — escalates to quit-and-reopen copy.
-    case needsFullDiskAccessStillMissing(path: String)
+    /// Still missing after a Check Again; `detail` describes what failed so the
+    /// disclosure can explain a stale/revoked bookmark.
+    case needsMessagesAccessStillMissing(detail: String)
 
     /// The load succeeded; an honest cold-start "preparing your board" loading
     /// state. NOT a board and NOT "all caught up" — the board is the next slice.
     case connectedPreparingBoard
 
-    /// A non-FDA failure; the view derives per-family copy from the case.
+    /// A non-messages-access failure; the view derives per-family copy from the case.
     case failed(StowerStartupFailure)
 
-    /// Whether the current state is one of the two Full Disk Access states.
+    /// Whether the current state is one of the two Messages-access states.
     ///
-    /// Lets the model escalate a repeat FDA failure to the still-missing copy.
-    internal var isAwaitingFullDiskAccess: Bool {
+    /// Lets the model escalate a repeat messages-access failure to the
+    /// still-missing copy.
+    internal var isAwaitingMessagesAccess: Bool {
         switch self {
-        case .needsFullDiskAccess, .needsFullDiskAccessStillMissing:
+        case .needsMessagesAccess, .needsMessagesAccessStillMissing:
             return true
         case .checkingModel, .modelUnavailable, .needsLicense, .checkingMessages,
             .connectedPreparingBoard, .failed:

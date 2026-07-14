@@ -58,7 +58,7 @@ internal struct StowerDebtBoardContractTests {
         // The concrete provider's public init is part of the same contract — the
         // app supplies no model argument; the judge owns its model id.
         _ = StowerDebtBoardProvider(
-            sourceURL: URL(fileURLWithPath: "/x"),
+            loadMessagesAccessBookmark: { nil },
             cacheURL: nil
         )
     }

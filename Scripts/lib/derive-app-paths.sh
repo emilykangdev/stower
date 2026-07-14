@@ -18,8 +18,13 @@
 # 2026-07-03 app-identity plan (JC5). Extracting this once keeps the two run
 # scripts from drifting (one commit, one concern — AGENTS.md).
 
+# Also sets BUNDLE_ID (PRODUCT_BUNDLE_IDENTIFIER) -- needed by
+# run-app-demo.sh to compute the sandboxed app's container path
+# (~/Library/Containers/<BUNDLE_ID>/Data/...) now that ENABLE_APP_SANDBOX=YES
+# redirects Application Support there.
+
 # Usage: stower_build_and_derive_paths <project> <scheme> <config>
-# Sets APP, EXECUTABLE_NAME, BIN on success; exits non-zero on failure.
+# Sets APP, EXECUTABLE_NAME, BIN, BUNDLE_ID on success; exits non-zero on failure.
 stower_build_and_derive_paths() {
   local project="$1" scheme="$2" config="$3"
 
@@ -36,6 +41,7 @@ stower_build_and_derive_paths() {
   # Split on ' = ' (not $3) so a future space-containing value wouldn't truncate.
   APP="$(printf '%s\n' "$settings" | awk -F ' = ' '/ BUILT_PRODUCTS_DIR = /{d=$2} / FULL_PRODUCT_NAME = /{n=$2} END{print d"/"n}')"
   EXECUTABLE_NAME="$(printf '%s\n' "$settings" | awk -F ' = ' '/ EXECUTABLE_NAME = /{print $2; exit}')"
+  BUNDLE_ID="$(printf '%s\n' "$settings" | awk -F ' = ' '/ PRODUCT_BUNDLE_IDENTIFIER = /{print $2; exit}')"
 
   if [ ! -d "$APP" ]; then
     echo "ERROR: built app not found at: $APP" >&2
@@ -44,6 +50,11 @@ stower_build_and_derive_paths() {
 
   if [ -z "$EXECUTABLE_NAME" ]; then
     echo "ERROR: could not derive EXECUTABLE_NAME from -showBuildSettings" >&2
+    exit 1
+  fi
+
+  if [ -z "$BUNDLE_ID" ]; then
+    echo "ERROR: could not derive PRODUCT_BUNDLE_IDENTIFIER from -showBuildSettings" >&2
     exit 1
   fi
 

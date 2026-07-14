@@ -8,7 +8,7 @@ import Testing
 ///
 /// It surfaces lines in `recentMessages` order, marks an empty thread as empty
 /// (not a blank loaded pane), and routes a thrown `StowerStartupFailure` via
-/// `onFailure` so an FDA/source loss re-enters onboarding. Driven by
+/// `onFailure` so a messages-access/source loss re-enters onboarding. Driven by
 /// `StowerSpyBoardDataSource` — no engine, no real model.
 @MainActor
 @Suite internal struct StowerThreadViewModelTests {

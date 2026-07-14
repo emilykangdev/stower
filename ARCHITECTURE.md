@@ -112,14 +112,14 @@ stateDiagram-v2
     needsLicense --> needsLicense : invalid / couldNotReach
 
     checkingMessages --> connectedPreparingBoard : loadDebtBoard succeeds
-    checkingMessages --> needsFullDiskAccess : FDA missing (first time)
-    checkingMessages --> needsFullDiskAccessStillMissing : FDA missing after Check Again
+    checkingMessages --> needsMessagesAccess : access missing (first time)
+    checkingMessages --> needsMessagesAccessStillMissing : access missing after Check Again
     checkingMessages --> modelUnavailable : throws languageModelUnavailable
     checkingMessages --> failed : other typed failure
 
     modelUnavailable --> checkingModel : Check Again
-    needsFullDiskAccess --> checkingModel : Check Again
-    needsFullDiskAccessStillMissing --> checkingModel : Check Again
+    needsMessagesAccess --> checkingModel : Check Again
+    needsMessagesAccessStillMissing --> checkingModel : Check Again
     failed --> checkingModel : Retry
 
     connectedPreparingBoard --> board : StowerRootView renders StowerBoardView
@@ -164,7 +164,7 @@ cases — the board's richer lifecycle (preparing → rows / caught-up / error, 
 the background `refreshJudgments` loop that backfills verdicts and drives the
 spinner/reload signals off `StowerRefreshSummary`) lives in the view-model's own
 phase enum, not the startup enum. A board load that surfaces a
-`StowerStartupFailure` (e.g. a mid-session FDA loss) re-enters onboarding via
+`StowerStartupFailure` (e.g. a mid-session messages-access loss) re-enters onboarding via
 `StowerStartupModel.handleBoardFailure`, so failure routing stays unified.
 
 ## System flow — ingest, query, and the relationship-debt engine

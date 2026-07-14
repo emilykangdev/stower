@@ -7,13 +7,14 @@ import Foundation
 /// throw that is not a `StowerMessagesError` becomes `.unexpected` via the startup
 /// model's catch-all. The views derive their copy from the case — raw engine
 /// strings are never shown, which is why every engine diagnostic payload is
-/// dropped except the FDA `path` and the model `reason` a screen actually renders.
+/// dropped except the messages-access `detail` and the model `reason` a screen
+/// actually renders.
 internal enum StowerStartupFailure: Error, Sendable, Equatable {
     // ENGINE-COUPLED: four files import the engine (StowerMessagesStartupAdapter, StowerLiveBoardDataSource, StowerMessagesComposition, StowerMessagesMapping); the engine→failure map is StowerMessagesMapping.mapError, and this app-owned failure is reused as the board seam's error type.
 
-    /// Full Disk Access is missing; `path` is the database path the FDA screen
-    /// discloses behind its Technical-details disclosure.
-    case fullDiskAccessMissing(path: String)
+    /// Messages access is missing; `detail` is the diagnostic string the
+    /// still-missing screen discloses behind its Technical-details disclosure.
+    case messagesAccessMissing(detail: String)
 
     /// The on-device model is unavailable; the reason selects the screen variant.
     case modelUnavailable(StowerStartupModelUnavailableReason)

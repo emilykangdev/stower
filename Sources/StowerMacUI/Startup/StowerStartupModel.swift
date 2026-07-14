@@ -1,8 +1,8 @@
 import Foundation
 import Observation
 
-/// Drives the FDA-first startup flow and owns the single `StowerStartupState` the
-/// root view renders.
+/// Drives the messages-access-first startup flow and owns the single
+/// `StowerStartupState` the root view renders.
 ///
 /// `start()` runs the flow once; `checkAgain()` reruns it. The flow is re-entrant:
 /// each run cancels the one in flight, takes a fresh generation token, and any
@@ -40,12 +40,12 @@ internal final class StowerStartupModel {
     internal var inFlight: Task<Void, Never>?
     internal var generation = 0
 
-    /// `true` while a run is in an FDA-awaiting state; cleared after `fda_permission_resolved` fires.
+    /// `true` while awaiting messages access; cleared after `messages_access_resolved` fires.
     ///
-    /// Drives the `wasAwaitingFDA` latch so `checkAgain()` re-runs don't double-fire
-    /// `fda_permission_requested`. `internal` so `StowerStartupModelAnalytics.swift`
-    /// can read/clear it.
-    internal var wasAwaitingFDA = false
+    /// Drives this latch so `checkAgain()` re-runs don't double-fire
+    /// `messages_access_requested`. `internal` so
+    /// `StowerStartupModelAnalytics.swift` can read/clear it.
+    internal var wasAwaitingMessagesAccess = false
 
     /// Guards `board_reached` to one emission per launch (per-launch semantics).
     /// `internal` so `StowerStartupModelAnalytics.swift` can read/set it.
@@ -129,7 +129,7 @@ internal final class StowerStartupModel {
         beginRun()
     }
 
-    /// Reruns the same startup flow (the FDA / failure screens' Check Again).
+    /// Reruns the same startup flow (the messages-access/failure screens' Check Again).
     internal func checkAgain() {
         beginRun()
     }
@@ -184,7 +184,7 @@ internal final class StowerStartupModel {
     /// Returns `true` only when this call activated and persisted the key —
     /// the caller-visible success signal for the F1 confirmation. The rerun's
     /// terminal state is deliberately NOT that signal: a successful activation
-    /// can still land on `.needsFullDiskAccess` or `.modelUnavailable`, and the
+    /// can still land on `.needsMessagesAccess` or `.modelUnavailable`, and the
     /// purchase confirmation must fire on every success path regardless.
     @discardableResult
     internal func activate(key: String) async -> Bool {
@@ -217,15 +217,16 @@ internal final class StowerStartupModel {
     ///
     /// The board runs as a child `StowerBoardViewModel` rooted at
     /// `.connectedPreparingBoard`; when its load surfaces a `StowerStartupFailure`
-    /// (e.g. a mid-session FDA/source error), it re-enters onboarding here. Cancels
-    /// any in-flight startup run and bumps the generation so a late startup
-    /// completion can't overwrite this, then routes the failure exactly as startup
-    /// would — FDA escalation included, via the shared `route(_:wasAwaitingFDA:)`.
+    /// (e.g. a mid-session messages-access/source error), it re-enters onboarding
+    /// here. Cancels any in-flight startup run and bumps the generation so a late
+    /// startup completion can't overwrite this, then routes the failure exactly as
+    /// startup would — messages-access escalation included, via the shared
+    /// `route(_:wasAwaitingMessagesAccess:)`.
     internal func handleBoardFailure(_ failure: StowerStartupFailure) {
         inFlight?.cancel()
         inFlight = nil
         generation += 1
-        let next = route(failure, wasAwaitingFDA: state.isAwaitingFullDiskAccess)
+        let next = route(failure, wasAwaitingMessagesAccess: state.isAwaitingMessagesAccess)
         commit(next, generation: generation)
     }
 
@@ -262,15 +263,18 @@ internal final class StowerStartupModel {
         licenseEntryIsDismissible = false
         generation += 1
         let runGeneration = generation
-        let wasAwaitingFDA = state.isAwaitingFullDiskAccess
+        let wasAwaitingMessagesAccess = state.isAwaitingMessagesAccess
         inFlight = Task { [weak self] in
-            await self?.runStartup(generation: runGeneration, wasAwaitingFDA: wasAwaitingFDA)
+            await self?.runStartup(
+                generation: runGeneration,
+                wasAwaitingMessagesAccess: wasAwaitingMessagesAccess
+            )
         }
     }
 
     /// The flow body: preflight availability, load, route — under the generation
     /// token and the minimum-display delay.
-    private func runStartup(generation: Int, wasAwaitingFDA: Bool) async {
+    private func runStartup(generation: Int, wasAwaitingMessagesAccess: Bool) async {
         hardwareCheckedThisRun = false
         commit(.checkingModel, generation: generation)
         let sleepClosure = sleep
@@ -296,7 +300,7 @@ internal final class StowerStartupModel {
             let target = try await route(
                 licenseState: licenseState,
                 generation: generation,
-                wasAwaitingFDA: wasAwaitingFDA
+                wasAwaitingMessagesAccess: wasAwaitingMessagesAccess
             )
             try await minimumDisplayDone
             // `target` is this run's TRUE terminal state (reached only after
@@ -325,12 +329,12 @@ internal final class StowerStartupModel {
     private func route(
         licenseState: StowerLicenseState,
         generation: Int,
-        wasAwaitingFDA: Bool
+        wasAwaitingMessagesAccess: Bool
     ) async throws -> StowerStartupState {
         switch licenseState {
         case .licensed, .trial:
             commit(.checkingMessages, generation: generation, emitsFunnelEvent: false)
-            return try await loadAndRoute(wasAwaitingFDA: wasAwaitingFDA)
+            return try await loadAndRoute(wasAwaitingMessagesAccess: wasAwaitingMessagesAccess)
         case .expired:
             return .needsLicense(nil)
         }
@@ -338,25 +342,25 @@ internal final class StowerStartupModel {
 
     /// Loads the board and maps a `StowerStartupFailure` to a state; lets a
     /// `CancellationError` (and any non-app error) propagate to `runStartup`.
-    private func loadAndRoute(wasAwaitingFDA: Bool) async throws -> StowerStartupState {
+    private func loadAndRoute(wasAwaitingMessagesAccess: Bool) async throws -> StowerStartupState {
         do {
             try await provider.loadDebtBoard(config: config, now: clock())
             return .connectedPreparingBoard
         } catch let failure as StowerStartupFailure {
-            return route(failure, wasAwaitingFDA: wasAwaitingFDA)
+            return route(failure, wasAwaitingMessagesAccess: wasAwaitingMessagesAccess)
         }
     }
 
     /// Maps a typed failure to the right screen (the three-outcomes routing).
     private func route(
         _ failure: StowerStartupFailure,
-        wasAwaitingFDA: Bool
+        wasAwaitingMessagesAccess: Bool
     ) -> StowerStartupState {
         switch failure {
-        case .fullDiskAccessMissing(let path):
-            return wasAwaitingFDA
-                ? .needsFullDiskAccessStillMissing(path: path)
-                : .needsFullDiskAccess(path: path)
+        case .messagesAccessMissing(let detail):
+            return wasAwaitingMessagesAccess
+                ? .needsMessagesAccessStillMissing(detail: detail)
+                : .needsMessagesAccess
         case .modelUnavailable(let reason):
             return .modelUnavailable(reason)
         case .invalidConfig, .sourceMissing, .unreadable, .invalidData, .unexpected:

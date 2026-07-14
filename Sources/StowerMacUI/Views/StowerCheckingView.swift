@@ -29,8 +29,8 @@ internal struct StowerCheckingView: View {
         // The remaining states render their own screens, never this one; the
         // arm exists only so a future state is a compile error here, not a
         // silent mislabel.
-        case .modelUnavailable, .needsLicense, .needsFullDiskAccess,
-            .needsFullDiskAccessStillMissing, .connectedPreparingBoard, .failed:
+        case .modelUnavailable, .needsLicense, .needsMessagesAccess,
+            .needsMessagesAccessStillMissing, .connectedPreparingBoard, .failed:
             return "Checking Apple Intelligence…"
         }
     }

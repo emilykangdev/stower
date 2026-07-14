@@ -37,7 +37,7 @@ internal struct StowerDebtBoardThreadOrderTests {
         )
         return StowerDebtBoardProvider(
             readerFactory: {
-                try StowerChatDatabaseReader(sourceURL: url, contactsResolver: resolver)
+                try StowerChatDatabaseReader(demoSourceURL: url, contactsResolver: resolver)
             },
             languageModelJudge: nil,
             cache: nil
