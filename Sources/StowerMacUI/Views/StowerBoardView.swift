@@ -322,7 +322,7 @@ internal struct StowerBoardView: View {
         Button {
             model.refresh()
         } label: {
-            Image("PhosphorArrowClockwise")
+            Image(Self.refreshIconName)
                 .renderingMode(.template)
                 .resizable()
                 .scaledToFit()
@@ -333,6 +333,9 @@ internal struct StowerBoardView: View {
         .help("Refresh the board")
         .accessibilityLabel("Refresh board")
     }
+
+    /// Asset-catalog name of the refresh glyph (Phosphor Icons, MIT-licensed).
+    private static let refreshIconName = "PhosphorArrowClockwise"
 
     private static let yourTurnEmpty =
         "No conversations are waiting on your reply in this window."

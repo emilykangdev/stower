@@ -45,12 +45,19 @@ internal struct StowerBoardTabBar: View {
                 }
         }
         .buttonStyle(.plain)
-        .animation(.easeInOut(duration: Self.selectionAnimationDuration), value: selection)
+        .animation(.easeInOut(duration: Self.selectionAnimationDurationSeconds), value: selection)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     /// Duration of the selected pill's slide-between-tabs animation.
-    private static let selectionAnimationDuration: Double = 0.2
+    private static let selectionAnimationDuration: Duration = .milliseconds(200)
+
+    /// `selectionAnimationDuration` as a `TimeInterval` — `Animation.easeInOut(duration:)`
+    /// predates `Duration` and only accepts the former.
+    private static var selectionAnimationDurationSeconds: TimeInterval {
+        let components = selectionAnimationDuration.components
+        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
+    }
 
     /// Horizontal gap between adjacent tab segments.
     private static let segmentSpacing: CGFloat = 2

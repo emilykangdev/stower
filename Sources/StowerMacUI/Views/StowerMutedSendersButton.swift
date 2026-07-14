@@ -33,7 +33,7 @@ internal struct StowerMutedSendersButton: View {
             onOpen()
             isPresented = true
         } label: {
-            Image("PhosphorBellSlash")
+            Image(Self.bellSlashIconName)
                 .renderingMode(.template)
                 .resizable()
                 .scaledToFit()
@@ -46,6 +46,9 @@ internal struct StowerMutedSendersButton: View {
             StowerMutedSendersPopover(senders: senders, isLoading: isLoading, onUnmute: onUnmute)
         }
     }
+
+    /// Asset-catalog name of the bell-slash glyph (Phosphor Icons, MIT-licensed).
+    private static let bellSlashIconName = "PhosphorBellSlash"
 }
 
 /// The popover body: a titled, scrollable list of muted senders with inline Unmute.

@@ -6,7 +6,7 @@ Stower's toolbar icons (`StowerMac/StowerMac/Assets.xcassets/Phosphor*.imageset/
 are vendored from [Phosphor Icons](https://github.com/phosphor-icons/core),
 used under the MIT license below.
 
-```
+```text
 MIT License
 
 Copyright (c) 2023 Phosphor Icons

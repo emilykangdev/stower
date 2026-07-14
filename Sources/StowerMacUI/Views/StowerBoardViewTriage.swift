@@ -72,7 +72,7 @@ extension StowerBoardView {
                 Button("Enter license key…", action: onEnterKey)
             }
         } label: {
-            Image("PhosphorGear")
+            Image(Self.gearIconName)
                 .renderingMode(.template)
                 .resizable()
                 .scaledToFit()
@@ -82,6 +82,9 @@ extension StowerBoardView {
         .help("License & settings")
         .accessibilityLabel("License and settings menu")
     }
+
+    /// Asset-catalog name of the gear glyph (Phosphor Icons, MIT-licensed).
+    private static let gearIconName = "PhosphorGear"
 
     /// The always-visible feedback button (JC-A): opens the in-app feedback sheet.
     ///
@@ -94,7 +97,7 @@ extension StowerBoardView {
             Label {
                 Text("Feedback")
             } icon: {
-                Image("PhosphorFlag")
+                Image(Self.flagIconName)
                     .renderingMode(.template)
                     .resizable()
                     .scaledToFit()
@@ -105,6 +108,9 @@ extension StowerBoardView {
         .help("Send feedback")
         .accessibilityLabel("Send feedback")
     }
+
+    /// Asset-catalog name of the flag glyph (Phosphor Icons, MIT-licensed).
+    private static let flagIconName = "PhosphorFlag"
 
     /// The clean at-rest row: a real Button opens the composer (so keyboard/VoiceOver
     /// activation works), a trailing hover control or the context menu dismisses, and
@@ -147,7 +153,7 @@ extension StowerBoardView {
             Button {
                 model.dismiss([row])
             } label: {
-                Image("PhosphorArchive")
+                Image(Self.archiveIconName)
                     .renderingMode(.template)
                     .resizable()
                     .scaledToFit()
@@ -158,6 +164,9 @@ extension StowerBoardView {
             .accessibilityLabel("Dismiss")
         }
     }
+
+    /// Asset-catalog name of the archive glyph (Phosphor Icons, MIT-licensed).
+    private static let archiveIconName = "PhosphorArchive"
 
     /// Batch Select mode: SwiftUI multi-select (Space toggles, Shift+Arrow range, ⌘A
     /// select-all — all free and accessible).

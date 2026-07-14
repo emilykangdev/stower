@@ -18,7 +18,7 @@ internal struct StowerCounterpartAvatar: View {
                 Text(monogram)
                     .font(.callout.weight(.semibold))
             } else {
-                Image("PhosphorUser")
+                Image(Self.personIconName)
                     .renderingMode(.template)
                     .resizable()
                     .scaledToFit()
@@ -36,4 +36,7 @@ internal struct StowerCounterpartAvatar: View {
         )
         .accessibilityHidden(true)
     }
+
+    /// Asset-catalog name of the unresolved-handle person glyph (Phosphor Icons, MIT-licensed).
+    private static let personIconName = "PhosphorUser"
 }
