@@ -15,12 +15,12 @@ internal struct StowerBoardTabBar: View {
     @Namespace private var selectionNamespace
 
     internal var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: Self.segmentSpacing) {
             ForEach(StowerBoardTab.allCases) { tab in
                 tabButton(tab)
             }
         }
-        .padding(3)
+        .padding(Self.containerInset)
         .background(.quaternary, in: Capsule())
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Board tab")
@@ -51,4 +51,10 @@ internal struct StowerBoardTabBar: View {
 
     /// Duration of the selected pill's slide-between-tabs animation.
     private static let selectionAnimationDuration: Double = 0.2
+
+    /// Horizontal gap between adjacent tab segments.
+    private static let segmentSpacing: CGFloat = 2
+
+    /// Padding between the outer capsule edge and the segments it contains.
+    private static let containerInset: CGFloat = 3
 }
