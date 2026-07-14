@@ -87,6 +87,12 @@ internal struct StowerBoardView: View {
         NavigationStack {
             content
                 .toolbar { toolbarContent }
+                .toolbar(removing: .title)
+                .toolbar {
+                    Self.withoutSharedGlassBackground {
+                        ToolbarItem(placement: .principal) { boardTitle }
+                    }
+                }
                 .overlay(alignment: .bottomTrailing) { composerOverlay }
                 .overlay(alignment: .bottom) { undoBarOverlay }
                 .safeAreaInset(edge: .top, spacing: 0) { trialBadgeOverlay }
@@ -162,15 +168,45 @@ internal struct StowerBoardView: View {
     }
 
     private var tabBar: some View {
-        Picker("Board tab", selection: $model.selectedTab) {
-            ForEach(StowerBoardTab.allCases) { tab in
-                Text(tab.title).tag(tab)
-            }
+        StowerBoardTabBar(selection: $model.selectedTab)
+            .padding(.horizontal)
+            .padding(.vertical, StowerBoardTheme.rowVerticalPadding)
+    }
+
+    /// The custom toolbar title, replacing the system window-title text
+    /// (`.toolbar(removing: .title)` on `body` suppresses the system one).
+    ///
+    /// SF Pro (`design: .default`) at a modest, toolbar-scale size.
+    private var boardTitle: some View {
+        Text(Self.displayName)
+            .font(.system(size: StowerBoardTheme.titleFontSize, weight: .medium, design: .default))
+    }
+
+    /// The bundle's display name (`CFBundleDisplayName` — "Stower" in Release,
+    /// "Stower Test" for the debug scheme), not a hardcoded literal, so a debug
+    /// build's title matches its actual Finder/Dock name instead of always
+    /// claiming to be the release app.
+    private static var displayName: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? ProcessInfo.processInfo.processName
+    }
+
+    /// Strips the automatic Liquid Glass shared-background grouping macOS 26
+    /// applies to adjacent toolbar items, so a `.buttonStyle(.plain)` icon
+    /// doesn't still sit inside a merged glass pill drawn by the toolbar itself.
+    ///
+    /// `sharedBackgroundVisibility` is macOS-26-only, while `Package.swift`
+    /// declares a macOS 15 floor for the wider `StowerMacUI` target, so this
+    /// is the one guarded call site every toolbar item routes through.
+    @ToolbarContentBuilder
+    internal static func withoutSharedGlassBackground<Content: ToolbarContent>(
+        @ToolbarContentBuilder _ content: () -> Content
+    ) -> some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            content().sharedBackgroundVisibility(.hidden)
+        } else {
+            content()
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .padding(.horizontal)
-        .padding(.vertical, StowerBoardTheme.rowVerticalPadding)
     }
 
     @ViewBuilder private var tabContent: some View {
@@ -277,14 +313,22 @@ internal struct StowerBoardView: View {
                 Text(preset.title).tag(preset)
             }
         }
+        .pickerStyle(.menu)
+        .buttonStyle(.plain)
+        .menuStyle(.borderlessButton)
     }
 
     internal var refreshButton: some View {
         Button {
             model.refresh()
         } label: {
-            Image(systemName: "arrow.clockwise")
+            Image("PhosphorArrowClockwise")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .squareFrame(StowerBoardTheme.iconGlyphSize)
         }
+        .buttonStyle(.plain)
         .disabled(model.isRefreshing)
         .help("Refresh the board")
         .accessibilityLabel("Refresh board")

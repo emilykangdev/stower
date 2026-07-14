@@ -33,8 +33,13 @@ internal struct StowerMutedSendersButton: View {
             onOpen()
             isPresented = true
         } label: {
-            Image(systemName: "bell.slash")
+            Image("PhosphorBellSlash")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .squareFrame(StowerBoardTheme.iconGlyphSize)
         }
+        .buttonStyle(.plain)
         .help("Muted senders")
         .accessibilityLabel("Muted senders")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {

@@ -6,12 +6,45 @@ internal enum StowerBoardTheme {
     /// Diameter of a row's monogram avatar.
     internal static let monogramSize: CGFloat = 36
 
+    /// Side length of the unresolved-handle person glyph inside a monogram avatar.
+    ///
+    /// The custom Phosphor icon (unlike an `Image(systemName:)`) has no automatic
+    /// text-relative scaling, so this sizes it explicitly against `monogramSize`.
+    internal static let avatarGlyphSize: CGFloat = 18
+
+    /// Side length of a Phosphor toolbar/row icon glyph.
+    ///
+    /// Custom asset-catalog vector images (unlike `Image(systemName:)`) render at
+    /// their raw intrinsic size with no automatic text-relative scaling — every
+    /// Phosphor icon needs this explicit frame or it renders enormous.
+    internal static let iconGlyphSize: CGFloat = 16
+
     /// Width of the leading day column, fixed so the ages line up into a single
     /// scannable column down the left edge regardless of digit count.
     internal static let dayColumnWidth: CGFloat = 40
 
     /// Corner radius of a thread bubble.
     internal static let bubbleCornerRadius: CGFloat = 14
+
+    /// Corner radius of the counterpart avatar's continuous-corner (squircle) shape.
+    ///
+    /// Replaces the prior plain `Circle()` — a rounded-square badge is the shape
+    /// language the approved board-header-revamp mockup (variant A2) locked in.
+    internal static let avatarCornerRadius: CGFloat = 10
+
+    /// Point size of the custom window-title text rendered in the toolbar's
+    /// `.title` placement.
+    ///
+    /// Modest and toolbar-scale on purpose — the approved mockup's first pass came
+    /// back oversized ("too large"), so this sits just above `rowSpacing`-adjacent
+    /// body text rather than at marketing-headline scale.
+    internal static let titleFontSize: CGFloat = 16
+
+    /// Horizontal padding inside a board-tab pill.
+    internal static let tabPillHorizontalPadding: CGFloat = 14
+
+    /// Vertical padding inside a board-tab pill.
+    internal static let tabPillVerticalPadding: CGFloat = 6
 
     /// Vertical spacing between a row's name and its summary line.
     internal static let rowTextSpacing: CGFloat = 2
@@ -56,4 +89,16 @@ internal enum StowerBoardTheme {
     /// legible against the window background in both light and dark mode (the
     /// system control-background gray is nearly the dark window background).
     internal static let inboundBubble = Color.gray.opacity(0.3)
+}
+
+extension View {
+    /// Applies an equal width/height frame.
+    ///
+    /// Every Phosphor icon glyph and the avatar's fallback glyph need this same
+    /// explicit square frame (unlike `Image(systemName:)`, a custom vector asset
+    /// has no automatic text-relative sizing) — shared here instead of repeating
+    /// `.frame(width: x, height: x)` at each of the six call sites.
+    internal func squareFrame(_ side: CGFloat) -> some View {
+        frame(width: side, height: side)
+    }
 }

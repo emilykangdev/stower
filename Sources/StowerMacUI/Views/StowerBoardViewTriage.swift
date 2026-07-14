@@ -13,26 +13,40 @@ extension StowerBoardView {
         // sender (mutedCount → 0) doesn't yank the popover's anchor out from under it —
         // it stays open showing the empty state until the user clicks away (C1).
         if model.mutedCount > 0 || model.isShowingMutedSenders {
-            ToolbarItem(placement: .primaryAction) { mutedSendersButton }
-        }
-        if model.selectedTab != .drafts {
-            ToolbarItem(placement: .primaryAction) { selectButton }
-            if model.isSelecting {
-                ToolbarItem(placement: .primaryAction) { dismissSelectedButton }
+            StowerBoardView.withoutSharedGlassBackground {
+                ToolbarItem(placement: .primaryAction) { mutedSendersButton }
             }
         }
-        ToolbarItem(placement: .primaryAction) { presetPicker }
-        ToolbarItem(placement: .primaryAction) { refreshButton }
+        if model.selectedTab != .drafts {
+            StowerBoardView.withoutSharedGlassBackground {
+                ToolbarItem(placement: .primaryAction) { selectButton }
+            }
+            if model.isSelecting {
+                StowerBoardView.withoutSharedGlassBackground {
+                    ToolbarItem(placement: .primaryAction) { dismissSelectedButton }
+                }
+            }
+        }
+        StowerBoardView.withoutSharedGlassBackground {
+            ToolbarItem(placement: .primaryAction) { presetPicker }
+        }
+        StowerBoardView.withoutSharedGlassBackground {
+            ToolbarItem(placement: .primaryAction) { refreshButton }
+        }
         // Always-visible feedback entry point (JC-A) — a labeled button
         // independent of the gear licenseMenu, shown for trial and licensed users
         // alike. On a narrow window it can collapse into the toolbar's ">>"
         // overflow chevron; acceptable for v0.
-        ToolbarItem(placement: .primaryAction) { feedbackButton }
+        StowerBoardView.withoutSharedGlassBackground {
+            ToolbarItem(placement: .primaryAction) { feedbackButton }
+        }
         // The permanent license home: always mounted so the Buy + Enter-key
         // paths are discoverable even after the banner is dismissed/changed.
         // Shows the trial end date + both actions only while on an active
         // trial (JC5).
-        ToolbarItem(placement: .primaryAction) { licenseMenu }
+        StowerBoardView.withoutSharedGlassBackground {
+            ToolbarItem(placement: .primaryAction) { licenseMenu }
+        }
     }
 
     /// A gear menu that surfaces Privacy plus the license status and buy/enter-key actions.
@@ -58,22 +72,36 @@ extension StowerBoardView {
                 Button("Enter license key…", action: onEnterKey)
             }
         } label: {
-            Image(systemName: "gearshape")
+            Image("PhosphorGear")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .squareFrame(StowerBoardTheme.iconGlyphSize)
         }
+        .menuStyle(.borderlessButton)
         .help("License & settings")
         .accessibilityLabel("License and settings menu")
     }
 
     /// The always-visible feedback button (JC-A): opens the in-app feedback sheet.
     ///
-    /// A labeled `exclamationmark.bubble` so it reads as "feedback," not settings —
+    /// A labeled flag glyph so it reads as "feedback," not settings —
     /// distinct from the gear `licenseMenu` (which now leads with Privacy…).
     internal var feedbackButton: some View {
         Button {
             isShowingFeedback = true
         } label: {
-            Label("Feedback", systemImage: "exclamationmark.bubble")
+            Label {
+                Text("Feedback")
+            } icon: {
+                Image("PhosphorFlag")
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .squareFrame(StowerBoardTheme.iconGlyphSize)
+            }
         }
+        .buttonStyle(.plain)
         .help("Send feedback")
         .accessibilityLabel("Send feedback")
     }
@@ -119,7 +147,11 @@ extension StowerBoardView {
             Button {
                 model.dismiss([row])
             } label: {
-                Image(systemName: "archivebox")
+                Image("PhosphorArchive")
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .squareFrame(StowerBoardTheme.iconGlyphSize)
             }
             .buttonStyle(.borderless)
             .help("Dismiss")
@@ -169,6 +201,7 @@ extension StowerBoardView {
         Button(model.isSelecting ? "Cancel" : "Select") {
             model.toggleSelectMode()
         }
+        .buttonStyle(.plain)
         .help(model.isSelecting ? "Leave Select mode" : "Select messages to dismiss")
     }
 
@@ -176,6 +209,7 @@ extension StowerBoardView {
         Button("Dismiss \(model.selection.count)") {
             model.dismissSelected()
         }
+        .buttonStyle(.plain)
         .disabled(model.selection.isEmpty)
     }
 
