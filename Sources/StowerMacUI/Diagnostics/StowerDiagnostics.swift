@@ -151,6 +151,7 @@ public enum StowerDiagnostics {
                 makeClient: hooks.makeAnalyticsClient
             )
         } else {
+            consent.setEnabled(false)
             StowerAnalytics.setEnabled(false)
             hooks.stopCrashReporting()
         }

@@ -153,6 +153,38 @@ import Testing
         #expect(StowerDiagnostics.isEnabled() == false)
     }
 
+    @Test("Off choice on fresh install persists hasMadeExplicitChoice (I5)")
+    internal func setEnabledFalse_freshInstall_persistsExplicitChoice() async {
+        StowerAnalytics.resetForTesting()
+        StowerDiagnostics.resetForTesting()
+        defer {
+            StowerAnalytics.resetForTesting()
+            StowerDiagnostics.resetForTesting()
+        }
+
+        let storage = StowerInMemoryLeaseStorage()
+        let consent = StowerDiagnosticsConsent(storage: storage)
+
+        // Fresh install — no prior setEnabled(true) call.
+        StowerDiagnostics.setEnabled(
+            false,
+            consent: consent,
+            identity: StowerDiagnosticsIdentity(storage: storage),
+            hooks: StowerDiagnostics.BackendHooks(
+                makeAnalyticsClient: { _, _, _ in },
+                startCrashReporting: { _ in },
+                stopCrashReporting: {}
+            )
+        )
+
+        let afterConsent = StowerDiagnosticsConsent(storage: storage)
+        #expect(afterConsent.isEnabled == false, "Off choice must persist isEnabled = false")
+        #expect(
+            afterConsent.hasMadeExplicitChoice == true,
+            "Off choice must persist hasExplicitChoice = true so the consent card does not reappear"
+        )
+    }
+
     @Test internal func reconcileLicenseConsent_propagates() async {
         StowerAnalytics.resetForTesting()
         StowerDiagnostics.resetForTesting()
