@@ -29,19 +29,13 @@ import Testing
         #expect(UUID(uuidString: id) != nil, "clientUser() must return a valid UUID string")
     }
 
-    @Test internal func analyticsStorageKeyNeverCollidesWithShownFlag() {
-        // The install-record blob key must differ from the disclosure "shown"
-        // flag key — both live in UserDefaults, so a collision would corrupt one.
-        let recordKey = StowerDiagnosticsStorageLocation.defaultsKey
-        let shownKey = StowerDiagnosticsConsent.shownDefaultsKey
-        #expect(recordKey != shownKey)
-    }
-
-    @Test internal func freshStorageDefaultsEnabled() {
+    @Test("identity creation does not grant diagnostics consent (I4)")
+    internal func identityCreationDoesNotGrantConsent() {
         let storage = StowerInMemoryLeaseStorage()
+        _ = StowerDiagnosticsIdentity(storage: storage).clientUser()
         let consent = StowerDiagnosticsConsent(storage: storage)
-        // Default-on for a fresh install.
-        #expect(consent.isEnabled == true)
+        #expect(consent.isEnabled == false)
+        #expect(consent.hasMadeExplicitChoice == false)
     }
 
     @Test("undecodable storage mints a fresh valid identity (I4)")

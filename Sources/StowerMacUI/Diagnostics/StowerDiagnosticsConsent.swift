@@ -43,25 +43,20 @@ internal enum StowerDiagnosticsKillLatch {
 
 /// Manages the diagnostics consent state (analytics + crash reporting).
 ///
-/// The authoritative consent value as-built is the **`enabled` field** inside the
-/// diagnostics install record in `UserDefaults`. A license-scoped `diagnostics_opt_out`
-/// reconcile hook (JC8) exists (`reconcile(licenseOptOut:)`) but is currently unwired
-/// — no production caller — so `UserDefaults` is the sole durable authority.
+/// The authoritative local consent value is the pair of fields inside the
+/// diagnostics install record in `UserDefaults`: `hasExplicitChoice` must be
+/// true and `enabled` must be true. Missing/corrupt storage, or migrated records
+/// that predate `hasExplicitChoice`, are treated as no explicit choice and
+/// therefore disabled.
 ///
 /// **Precedence: "off wins."** Diagnostics is off if EITHER the (unwired) license
 /// reconcile OR the UserDefaults cache says off. Only an explicit user action re-enables.
-///
-/// The **first-run-shown** flag for the disclosure card lives in `UserDefaults`
-/// under a separate key — not in the consent/identity install record.
 ///
 /// The record lives in `UserDefaults`, not the Keychain: it holds only an
 /// anonymous UUID and an opt-out cache (never a secret), and a Keychain read on
 /// the launch path raised a password dialog before the first window drew.
 internal struct StowerDiagnosticsConsent: Sendable {
     private let storage: any StowerLeaseStorage
-
-    /// The `UserDefaults` key for the first-run disclosure card shown-flag.
-    internal static let shownDefaultsKey = "com.stower.analytics.shown"
 
     /// Creates the consent accessor.
     ///
@@ -80,16 +75,22 @@ internal struct StowerDiagnosticsConsent: Sendable {
 
     /// Whether diagnostics collection is currently enabled.
     ///
-    /// Reads the UserDefaults cache. Returns `true` (default-on) when no record
-    /// exists yet (fresh install). This is the fast at-launch gate; the license
-    /// record is authoritative and reconciled on each check-in.
+    /// Reads the UserDefaults cache. Returns `false` when no explicit user
+    /// choice exists yet, so a fresh install performs no diagnostics collection
+    /// before consent.
     ///
     /// The in-memory `StowerDiagnosticsKillLatch` wins over the cache: once the
     /// user opts out this session, this returns `false` even if the UserDefaults
     /// write failed (so every reporter stops immediately).
     internal var isEnabled: Bool {
         if StowerDiagnosticsKillLatch.isLatchedOff { return false }
-        return readRecord()?.enabled ?? true
+        guard let record = readRecord(), record.hasExplicitChoice else { return false }
+        return record.enabled
+    }
+
+    /// Whether the user has explicitly accepted or declined diagnostics.
+    internal var hasMadeExplicitChoice: Bool {
+        readRecord()?.hasExplicitChoice ?? false
     }
 
     /// Enables or disables diagnostics collection.
@@ -105,8 +106,14 @@ internal struct StowerDiagnosticsConsent: Sendable {
     @discardableResult
     internal func setEnabled(_ enabled: Bool) -> Bool {
         var record =
-            readRecord() ?? DiagnosticsInstallRecord(id: UUID().uuidString, enabled: true)
+            readRecord()
+            ?? DiagnosticsInstallRecord(
+                id: UUID().uuidString,
+                enabled: false,
+                hasExplicitChoice: false
+            )
         record.enabled = enabled
+        record.hasExplicitChoice = true
         return writeRecord(record)
     }
 
@@ -125,23 +132,17 @@ internal struct StowerDiagnosticsConsent: Sendable {
         guard licenseOptOut else { return }
         // License says off — ensure the local cache reflects it.
         var record =
-            readRecord() ?? DiagnosticsInstallRecord(id: UUID().uuidString, enabled: true)
-        if record.enabled {
+            readRecord()
+            ?? DiagnosticsInstallRecord(
+                id: UUID().uuidString,
+                enabled: false,
+                hasExplicitChoice: false
+            )
+        if record.enabled || !record.hasExplicitChoice {
             record.enabled = false
+            record.hasExplicitChoice = true
             writeRecord(record)
         }
-    }
-
-    // MARK: — First-run shown flag
-
-    /// Whether the diagnostics disclosure card has already been shown this install.
-    internal var hasShownDisclosure: Bool {
-        UserDefaults.standard.bool(forKey: Self.shownDefaultsKey)
-    }
-
-    /// Marks the disclosure card as shown so it never appears again.
-    internal func markDisclosureShown() {
-        UserDefaults.standard.set(true, forKey: Self.shownDefaultsKey)
     }
 
     // MARK: — Private helpers
@@ -150,7 +151,7 @@ internal struct StowerDiagnosticsConsent: Sendable {
         guard let data = storage.readData(),
             let record = try? JSONDecoder().decode(DiagnosticsInstallRecord.self, from: data)
         else {
-            // Missing OR undecodable — treat as a fresh install (default-on).
+            // Missing OR undecodable — treat as no explicit choice.
             return nil
         }
         return record

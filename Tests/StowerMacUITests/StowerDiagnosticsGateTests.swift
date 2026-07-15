@@ -9,7 +9,11 @@ import Testing
 
     @Test internal func disabledConsent_neitherBackendStarts() async {
         StowerAnalytics.resetForTesting()
-        defer { StowerAnalytics.resetForTesting() }
+        StowerDiagnostics.resetForTesting()
+        defer {
+            StowerAnalytics.resetForTesting()
+            StowerDiagnostics.resetForTesting()
+        }
 
         let storage = StowerInMemoryLeaseStorage()
         let consent = StowerDiagnosticsConsent(storage: storage)
@@ -22,7 +26,11 @@ import Testing
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
             identity: StowerDiagnosticsIdentity(storage: storage),
-            makeAnalyticsClient: { _, _, _ in analyticsClientCalled = true }
+            hooks: StowerDiagnostics.BackendHooks(
+                makeAnalyticsClient: { _, _, _ in analyticsClientCalled = true },
+                startCrashReporting: { _ in Issue.record("crash reporting must not start") },
+                stopCrashReporting: {}
+            )
         )
         // The crash SDK gate is verified separately in StowerCrashReportingTests via
         // the injectable startSDK seam. We verify the analytics side (the only
@@ -37,48 +45,132 @@ import Testing
 
     @Test internal func enabledConsent_analyticsBackendStarts() async {
         StowerAnalytics.resetForTesting()
-        defer { StowerAnalytics.resetForTesting() }
+        StowerDiagnostics.resetForTesting()
+        defer {
+            StowerAnalytics.resetForTesting()
+            StowerDiagnostics.resetForTesting()
+        }
 
         let storage = StowerInMemoryLeaseStorage()
-        // Fresh storage = default-on.
+        StowerDiagnosticsConsent(storage: storage).setEnabled(true)
         var analyticsClientCalled = false
+        var crashStartCalled = false
 
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
             identity: StowerDiagnosticsIdentity(storage: storage),
-            makeAnalyticsClient: { _, _, _ in analyticsClientCalled = true }
+            hooks: StowerDiagnostics.BackendHooks(
+                makeAnalyticsClient: { _, _, _ in analyticsClientCalled = true },
+                startCrashReporting: { _ in crashStartCalled = true },
+                stopCrashReporting: {}
+            )
         )
 
+        #expect(crashStartCalled == true, "crash backend must start when consent is on")
         #expect(analyticsClientCalled == true, "analytics backend must start when consent is on")
         #expect(StowerDiagnostics.isEnabled() == true)
     }
 
-    @Test internal func setEnabled_false_disablesDiagnostics() async {
+    @Test("fresh launch trace is empty until explicit consent, then starts Sentry first (I4)")
+    internal func freshLaunchTrace_startsNothingBeforeConsent() async {
         StowerAnalytics.resetForTesting()
-        defer { StowerAnalytics.resetForTesting() }
+        StowerDiagnostics.resetForTesting()
+        defer {
+            StowerAnalytics.resetForTesting()
+            StowerDiagnostics.resetForTesting()
+        }
 
         let storage = StowerInMemoryLeaseStorage()
+        let consent = StowerDiagnosticsConsent(storage: storage)
+        var trace: [String] = []
+
+        StowerDiagnostics.initialize(
+            consent: consent,
+            identity: StowerDiagnosticsIdentity(storage: storage),
+            hooks: StowerDiagnostics.BackendHooks(
+                makeAnalyticsClient: { _, _, _ in trace.append("telemetry-start") },
+                startCrashReporting: { _ in trace.append("sentry-start") },
+                stopCrashReporting: { trace.append("sentry-stop") }
+            )
+        )
+        StowerAnalytics.reportAppLaunched()
+
+        #expect(
+            trace.isEmpty,
+            "fresh launch trace must be empty before explicit consent"
+        )
+
+        StowerDiagnostics.setEnabled(
+            true,
+            consent: consent,
+            identity: StowerDiagnosticsIdentity(storage: storage),
+            hooks: StowerDiagnostics.BackendHooks(
+                makeAnalyticsClient: { _, _, _ in trace.append("telemetry-start") },
+                startCrashReporting: { startConsent in
+                    if startConsent.isEnabled {
+                        trace.append("sentry-start")
+                    }
+                },
+                stopCrashReporting: { trace.append("sentry-stop") }
+            )
+        )
+
+        #expect(trace == ["sentry-start", "telemetry-start"])
+    }
+
+    @Test internal func setEnabled_false_disablesDiagnostics() async {
+        StowerAnalytics.resetForTesting()
+        StowerDiagnostics.resetForTesting()
+        defer {
+            StowerAnalytics.resetForTesting()
+            StowerDiagnostics.resetForTesting()
+        }
+
+        let storage = StowerInMemoryLeaseStorage()
+        StowerDiagnosticsConsent(storage: storage).setEnabled(true)
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
             identity: StowerDiagnosticsIdentity(storage: storage),
-            makeAnalyticsClient: { _, _, _ in }
+            hooks: StowerDiagnostics.BackendHooks(
+                makeAnalyticsClient: { _, _, _ in },
+                startCrashReporting: { _ in },
+                stopCrashReporting: {}
+            )
         )
         #expect(StowerDiagnostics.isEnabled() == true)
 
-        StowerDiagnostics.setEnabled(false)
+        StowerDiagnostics.setEnabled(
+            false,
+            consent: StowerDiagnosticsConsent(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage),
+            hooks: StowerDiagnostics.BackendHooks(
+                makeAnalyticsClient: { _, _, _ in },
+                startCrashReporting: { _ in },
+                stopCrashReporting: {}
+            )
+        )
 
         #expect(StowerDiagnostics.isEnabled() == false)
     }
 
     @Test internal func reconcileLicenseConsent_propagates() async {
         StowerAnalytics.resetForTesting()
-        defer { StowerAnalytics.resetForTesting() }
+        StowerDiagnostics.resetForTesting()
+        defer {
+            StowerAnalytics.resetForTesting()
+            StowerDiagnostics.resetForTesting()
+        }
 
         let storage = StowerInMemoryLeaseStorage()
+        StowerDiagnosticsConsent(storage: storage).setEnabled(true)
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
             identity: StowerDiagnosticsIdentity(storage: storage),
-            makeAnalyticsClient: { _, _, _ in }
+            hooks: StowerDiagnostics.BackendHooks(
+                makeAnalyticsClient: { _, _, _ in },
+                startCrashReporting: { _ in },
+                stopCrashReporting: {}
+            )
         )
         #expect(StowerDiagnostics.isEnabled() == true)
 
@@ -92,13 +184,22 @@ import Testing
         // Verifies that reconcileLicenseConsent(licenseOptOut: true) invokes the
         // crash-reporting stop closure (the Sentry mid-session close path).
         StowerAnalytics.resetForTesting()
-        defer { StowerAnalytics.resetForTesting() }
+        StowerDiagnostics.resetForTesting()
+        defer {
+            StowerAnalytics.resetForTesting()
+            StowerDiagnostics.resetForTesting()
+        }
 
         let storage = StowerInMemoryLeaseStorage()
+        StowerDiagnosticsConsent(storage: storage).setEnabled(true)
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
             identity: StowerDiagnosticsIdentity(storage: storage),
-            makeAnalyticsClient: { _, _, _ in }
+            hooks: StowerDiagnostics.BackendHooks(
+                makeAnalyticsClient: { _, _, _ in },
+                startCrashReporting: { _ in },
+                stopCrashReporting: {}
+            )
         )
 
         var stopCalled = false
@@ -114,13 +215,22 @@ import Testing
         // Verifies that reconcileLicenseConsent(licenseOptOut: false) does NOT
         // invoke the crash-reporting stop closure (opt-in / no change path).
         StowerAnalytics.resetForTesting()
-        defer { StowerAnalytics.resetForTesting() }
+        StowerDiagnostics.resetForTesting()
+        defer {
+            StowerAnalytics.resetForTesting()
+            StowerDiagnostics.resetForTesting()
+        }
 
         let storage = StowerInMemoryLeaseStorage()
+        StowerDiagnosticsConsent(storage: storage).setEnabled(true)
         StowerDiagnostics.initialize(
             consent: StowerDiagnosticsConsent(storage: storage),
             identity: StowerDiagnosticsIdentity(storage: storage),
-            makeAnalyticsClient: { _, _, _ in }
+            hooks: StowerDiagnostics.BackendHooks(
+                makeAnalyticsClient: { _, _, _ in },
+                startCrashReporting: { _ in },
+                stopCrashReporting: {}
+            )
         )
 
         var stopCalled = false

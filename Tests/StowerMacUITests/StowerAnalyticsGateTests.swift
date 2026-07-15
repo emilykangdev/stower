@@ -35,12 +35,34 @@ import Testing
         StowerAnalytics.report(.appLaunched)
     }
 
+    @Test("fresh install skips TelemetryDeck init and emits nothing before consent (I4)")
+    internal func freshInstallSkipsInitAndEmitsNothing() async {
+        StowerAnalytics.resetForTesting()
+        defer { StowerAnalytics.resetForTesting() }
+
+        let storage = StowerInMemoryLeaseStorage()
+        var makeClientCalled = false
+
+        StowerAnalytics.startBackend(
+            consent: StowerDiagnosticsConsent(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage),
+            makeClient: { _, _, _ in makeClientCalled = true }
+        )
+
+        #expect(
+            makeClientCalled == false,
+            "makeClient must not be called before explicit consent"
+        )
+        #expect(StowerAnalytics.isEnabled() == false)
+        StowerAnalytics.report(.appLaunched)
+    }
+
     @Test internal func enabledConsentCallsMakeClient() async {
         StowerAnalytics.resetForTesting()
         defer { StowerAnalytics.resetForTesting() }
 
         let storage = StowerInMemoryLeaseStorage()
-        // Fresh storage = default-on.
+        StowerDiagnosticsConsent(storage: storage).setEnabled(true)
         var makeClientCalled = false
 
         StowerAnalytics.startBackend(
@@ -81,7 +103,7 @@ import Testing
 
         let storage = StowerInMemoryLeaseStorage()
         let consent = StowerDiagnosticsConsent(storage: storage)
-        // Fresh storage = enabled cache (default-on).
+        consent.setEnabled(true)
         #expect(consent.isEnabled == true)
 
         StowerDiagnosticsKillLatch.latchOff()

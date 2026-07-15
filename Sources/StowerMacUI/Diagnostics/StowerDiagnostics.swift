@@ -4,9 +4,10 @@ import Foundation
 /// diagnostics backends (crash reporting + analytics).
 ///
 /// `initialize()` is the ONLY call the app target makes to start both backends.
-/// It reads consent once, and when enabled starts them in the required order
-/// (JC3): Sentry crash reporting FIRST (earliest crash coverage), then
-/// TelemetryDeck analytics. When disabled, neither backend starts.
+/// It reads consent once, and when explicitly enabled starts them in the
+/// required order (JC3): Sentry crash reporting FIRST (earliest crash coverage),
+/// then TelemetryDeck analytics. Before an explicit choice, neither backend
+/// starts.
 ///
 /// This facade also exposes consent passthrough — `isEnabled()`, `setEnabled`,
 /// and `reconcileLicenseConsent` — so the app target and UI never need to name
@@ -17,6 +18,28 @@ import Foundation
 /// stays on `StowerAnalytics`; this facade does not duplicate it).
 @MainActor
 public enum StowerDiagnostics {
+    private static var didStartCrashReporting = false
+
+    /// Test seam for diagnostics backend side effects.
+    @MainActor
+    internal struct BackendHooks {
+        internal let makeAnalyticsClient: (String, String, String) -> Void
+        internal let startCrashReporting: (StowerDiagnosticsConsent) -> Void
+        internal let stopCrashReporting: () -> Void
+
+        internal static let live = BackendHooks(
+            makeAnalyticsClient: { appID, salt, userID in
+                StowerTelemetryDeckReporter.initializeSDK(appID: appID, salt: salt)
+                StowerTelemetryDeckReporter.setDefaultUser(userID)
+            },
+            startCrashReporting: { consent in
+                StowerCrashReporting.start(consent: consent)
+            },
+            stopCrashReporting: {
+                StowerCrashReporting.stop()
+            }
+        )
+    }
 
     // MARK: — Initialization
 
@@ -33,7 +56,8 @@ public enum StowerDiagnostics {
     public static func initialize() {
         initialize(
             consent: StowerDiagnosticsConsent(),
-            identity: StowerDiagnosticsIdentity()
+            identity: StowerDiagnosticsIdentity(),
+            hooks: .live
         )
     }
 
@@ -44,16 +68,14 @@ public enum StowerDiagnostics {
     ///     inject a fake for tests).
     ///   - identity: Shared install-identity accessor (real UserDefaults-backed in
     ///     production; inject a fake for tests).
-    ///   - makeAnalyticsClient: Injectable TelemetryDeck init closure for tests.
-    ///     Tests inject a spy to verify zero calls when consent is off.
+    ///   - hooks: Injectable backend side-effect closures for tests. Tests inject
+    ///     spies to verify zero calls before consent and crash-first order after
+    ///     consent.
     @MainActor
     internal static func initialize(
         consent: StowerDiagnosticsConsent,
         identity: StowerDiagnosticsIdentity,
-        makeAnalyticsClient: (String, String, String) -> Void = { appID, salt, userID in
-            StowerTelemetryDeckReporter.initializeSDK(appID: appID, salt: salt)
-            StowerTelemetryDeckReporter.setDefaultUser(userID)
-        }
+        hooks: BackendHooks = .live
     ) {
         guard consent.isEnabled else {
             // One gate: both backends stay off. Build a no-op analytics shared
@@ -67,13 +89,13 @@ public enum StowerDiagnostics {
         }
 
         // Sentry FIRST — gives crash coverage as early as possible (JC3).
-        StowerCrashReporting.start(consent: consent)
+        startCrashReportingIfNeeded(consent: consent, hooks: hooks)
 
         // Then TelemetryDeck analytics backend.
         StowerAnalytics.startBackend(
             consent: consent,
             identity: identity,
-            makeClient: makeAnalyticsClient
+            makeClient: hooks.makeAnalyticsClient
         )
     }
 
@@ -94,20 +116,53 @@ public enum StowerDiagnostics {
     /// "never started for an opted-out user at launch" (JC3); mid-session close
     /// is defence-in-depth so crashes after the toggle are not collected.
     ///
-    /// **Re-enable note:** re-enabling (`enabled=true`) restores the analytics kill
-    /// latch so future TelemetryDeck signals fire, but does NOT restart the Sentry
-    /// crash handler mid-session — `SentrySDK.start` is a one-shot per process and
-    /// re-calling after `close()` is unsupported. Crash coverage resumes on the next
-    /// app launch (where `initialize()` starts Sentry when consent is on).
+    /// Enabling after a diagnostics-dark launch starts Sentry and TelemetryDeck
+    /// from that user action. If the user disables and then re-enables in the
+    /// same process, Sentry is not restarted after `close()` because the SDK start
+    /// path is one-shot per process. TelemetryDeck reuses the session-level SDK
+    /// state tracked in `StowerAnalytics`.
     ///
     /// The caller (Settings toggle / disclosure card) is responsible for pushing
     /// the change to the license record (`diagnostics_opt_out`) via the licensing
     /// workstream.
     public static func setEnabled(_ enabled: Bool) {
-        StowerAnalytics.setEnabled(enabled)
-        if !enabled {
-            StowerCrashReporting.stop()
+        setEnabled(
+            enabled,
+            consent: StowerDiagnosticsConsent(),
+            identity: StowerDiagnosticsIdentity(),
+            hooks: .live
+        )
+    }
+
+    /// Injectable form of `setEnabled(_:)` for tests.
+    internal static func setEnabled(
+        _ enabled: Bool,
+        consent: StowerDiagnosticsConsent,
+        identity: StowerDiagnosticsIdentity,
+        hooks: BackendHooks
+    ) {
+        if enabled {
+            consent.setEnabled(true)
+            StowerDiagnosticsKillLatch.reset()
+            startCrashReportingIfNeeded(consent: consent, hooks: hooks)
+            StowerAnalytics.startBackend(
+                consent: consent,
+                identity: identity,
+                makeClient: hooks.makeAnalyticsClient
+            )
+        } else {
+            StowerAnalytics.setEnabled(false)
+            hooks.stopCrashReporting()
         }
+    }
+
+    private static func startCrashReportingIfNeeded(
+        consent: StowerDiagnosticsConsent,
+        hooks: BackendHooks
+    ) {
+        guard !didStartCrashReporting else { return }
+        hooks.startCrashReporting(consent)
+        didStartCrashReporting = true
     }
 
     /// Reconciles the local UserDefaults cache against the license record's opt-out
@@ -141,6 +196,11 @@ public enum StowerDiagnostics {
         }
     }
 
+    /// Resets facade-only process state for tests.
+    internal static func resetForTesting() {
+        didStartCrashReporting = false
+    }
+
     #if DEBUG
         /// Triggers an immediate trap so the end-to-end crash-reporting pipeline can
         /// be verified by hand.
@@ -149,9 +209,10 @@ public enum StowerDiagnostics {
         /// handler (installed by `initialize()` when consent is on) catches the trap,
         /// writes the report to disk in the dying process, and uploads it on the NEXT
         /// launch (A2) — so relaunch Stower after using this, then check the Sentry EU
-        /// dashboard. Requires consent ON at launch (default-on); with consent off no
-        /// handler is installed and nothing is captured. The reason is a static string
-        /// (no user data — 6n) and the scrubber rebuilds `exception.value` content-free.
+        /// dashboard. Requires explicit consent before launch, or an opt-in during the
+        /// current launch before forcing the crash; with consent off no handler is
+        /// installed and nothing is captured. The reason is a static string (no user
+        /// data — 6n) and the scrubber rebuilds `exception.value` content-free.
         public static func debugForceCrash() {
             fatalError("Stower DEBUG forced crash — Sentry pipeline test")
         }

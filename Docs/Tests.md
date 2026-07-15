@@ -25,8 +25,8 @@ is a short identifier only — never the behavior description.
 @Test("a stale load's late result is discarded, not applied (I13)")
 func staleLoadDiscarded() { ... }
 
-@Test("undecodable storage defaults diagnostics on")
-func undecodableStorageDefaultsOn() { ... }
+@Test("undecodable storage keeps diagnostics off")
+func undecodableStorageDefaultsOff() { ... }
 
 @Suite("StowerDebtBoardProvider") struct StowerDebtBoardProviderTests { ... }
 ```
@@ -34,7 +34,7 @@ func undecodableStorageDefaultsOn() { ... }
 ```swift
 // ❌ do not: a behavioral assertion crammed into a bare camelCase name,
 //    no display string. Unreadable in source and in test output.
-@Test func analyticsStorageKeyNeverCollidesWithShownFlag() { ... }
+@Test func freshInstallRequiresChoice() { ... }
 
 // ❌ do not: XCTest-style `test` prefix.
 @Test func testFreshInstallDefaultsOn() { ... }
