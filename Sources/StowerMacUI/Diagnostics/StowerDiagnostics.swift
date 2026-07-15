@@ -142,7 +142,7 @@ public enum StowerDiagnostics {
         hooks: BackendHooks
     ) {
         if enabled {
-            consent.setEnabled(true)
+            guard consent.setEnabled(true) else { return }
             StowerDiagnosticsKillLatch.reset()
             startCrashReportingIfNeeded(consent: consent, hooks: hooks)
             StowerAnalytics.startBackend(

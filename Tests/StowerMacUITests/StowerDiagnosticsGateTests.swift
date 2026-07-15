@@ -3,6 +3,16 @@ import Testing
 
 @testable import StowerMacUI
 
+/// A `StowerLeaseStorage` whose `write` always fails, to simulate a UserDefaults
+/// persistence error in consent tests.
+internal final class FailingWriteLeaseStorage: StowerLeaseStorage, @unchecked Sendable {
+    internal init() {}
+    internal func readData() -> Data? { nil }
+    @discardableResult
+    internal func write(_ data: Data) -> Bool { false }
+    internal func delete() {}
+}
+
 /// Tests the `StowerDiagnostics` umbrella facade: disabled consent → neither
 /// backend starts; one consent switch governs both backends (A6/JC3).
 @Suite(.serialized) @MainActor internal struct StowerDiagnosticsGateTests {
@@ -272,5 +282,39 @@ import Testing
         )
 
         #expect(stopCalled == false, "stop must not be called when licenseOptOut is false")
+    }
+
+    @Test("failed persist on opt-in does not consume the crash-reporting one-shot latch (I6)")
+    internal func setEnabled_true_failedWrite_keepsCrashLatch() async {
+        StowerAnalytics.resetForTesting()
+        StowerDiagnostics.resetForTesting()
+        defer { StowerAnalytics.resetForTesting(); StowerDiagnostics.resetForTesting() }
+
+        var crashStartCalled = false
+        let hooks = StowerDiagnostics.BackendHooks(
+            makeAnalyticsClient: { _, _, _ in },
+            startCrashReporting: { _ in crashStartCalled = true },
+            stopCrashReporting: {}
+        )
+
+        // Phase 1: failing write → guard returns early, latch unconsumed.
+        let failing = FailingWriteLeaseStorage()
+        StowerDiagnostics.setEnabled(
+            true,
+            consent: StowerDiagnosticsConsent(storage: failing),
+            identity: StowerDiagnosticsIdentity(storage: failing),
+            hooks: hooks
+        )
+        #expect(crashStartCalled == false, "crash start must not fire when persist fails")
+
+        // Phase 2: working write → latch still available, crash starts.
+        let storage = StowerInMemoryLeaseStorage()
+        StowerDiagnostics.setEnabled(
+            true,
+            consent: StowerDiagnosticsConsent(storage: storage),
+            identity: StowerDiagnosticsIdentity(storage: storage),
+            hooks: hooks
+        )
+        #expect(crashStartCalled == true, "crash start must fire on later successful opt-in")
     }
 }
