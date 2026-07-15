@@ -18,10 +18,17 @@ entry point that starts both. Crash reporting attaches **no** identity to report
 
 ## Launch order (Sentry FIRST)
 
-`StowerDiagnostics.initialize()` reads consent once. When enabled it starts Sentry
-crash reporting FIRST — `StowerCrashReporting.start(consent:)` — for the earliest
-possible crash coverage (JC3), then starts the TelemetryDeck analytics backend.
-When consent is off, neither backend starts: no `SentrySDK.start`, no crash handler.
+`StowerDiagnostics.initialize()` reads consent once. When explicitly enabled it
+starts Sentry crash reporting FIRST — `StowerCrashReporting.start(consent:)` — for
+the earliest possible crash coverage (JC3), then starts the TelemetryDeck analytics
+backend. On a fresh install, corrupt record, migrated default-on record, or explicit
+opt-out, neither backend starts: no `SentrySDK.start`, no crash handler.
+
+If the user chooses On after a diagnostics-dark launch, `StowerDiagnostics.setEnabled(true)`
+writes the explicit choice, starts Sentry first, then starts TelemetryDeck. The
+launch trace test `freshLaunchTrace_startsNothingBeforeConsent` verifies the
+pre-consent trace is empty and the post-consent order is `sentry-start`,
+`telemetry-start`.
 
 ## The only `SentrySDK.start` site
 
@@ -59,6 +66,8 @@ started). The primary guarantee remains **"never started for an opted-out user a
 launch"** (JC3); `close()` is defence-in-depth so crashes after a mid-session toggle
 are not collected.
 
+- User opt-in after a diagnostics-dark launch: `StowerDiagnostics.setEnabled(true)` →
+  `StowerCrashReporting.start(consent:)` before TelemetryDeck starts.
 - Mid-session opt-out: `StowerDiagnostics.setEnabled(false)` → `StowerCrashReporting.stop()`.
 - License opt-out: `StowerDiagnostics.reconcileLicenseConsent(licenseOptOut:)` →
   `StowerCrashReporting.stop()` when called with `licenseOptOut = true`. "Off wins"
@@ -68,8 +77,9 @@ are not collected.
   §Consent).
 
 **Re-enable note:** `SentrySDK.start` is one-shot per process and cannot be re-called
-after `close()`. Re-enabling mid-session restores analytics but does NOT restart the
-crash handler; crash coverage resumes on the next app launch.
+after `close()`. First opt-in after a diagnostics-dark launch starts the crash
+handler. Disabling and then re-enabling later in the same process restores analytics;
+crash coverage resumes on the next app launch if the SDK was already closed.
 
 ## The scrubber (`beforeSend` last guardrail)
 

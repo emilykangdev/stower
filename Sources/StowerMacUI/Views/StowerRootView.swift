@@ -62,8 +62,8 @@ public struct StowerRootView: View {
 
     /// Whether the analytics disclosure card is currently showing.
     ///
-    /// Set to `true` after ~60 seconds of foreground board time, once, if the
-    /// card has never been shown. Cleared when the user makes a choice.
+    /// Set to `true` after ~60 seconds of foreground board time, if the user has
+    /// not made a diagnostics choice. Cleared when the user makes a choice.
     @State internal var showConsentCard = false
     @State internal var consentCardTask: Task<Void, Never>?
 
@@ -273,7 +273,6 @@ public struct StowerRootView: View {
                 if showConsentCard {
                     StowerAnalyticsConsentCard { enabled in
                         StowerDiagnostics.setEnabled(enabled)
-                        consent.markDisclosureShown()
                         showConsentCard = false
                     }
                     .transition(.move(edge: .bottom).combined(with: .opacity))

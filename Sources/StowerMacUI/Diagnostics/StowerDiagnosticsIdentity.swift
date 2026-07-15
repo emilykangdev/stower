@@ -4,8 +4,7 @@ import Foundation
 ///
 /// A case-less namespace because the key has no single natural home type: both
 /// `StowerDiagnosticsIdentity` and `StowerDiagnosticsConsent` read/write the same
-/// one `UserDefaults` blob. The key is distinct from the disclosure "shown" flag
-/// (`StowerDiagnosticsConsent.shownDefaultsKey`) so the two never collide.
+/// one `UserDefaults` blob.
 internal enum StowerDiagnosticsStorageLocation {
     /// The `UserDefaults` key holding the diagnostics install record blob.
     internal static let defaultsKey = "com.stower.analytics.install-record"
@@ -16,7 +15,7 @@ internal enum StowerDiagnosticsStorageLocation {
 /// `clientUser()` returns the same random UUID across relaunches and across
 /// uninstall→reinstall (`UserDefaults` persists in `~/Library/Preferences`, so
 /// it survives). On a fresh install with no stored record it mints a new random
-/// UUID and persists it.
+/// UUID and persists it without granting diagnostics consent.
 ///
 /// The identity is NOT hardware-derived, NOT IDFV/IDFA — it is a plain random
 /// `UUID()`, app-scoped, with no cross-device or cross-app meaning (JC4).
@@ -47,9 +46,14 @@ internal struct StowerDiagnosticsIdentity: Sendable {
         if let existing = storedRecord() {
             return existing.id
         }
-        // Fresh install or missing record — mint a new UUID and store it.
+        // Fresh install or missing record — mint a new UUID and store it, but
+        // do not count identity creation as diagnostics consent.
         let fresh = UUID().uuidString
-        let record = DiagnosticsInstallRecord(id: fresh, enabled: true)
+        let record = DiagnosticsInstallRecord(
+            id: fresh,
+            enabled: false,
+            hasExplicitChoice: false
+        )
         if let data = try? JSONEncoder().encode(record) {
             storage.write(data)
         }
@@ -71,16 +75,42 @@ internal struct StowerDiagnosticsIdentity: Sendable {
 /// The diagnostics install record persisted in `UserDefaults`.
 ///
 /// Both `StowerDiagnosticsIdentity` and `StowerDiagnosticsConsent` read/write
-/// the same one `UserDefaults` blob so the UUID and the cached opt-out are never
+/// the same one `UserDefaults` blob so the UUID and the cached consent are never
 /// stored in separate places that could desync.
 internal struct DiagnosticsInstallRecord: Codable, Sendable {
     /// The random per-install UUID (not hardware/IDFV/IDFA).
     internal var id: String
 
-    /// Whether the user has opted in (`true` = on, default).
-    ///
-    /// This is the durable consent value as-built; "off wins". The license-scoped
-    /// `diagnostics_opt_out` reconcile hook (JC8) exists but is currently unwired
-    /// (no production caller), so this `UserDefaults` field is the authority.
+    /// Whether diagnostics should run after an explicit choice.
     internal var enabled: Bool
+
+    /// Whether `enabled` came from an explicit user or license choice.
+    ///
+    /// Missing on migrated records from the old default-on build, so decoding
+    /// defaults it to `false` and launch stays diagnostics-dark until the user
+    /// chooses.
+    internal var hasExplicitChoice: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case enabled
+        case hasExplicitChoice
+    }
+
+    internal init(id: String, enabled: Bool, hasExplicitChoice: Bool) {
+        self.id = id
+        self.enabled = enabled
+        self.hasExplicitChoice = hasExplicitChoice
+    }
+
+    internal init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        enabled = try container.decode(Bool.self, forKey: .enabled)
+        hasExplicitChoice =
+            try container.decodeIfPresent(
+                Bool.self,
+                forKey: .hasExplicitChoice
+            ) ?? false
+    }
 }

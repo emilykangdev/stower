@@ -32,10 +32,27 @@ import Testing
         #expect(startSDKCalled == false, "SentrySDK.start must not be called when consent is off")
     }
 
+    /// Fresh install ⇒ the injectable startSDK closure must never be called.
+    @Test("fresh install does not call SentrySDK.start before consent (I4)")
+    internal func noExplicitConsent_startSDKNotCalled() {
+        let storage = StowerInMemoryLeaseStorage()
+
+        var startSDKCalled = false
+        StowerCrashReporting.start(
+            consent: StowerDiagnosticsConsent(storage: storage),
+            startSDK: { _ in startSDKCalled = true }
+        )
+
+        #expect(
+            startSDKCalled == false,
+            "SentrySDK.start must not be called before explicit consent"
+        )
+    }
+
     /// Consent on ⇒ the injectable startSDK closure is called exactly once.
     @Test internal func enabledConsent_startSDKCalledOnce() {
         let storage = StowerInMemoryLeaseStorage()
-        // Fresh storage = default-on.
+        StowerDiagnosticsConsent(storage: storage).setEnabled(true)
         var startSDKCallCount = 0
         StowerCrashReporting.start(
             consent: StowerDiagnosticsConsent(storage: storage),
@@ -62,7 +79,7 @@ import Testing
     /// splitting would hide the options-regression surface area.
     @Test internal func hardenedOptions_regression() {
         let storage = StowerInMemoryLeaseStorage()
-        // Fresh storage = default-on.
+        StowerDiagnosticsConsent(storage: storage).setEnabled(true)
         var capturedOptions: Options?
 
         StowerCrashReporting.start(

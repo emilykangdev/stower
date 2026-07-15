@@ -74,19 +74,16 @@ there's less to trust in the first place:
   - **TelemetryDeck** — anonymous funnel analytics (e.g. "did the app
     launch and reach the board"), tied to a random per-install ID that is
     hashed again before it leaves the device and carries no message
-    content. **On by default.** The one-click opt-out lives in Settings →
-    Privacy, and a disclosure card also surfaces in-app — but only after
-    about a minute of use, so a few of these anonymous events can fire
-    before you've seen or made that choice. Turning it off stops all
-    future events immediately; it does not retroactively delete what
-    already sent.
-  - **Sentry** — crash reports only, not general telemetry. Also on by
-    default, behind the same consent gate as TelemetryDeck above (so the
-    same "may fire briefly before you've seen the opt-out" caveat
-    applies). Attaches no identity, and every crash report is scrubbed
-    before it's sent — message content, contact info, and file paths that
-    could identify you are stripped or the whole report is dropped rather
-    than sent partially redacted (see `Docs/CrashReporting.md`).
+    content. **Off until you choose.** The opt-in/opt-out control lives in
+    Settings → Privacy, and a consent card also surfaces in-app after about
+    a minute of board use. No TelemetryDeck SDK init or analytics signal is
+    emitted before that explicit choice.
+  - **Sentry** — crash reports only, not general telemetry. Also off until
+    you choose, behind the same consent gate as TelemetryDeck above. Attaches
+    no identity, and every crash report is scrubbed before it's sent —
+    message content, contact info, and file paths that could identify you
+    are stripped or the whole report is dropped rather than sent partially
+    redacted (see `Docs/CrashReporting.md`).
   - **A feedback relay**, only if you explicitly open the in-app feedback
     form and submit something — this one is not default-on. Along with
     the message you type (and an email address, only if you choose to add

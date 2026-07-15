@@ -10,6 +10,17 @@ scheme or architecture that didn't exist yet at the time.
 
 ## Status
 
+- 2026-07-15: **Diagnostics consent gating — Sentry and TelemetryDeck stay off until explicit choice (branch `polly/stower-consent-gating`).**
+  `DiagnosticsInstallRecord` now stores `hasExplicitChoice`; `StowerDiagnosticsConsent.isEnabled`
+  returns false for fresh installs, corrupt storage, and migrated pre-`hasExplicitChoice` records
+  even if they contain the old `enabled: true` default. `StowerDiagnostics.initialize()` still
+  builds a no-op analytics backend so report calls are safe, but injected launch-trace tests verify
+  no `SentrySDK.start`, `TelemetryDeck.initialize`, or `app_launched` emission before consent.
+  The delayed `StowerAnalyticsConsentCard` remains after ~60 seconds of foreground board time, but
+  now records consent only when the user taps On or Off; it no longer marks a disclosure as shown
+  before choice. Explicit On starts Sentry first, then TelemetryDeck, preserving the crash-first
+  ordering after consent. Docs updated in `Docs/Analytics.md`, `Docs/CrashReporting.md`, and
+  `SECURITY.md`.
 - 2026-07-13: **Full Disk Access replaced with App Sandbox + a security-scoped Messages bookmark (branch `fda-bookmark-spike`).**
   `StowerMac.entitlements` gains `app-sandbox`, `files.user-selected.read-only`, `network.client`,
   and Sparkle's `-spks`/`-spki` temp-exceptions; `project.pbxproj` flips `ENABLE_APP_SANDBOX` to

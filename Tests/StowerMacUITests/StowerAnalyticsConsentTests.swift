@@ -3,32 +3,39 @@ import Testing
 
 @testable import StowerMacUI
 
-/// Tests `StowerDiagnosticsConsent`: enabled default, opt-out, "off wins"
+/// Tests `StowerDiagnosticsConsent`: explicit opt-in, opt-out, "off wins"
 /// reconciliation, and the "never auto-re-enables" invariant (JC8).
 @Suite(.serialized) @MainActor internal struct StowerAnalyticsConsentTests {
 
-    @Test internal func defaultsOnForFreshInstall() {
+    @Test("fresh install keeps diagnostics off until explicit choice (I4)")
+    internal func freshInstallRequiresChoice() {
         let storage = StowerInMemoryLeaseStorage()
         let consent = StowerDiagnosticsConsent(storage: storage)
-        #expect(consent.isEnabled == true)
+        #expect(consent.isEnabled == false)
+        #expect(consent.hasMadeExplicitChoice == false)
     }
 
-    @Test internal func setEnabledFalseDisables() {
+    @Test("setEnabled(false) records an explicit opt-out (I4)")
+    internal func setEnabledFalseDisables() {
         let storage = StowerInMemoryLeaseStorage()
         let consent = StowerDiagnosticsConsent(storage: storage)
         consent.setEnabled(false)
         #expect(consent.isEnabled == false)
+        #expect(consent.hasMadeExplicitChoice == true)
     }
 
-    @Test internal func setEnabledTrueRe_enables() {
+    @Test("setEnabled(true) records an explicit opt-in (I4)")
+    internal func setEnabledTrueRe_enables() {
         let storage = StowerInMemoryLeaseStorage()
         let consent = StowerDiagnosticsConsent(storage: storage)
         consent.setEnabled(false)
         consent.setEnabled(true)
         #expect(consent.isEnabled == true)
+        #expect(consent.hasMadeExplicitChoice == true)
     }
 
-    @Test internal func optOutPersistsAcrossInstances() {
+    @Test("opt-out persists across consent instances (I4)")
+    internal func optOutPersistsAcrossInstances() {
         let storage = StowerInMemoryLeaseStorage()
         let consent1 = StowerDiagnosticsConsent(storage: storage)
         consent1.setEnabled(false)
@@ -37,19 +44,31 @@ import Testing
         #expect(consent2.isEnabled == false)
     }
 
-    @Test internal func reconcileLicenseOptOutTurnsOffCache() {
+    @Test("license opt-out records an explicit disabled choice (I4)")
+    internal func reconcileLicenseOptOutTurnsOffCache() {
         let storage = StowerInMemoryLeaseStorage()
-        // Seed a fresh record with enabled=true (simulates wiped storage).
-        let identity = StowerDiagnosticsIdentity(storage: storage)
-        _ = identity.clientUser()  // mints record with enabled=true
         let consent = StowerDiagnosticsConsent(storage: storage)
+        consent.setEnabled(true)
         #expect(consent.isEnabled == true)
-        // License says opted out — reconcile must turn off the cache.
+
         consent.reconcile(licenseOptOut: true)
         #expect(consent.isEnabled == false)
+        #expect(consent.hasMadeExplicitChoice == true)
     }
 
-    @Test internal func reconcileDoesNotReenableIfLicenseIsOn() {
+    @Test("license opt-out disables a no-choice install (I4)")
+    internal func reconcileLicenseOptOutTurnsOffNoChoiceCache() {
+        let storage = StowerInMemoryLeaseStorage()
+        let consent = StowerDiagnosticsConsent(storage: storage)
+        #expect(consent.hasMadeExplicitChoice == false)
+
+        consent.reconcile(licenseOptOut: true)
+        #expect(consent.isEnabled == false)
+        #expect(consent.hasMadeExplicitChoice == true)
+    }
+
+    @Test("license opt-in never re-enables a local opt-out (I4)")
+    internal func reconcileDoesNotReenableIfLicenseIsOn() {
         let storage = StowerInMemoryLeaseStorage()
         let consent = StowerDiagnosticsConsent(storage: storage)
         consent.setEnabled(false)
@@ -58,12 +77,10 @@ import Testing
         #expect(consent.isEnabled == false, "off wins: reconcile must never auto-re-enable")
     }
 
-    @Test("undecodable storage defaults diagnostics on (I4)")
-    internal func undecodableStorageDefaultsOn() {
+    @Test("undecodable storage keeps diagnostics off (I4)")
+    internal func undecodableStorageDefaultsOff() {
         // UserDefaults holds bytes that fail to decode as a
-        // DiagnosticsInstallRecord — treat as a fresh install (default-on),
-        // not off. Reset the shared process-global kill latch so this test is
-        // isolated from other suites that may have latched it off.
+        // DiagnosticsInstallRecord — treat as no explicit choice.
         StowerDiagnosticsKillLatch.reset()
         defer { StowerDiagnosticsKillLatch.reset() }
 
@@ -72,12 +89,26 @@ import Testing
         let consent = StowerDiagnosticsConsent(storage: storage)
 
         #expect(
-            consent.isEnabled == true,
-            "undecodable UserDefaults must default diagnostics on, not off"
+            consent.isEnabled == false,
+            "undecodable UserDefaults must not enable diagnostics before consent"
         )
     }
 
-    @Test internal func identityAndConsentShareSameRecord() {
+    @Test("migrated default-on records do not count as consent (I4)")
+    internal func migratedDefaultOnRecordRequiresChoice() {
+        StowerDiagnosticsKillLatch.reset()
+        defer { StowerDiagnosticsKillLatch.reset() }
+
+        let storage = StowerInMemoryLeaseStorage()
+        storage.write(Data(#"{"id":"00000000-0000-0000-0000-000000000000","enabled":true}"#.utf8))
+        let consent = StowerDiagnosticsConsent(storage: storage)
+
+        #expect(consent.isEnabled == false)
+        #expect(consent.hasMadeExplicitChoice == false)
+    }
+
+    @Test("identity and consent share one install record (I4)")
+    internal func identityAndConsentShareSameRecord() {
         let storage = StowerInMemoryLeaseStorage()
         let identity = StowerDiagnosticsIdentity(storage: storage)
         let consent = StowerDiagnosticsConsent(storage: storage)

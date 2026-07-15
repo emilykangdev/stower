@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Settings → Privacy: the primary trust surface for diagnostics consent.
 ///
-/// Shows the diagnostics toggle (default on) with honest collected/never-collected
-/// copy and a link to the public privacy policy. Equal-weight affordances — no
+/// Shows the diagnostics toggle with honest collected/never-collected copy and
+/// a link to the public privacy policy. Equal-weight affordances — no
 /// `.borderedProminent` style bias toward either choice (JC2 dark-pattern check).
 ///
 /// The toggle writes through to `StowerDiagnostics.setEnabled` and the
@@ -64,26 +64,25 @@ internal struct StowerPrivacySettingsView: View {
         .padding()
         // Re-sync the displayed toggle with the live consent state each time the
         // pane appears: consent can flip elsewhere while this view exists (license
-        // opt-out reconciliation, the first-run disclosure card), and a `@State`
+        // opt-out reconciliation, the first-run consent card), and a `@State`
         // seeded once at init would otherwise show stale. This writes the `@State`
         // DIRECTLY (not through `consentBinding`), so a resync never triggers a
-        // spurious `setEnabled` / `markDisclosureShown`.
+        // spurious `setEnabled`.
         .onAppear { analyticsEnabled = StowerDiagnostics.isEnabled() }
     }
 
     /// The toggle's binding — only a USER flip writes consent through.
     ///
-    /// A user flip calls `StowerDiagnostics.setEnabled` and marks the disclosure
-    /// shown (an explicit Settings choice supersedes the first-run card, JC7). The
-    /// `.onAppear` display-resync updates `analyticsEnabled` directly and never fires
-    /// this setter — so refreshing the view can't re-enable consent or re-mark the card.
+    /// A user flip calls `StowerDiagnostics.setEnabled` and records an explicit
+    /// diagnostics choice. The `.onAppear` display-resync updates
+    /// `analyticsEnabled` directly and never fires this setter — so refreshing the
+    /// view can't re-enable consent.
     private var consentBinding: Binding<Bool> {
         Binding(
             get: { analyticsEnabled },
             set: { newValue in
                 analyticsEnabled = newValue
                 StowerDiagnostics.setEnabled(newValue)
-                StowerDiagnosticsConsent().markDisclosureShown()
             }
         )
     }

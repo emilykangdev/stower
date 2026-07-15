@@ -73,20 +73,21 @@ extension StowerRootView {
     }
 
     /// Schedules the analytics consent card to appear after ~60 seconds of
-    /// foreground board time, shown at most once ever (JC7).
+    /// foreground board time when the user has not made a diagnostics choice
+    /// (JC7).
     ///
     /// The countdown is cancelled when the app backgrounds or the board screen
     /// leaves the hierarchy, and rescheduled on return — so the card honors
     /// *foreground board* time, never firing while backgrounded or off-board.
-    /// The shown-flag is stored in `UserDefaults` by `StowerDiagnosticsConsent` so
-    /// the card never reappears after the user has made a choice.
+    /// The explicit-choice flag is stored in `UserDefaults` by
+    /// `StowerDiagnosticsConsent` so the card never reappears after the user has
+    /// made a choice.
     internal func scheduleConsentCardIfNeeded() {
-        guard !consent.hasShownDisclosure else { return }
+        guard !consent.hasMadeExplicitChoice else { return }
         consentCardTask?.cancel()
         consentCardTask = Task { @MainActor in
             try? await Task.sleep(for: Self.consentCardDelay)
-            guard !Task.isCancelled, !consent.hasShownDisclosure else { return }
-            consent.markDisclosureShown()
+            guard !Task.isCancelled, !consent.hasMadeExplicitChoice else { return }
             withAnimation { showConsentCard = true }
         }
     }

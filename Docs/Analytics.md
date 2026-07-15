@@ -26,7 +26,7 @@ travels the network: TelemetryDeck double-hashes it (a stable app salt + SHA-256
 then its own on-wire hash) before any signal leaves the device. The salt
 (`StowerAnalytics.stableSalt`) exists only for hash stability — anonymity comes
 from the random UUID, not the salt — and must never change, or every existing user
-would look new. The UUID and the cached opt-out share one `UserDefaults` blob
+would look new. The UUID and the cached consent share one `UserDefaults` blob
 (`DiagnosticsInstallRecord`) so they can't desync.
 
 The install record lives **only** in `UserDefaults` — the app makes no Keychain
@@ -56,27 +56,35 @@ When a user opts out mid-session, `StowerDiagnostics.setEnabled(false)` →
 `StowerAnalytics.setEnabled(false)` trips the process-wide in-memory
 `StowerDiagnosticsKillLatch` (`latchOff()`), so every reporter fails closed
 **immediately** this session even if the `UserDefaults` cache write failed.
-Re-enabling clears the latch; if the SDK never started this launch its backend is
-started then, otherwise a live reporter is restored (the SDK can't be re-initialized).
+Explicit opt-in clears the latch; if the SDK never started this launch its backend
+is started then, otherwise a live reporter is restored (the SDK can't be
+re-initialized).
 (Sentry's kill switch differs — it has a real `SentrySDK.close()`; see
 [CrashReporting.md](CrashReporting.md).)
 
-## Consent (default-on with disclosure, "off wins")
+## Consent (explicit opt-in, "off wins")
 
-Analytics is **default-on**. `StowerDiagnosticsConsent.isEnabled` returns `true` when
-no record exists yet (fresh install). The user is shown the
-`StowerAnalyticsConsentCard` once, after ~60 seconds of *foreground board* time
-(`StowerRootView.consentCardDelay`, JC7) — after they've seen value, never at startup
-or at the messages-access permission cliff. The countdown cancels on resign-active / board
-disappearance and re-arms on return; the shown-once flag lives in `UserDefaults`
-(`StowerDiagnosticsConsent.shownDefaultsKey`). One-click off also lives in a Privacy
-pane (`StowerSettingsView` → `StowerPrivacySettingsView`) in the app's `Settings { }`
-scene.
+Analytics is **off until explicit user choice**. `StowerDiagnosticsConsent.isEnabled`
+returns `false` when no record exists yet (fresh install), when storage is
+undecodable, or when a migrated record predates the `hasExplicitChoice` field.
+That means app launch is diagnostics-dark: no `TelemetryDeck.initialize`, no
+automatic `TelemetryDeck.Session.started`, and no analytics signal leaves the Mac
+before the user chooses.
 
-The `UserDefaults` `enabled` field (`DiagnosticsInstallRecord`) is the durable consent
-authority as-built. **Precedence is "off wins"** — `reconcile(licenseOptOut:)`
-only ever turns the cache *off*, never back on, and only an explicit user opt-in
-re-enables. The license-scoped reconcile hook (JC8,
+The user is shown the `StowerAnalyticsConsentCard` after ~60 seconds of
+*foreground board* time (`StowerRootView.consentCardDelay`, JC7) — after they've
+seen value, never at startup or at the messages-access permission cliff. The
+countdown cancels on resign-active / board disappearance and re-arms on return.
+The card reappears until the user chooses On or Off; choosing either writes
+`DiagnosticsInstallRecord.hasExplicitChoice = true`. A Settings choice in
+`StowerSettingsView` → `StowerPrivacySettingsView` writes the same record and also
+supersedes the first-run card.
+
+The `UserDefaults` `enabled` + `hasExplicitChoice` fields
+(`DiagnosticsInstallRecord`) are the durable consent authority as-built.
+**Precedence is "off wins"** — `reconcile(licenseOptOut:)` only ever turns the
+cache *off*, never back on, and only an explicit user opt-in re-enables. The
+license-scoped reconcile hook (JC8,
 `StowerDiagnostics.reconcileLicenseConsent(licenseOptOut:)`) has **no production
 caller today**: the client-only Lemon Squeezy activate-once flow stores only a
 license key locally, with no server-side license record carrying a
@@ -85,18 +93,15 @@ survive unwired.
 
 ## UserDefaults keys
 
-Analytics/diagnostics persist two independent `UserDefaults` blobs. They are kept
-under separate keys on purpose so they can never desync or corrupt each other
-(guarded by `analyticsStorageKeyNeverCollidesWithShownFlag`):
+Analytics/diagnostics persist one `UserDefaults` blob:
 
 | Key | Symbol | Holds | Written / read by |
 |-----|--------|-------|-------------------|
-| `com.stower.analytics.install-record` | `StowerDiagnosticsStorageLocation.defaultsKey` | The `DiagnosticsInstallRecord` blob — the random per-install `UUID` + the `enabled` opt-out cache | `StowerDiagnosticsIdentity` (UUID) + `StowerDiagnosticsConsent` (opt-out) |
-| `com.stower.analytics.shown` | `StowerDiagnosticsConsent.shownDefaultsKey` | A boolean: has the one-time `StowerAnalyticsConsentCard` disclosure been shown | `StowerDiagnosticsConsent.hasShownDisclosure` / `markDisclosureShown()` |
+| `com.stower.analytics.install-record` | `StowerDiagnosticsStorageLocation.defaultsKey` | The `DiagnosticsInstallRecord` blob — the random per-install `UUID`, `enabled`, and `hasExplicitChoice` | `StowerDiagnosticsIdentity` (UUID) + `StowerDiagnosticsConsent` (consent) |
 
-Both survive relaunch and uninstall→reinstall (`UserDefaults` persists in
+It survives relaunch and uninstall→reinstall (`UserDefaults` persists in
 `~/Library/Preferences`); a wiped domain or a different macOS user account starts
-fresh on both.
+fresh with diagnostics off until choice.
 
 ## Event taxonomy (typed, PII-safe)
 

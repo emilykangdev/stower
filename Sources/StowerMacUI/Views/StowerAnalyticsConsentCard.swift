@@ -1,12 +1,12 @@
 import SwiftUI
 
-/// The first-run diagnostics disclosure card, shown once after ~60 seconds of
-/// foreground board time (JC7 — after value, never at startup or the messages-access cliff).
+/// The first-run diagnostics consent card, shown after ~60 seconds of foreground
+/// board time (JC7 — after value, never at startup or the messages-access cliff).
 ///
 /// Presents the honest, equal-weight consent choice: On · Off. No
 /// `.borderedProminent` bias; no "Got it" acknowledgement-as-consent. The card
-/// informs and offers the off path; it is NOT a pre-collection gate (default-on
-/// means collection is already running by the time the card appears).
+/// gates diagnostics collection: no Sentry or TelemetryDeck backend starts until
+/// the user chooses On.
 ///
 /// Copy is authored in the plan (§What / In-app copy) and reproduced verbatim:
 /// headline, body (analytics clause + crash clause), and button labels all
@@ -14,7 +14,7 @@ import SwiftUI
 /// for usage stats, best-effort-scrubbed for crash reports — are disclosed
 /// together in one honest card (plan §What / §Copy).
 internal struct StowerAnalyticsConsentCard: View {
-    /// Called when the user taps a button: `true` to stay on, `false` to opt out.
+    /// Called when the user taps a button: `true` to opt in, `false` to opt out.
     ///
     /// The caller writes the choice to `StowerDiagnostics.setEnabled`.
     internal var onChoice: (Bool) -> Void
