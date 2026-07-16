@@ -1,24 +1,21 @@
 # Stower
 
 Stower is a macOS app that reads your iMessage conversations, entirely
-on-device, and shows you the ones you're letting slip: a real question still
+on-device, and surfaces the ones you're letting slip: a real question still
 waiting on you (**"Your turn"**), or one you asked that never got answered
-(**"Maybe follow up"**). One click copies your saved reply to the clipboard and deep-links you into
-the exact conversation in Messages.app, ready to paste (⌘V) and send —
-Stower never sends anything itself.
+(**"Maybe follow up"**). One click copies your saved reply to the clipboard
+and deep-links you into the exact conversation in Messages.app, ready to paste
+(⌘V) and send — Stower never sends anything itself.
 
 Your message content never leaves your Mac — no server ever sees it. The app
-does make a small number of other network calls (an anonymous usage-analytics
-signal, crash reports, a license check) that carry no message content; see
-[`SECURITY.md`](SECURITY.md) for the honest, itemized breakdown of exactly
-what leaves the device and what doesn't.
+does make a small number of other network calls (anonymous usage-analytics
+when opted in, crash reports when opted in, a license check) that carry no
+message content; see [`SECURITY.md`](SECURITY.md) for the honest, itemized
+breakdown of exactly what leaves the device and what doesn't.
 
 > **Status:** the Messages board, drafts, and deep-link flow are built and
-> shipping (`StowerMac`). A standalone recall CLI (`stower`, below) and a
-> planned Photos surface live in the same monorepo at different maturity
-> levels. See [`Docs/BuildLog.md`](Docs/BuildLog.md) for the dated,
-> engineer-facing status log, or [`Docs/Roadmap.md`](Docs/Roadmap.md) for
-> naming, module boundaries, and feature order.
+> shipping. A standalone recall CLI and a planned Photos surface live in the
+> same monorepo at different maturity levels.
 
 ## What it does
 
@@ -26,23 +23,22 @@ what leaves the device and what doesn't.
   under two plain-language labels: **"Your turn"** (they asked or answered
   last — a reply is owed) and **"Maybe follow up"** (you asked something real
   and never heard back). The judgment — telling "free Saturday?" apart from
-  "lol" — runs on-device.
+  "lol" — runs on-device via Apple's Foundation Models.
 - **Drafts** — write a reply whenever the thought hits you, not only when
   you're in the thread. Stower saves it and shows it across every
   conversation, so a half-written reply is never stuck invisibly in one
   compose field.
 - **Deep-link + paste** — one click copies your draft to the clipboard and
   opens the exact conversation in Messages.app, ready for you to paste (⌘V)
-  into the compose field and send. App Sandbox means Stower cannot post a
+  into the compose field and send. Stower is App Sandboxed and cannot post a
   synthetic paste or drive Accessibility, so the paste step is always manual.
-  Stower never transmits a message itself (see [`AGENTS.md`](AGENTS.md)'s
-  "Out of scope for v1").
+  Stower never transmits a message itself.
 - **Dismiss / mute**, with undo, for threads or senders you don't want
   surfaced.
 
 Fast hybrid keyword + semantic search over your local message history exists
-as a library (`StowerCore`) and a CLI (`stower`, below) — it is not yet wired
-into the `StowerMac` app's UI.
+as a library (`StowerCore`) and a CLI — it is not yet wired into the macOS
+app's UI.
 
 ## Architecture
 
@@ -52,30 +48,26 @@ Three library targets, one-directional dependency graph:
   store, the on-device judgment model wrapper. Knows nothing about its
   sources.
 - **`StowerMessages`** — `chat.db` reader (read-only) + Contacts join.
-  Produces `IndexedItem` values for `StowerCore`. This is what `StowerMac`
-  (the app) is built on.
+  Produces indexed items for `StowerCore`. This is what the macOS app is
+  built on.
 - **`StowerPhotos`** — PhotoKit + FastVLM caption adapter, a scaffold today
-  (not part of the shipping product; see `AGENTS.md`).
+  (not part of the shipping product).
 
 `StowerPhotos` and `StowerMessages` depend on `StowerCore`; nothing depends on
-them, and they never import each other. `StowerMac` links `StowerCore` +
-`StowerMessages` only. See [`Docs/`](Docs/) for per-subsystem rationale, and
-[`Docs/MacAppContract.md`](Docs/MacAppContract.md) for the app/engine seam.
+them, and they never import each other. The macOS app links `StowerCore` +
+`StowerMessages` only.
 
-### Many local models, not just Apple's
+### On-device model architecture
 
-The on-device model is **not assumed to be Apple's Foundation Models
-forever.** A goal is to experiment with and compare several other **local**
-models (local LLMs/SLMs run on the user's machine) — Apple's is simply the
-first one wired up. Wherever a model produces a result that's cached or
-acted on, the **model's identity is part of the contract**, so swapping or
-A/B-ing local models stays cheap and never serves a result produced by a
-different model. The one hard constraint is **local** — nothing leaves the
-Mac.
+The on-device model is **not assumed to be Apple's Foundation Models forever.**
+A goal is to experiment with and compare several local models (local LLMs/SLMs
+run on the user's machine) — Apple's is simply the first one wired up.
+Wherever a model produces a result that's cached or acted on, the **model's
+identity is part of the contract**, so swapping or A/B-ing local models stays
+cheap and never serves a result produced by a different model. The one hard
+constraint is **local** — nothing leaves the Mac.
 
-### System overview (recall path — `StowerCore` + the `stower` CLI)
-
-`①` is the index path (write); `②` is the query path (read).
+### System overview
 
 ```mermaid
 flowchart TD
@@ -84,7 +76,6 @@ flowchart TD
     model[("Core ML model dir<br/>mlpackage · tokenizer · manifest.json")]
     convert -->|"one-time, offline"| model
 
-    cli["stower CLI<br/>index · search · eval"]
     msgs["StowerMessages<br/>chat.db reader + Contacts"]
 
     subgraph core["StowerCore"]
@@ -99,17 +90,10 @@ flowchart TD
     end
 
     chatdb -->|"ephemeral snapshot (read-only)"| msgs
-
-    cli -->|"① index"| msgs
-    msgs -->|"[StowerMessageItem]"| index
+    msgs -->|"indexed items"| index
     msgs -->|"message text"| embedder
     model -->|"compile once → .mlmodelc"| embedder
     embedder -->|"vectors"| store
-
-    cli -->|"② search / eval"| retriever
-    retriever -->|"keyword arm"| index
-    retriever -->|"semantic arm (cosine)"| store
-    retriever -->|"query vector"| embedder
 ```
 
 ## Permissions
@@ -135,22 +119,20 @@ swift build
 swift test
 
 # Lint gate (requires: brew install swift-format swiftlint).
-./Scripts/install-hooks.sh   # one-time: wire precheck.sh to pre-commit
-./Scripts/precheck.sh
+Scripts/install-hooks.sh   # one-time: wire precheck.sh to pre-commit
+Scripts/precheck.sh
 ```
 
 `swift test` uses Swift Testing and needs full Xcode locally; under Command
-Line Tools only, run it through `./Scripts/precheck.sh`, which injects the
+Line Tools only, run it through `Scripts/precheck.sh`, which injects the
 required framework flags automatically.
 
-## The `stower` CLI (internal dev tool, not customer-facing)
+## CLI reference
 
-`stower` is a build-from-source-only CLI used internally during development
-to exercise the recall engine directly — it is not the product, isn't
-packaged in any release, and no user needs it to use Stower. It indexes a
-window of your local Messages and searches it with a hybrid of FTS5 keyword
-matching and bge-small embeddings, fused by reciprocal-rank fusion —
-everything on-device. Independent of the `StowerMac` app.
+The `stower` CLI is a build-from-source developer tool that exercises the
+recall engine directly. It indexes a window of your local Messages and
+searches it with a hybrid of FTS5 keyword matching and bge-small embeddings,
+fused by reciprocal-rank fusion — everything on-device.
 
 ```bash
 # 1. Convert the embedding model once (downloads weights from Hugging Face,
@@ -161,7 +143,7 @@ uv run Scripts/convert-embedding-model.py --model BAAI/bge-small-en-v1.5
 #    Security. Messages access is granted per-run: `stower index` presents
 #    its own picker — select ~/Library/Messages when it opens.
 
-# 3. Index the last 180 days, then search. Use a release build for real timings.
+# 3. Index the last 180 days, then search.
 swift build -c release
 .build/release/stower index --days 180
 .build/release/stower search "the pizza place Sam mentioned"
@@ -173,7 +155,7 @@ model to `~/Library/Application Support/Stower/Models/default/`. Override
 either with `--index-dir` / `--model-path`. Re-running `index` embeds only
 new messages (the cache survives rebuilds).
 
-## What Stower can see (a `chat.db` limitation)
+## What Stower can see
 
 Stower reads the **Mac's** Messages database, so it only knows what the
 Messages app on your Mac has — which is not necessarily your whole texting
@@ -198,18 +180,9 @@ there's less to trust in the first place.
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) (agent
-rule set, imported by `CLAUDE.md`).
-
-## About the maintainer
-
-Stower is built solo, entirely with plan/loop-driven development with AI —
-see `AGENTS.md` for exactly how that works (mechanical lint/build/test gates
-on every commit, a static-guard family in `Scripts/precheck.sh` enforcing
-architectural invariants, signed commits, a SHA-pinned release pipeline). If
-you're evaluating this repo as a sample of that process for contract
-macOS/Swift work, `Docs/` and `Scripts/precheck.sh` are the most
-representative places to look.
+Bug reports and questions via
+[issues](https://github.com/emilykangdev/stower/issues) are welcome.
+Pull requests from outside contributors are not currently accepted.
 
 ## License
 
