@@ -30,7 +30,7 @@ let package = Package(
         .package(url: "https://github.com/huggingface/swift-transformers", from: "0.1.17"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
         .package(url: "https://github.com/TelemetryDeck/SwiftSDK", from: "2.0.0"),
-        .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "9.19.0"),
+        .package(url: "https://github.com/getsentry/sentry-cocoa", exact: "9.22.0"),
         // TODO: swift-snapshot-testing removed from the v0 scaffold — its
         // SnapshotTesting module imports XCTest, which is unavailable under
         // Command Line Tools (`swift test` reports "no such module 'XCTest'").
