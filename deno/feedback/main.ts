@@ -107,6 +107,8 @@ async function handle(req: Request): Promise<Response> {
     headers: {
       "Authorization": `Bearer ${RESEND_API_KEY}`,
       "Content-Type": "application/json",
+      // Resend requires a User-Agent header (rejects with 403 if missing).
+      "User-Agent": "StowerFeedback/1.0",
     },
     body: JSON.stringify({
       from: FROM,
@@ -120,8 +122,11 @@ async function handle(req: Request): Promise<Response> {
     }),
   });
 
-  if (!res.ok) return json(502, { error: "send failed" });
-  return json(200, { ok: true, build: "env-v2" });
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    return json(502, { error: "send failed", resendStatus: res.status, resendBody: bodyText.slice(0, 200) });
+  }
+  return json(200, { ok: true, build: "env-v3" });
 }
 
 // Reads the request body, aborting (returns null) as soon as it exceeds `cap`
