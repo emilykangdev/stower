@@ -1,7 +1,8 @@
 {
   "deploy": {
     "org": "emilykangdev",
-    "app": "stower-feedback"
+    "app": "stower-feedback",
+    "entryPoint": "deno/feedback/main.ts"
   }
 }
 

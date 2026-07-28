@@ -4,7 +4,11 @@
 // (NEVER shipped in the app binary) and emails FROM → TO via Resend. It is the
 // ONLY place the Resend key exists.
 //
-// Deploy: set three env vars in Deno Deploy — RESEND_API_KEY, FROM
+// Deploy: repo linked in Deno Deploy dashboard (Option A — webhook, no workflow
+// file). Entrypoint set in deno.jsonc at deno/feedback/main.ts. Every push to
+// main triggers a deploy automatically.
+//
+// Env vars (set in Deno Deploy dashboard — Production context): RESEND_API_KEY, FROM
 // (e.g. "Stower Feedback <feedback@send.stower.app>"), and TO
 // (e.g. "emily@stower.app") — verify the `send.stower.app` sending domain in
 // Resend, deploy, then paste the deployed URL into StowerFeedbackConfig (prod +
